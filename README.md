@@ -77,17 +77,57 @@ You need:
 
 ## Run
 
+Locally, the quickest way (runs the TypeScript directly, no build):
+
 ```bash
-npm start                 # runs src/index.ts via tsx
-LOG_LEVEL=debug npm start  # verbose: prints each /who and the raw counts
+npm run start:dev              # runs src/index.ts via tsx
+LOG_LEVEL=debug npm run start:dev
 ```
 
-To keep it running 24/7, use a process manager (e.g. `pm2 start "npm start"
---name onyxia-bot`) or a systemd service. The bot reconnects on its own if the
-link drops.
+Or the production path (compile once, then run plain Node):
+
+```bash
+npm run build   # tsc -> dist/
+npm start       # node dist/index.js
+```
+
+To keep it running 24/7 on your own box, use a process manager (e.g.
+`pm2 start "npm start" --name onyxia-bot`) or a systemd service. The bot
+reconnects on its own if the link drops. For a hosted option, see **Deploy on
+Railway** below.
 
 You should get an "👁️ Watching Onyxia's Lair" message in Discord on startup, a
 "🐉 Raid entered" when a group appears, and a "✅ cleared" when they leave.
+
+## Deploy on Railway (24/7)
+
+This repo is Railway-ready: `railway.json` and `nixpacks.toml` tell it to compile
+to `dist/` and run `node dist/index.js`, with an on-failure restart policy.
+
+1. On [Railway](https://railway.com), create a project → **Deploy from GitHub
+   repo** → pick this repo. It builds automatically (no start command to type).
+2. Open the service → **Variables** and add the same keys from `.env` (there is no
+   `.env` file in the deploy — the bot reads them straight from the environment):
+
+   | Variable | Value |
+   |---|---|
+   | `WOW_ACCOUNT` | your throwaway account |
+   | `WOW_PASSWORD` | its password |
+   | `WOW_CHARACTER` | the character to log in |
+   | `DISCORD_WEBHOOK_URL` | your Discord webhook |
+   | `WOW_REALM` | `Turtle WoW` (optional, this is the default) |
+   | `WATCH_AREA_ID` | `2159` (optional) |
+   | `POLL_INTERVAL_SECONDS` | `20` (optional) |
+   | `LOG_LEVEL` | `info`, or `debug` while you verify it |
+
+3. This is a **worker** — it does not serve HTTP, so it won't get a public domain,
+   and that's expected. Don't set a health check port.
+4. Watch the deploy logs. You want to see "in world; watching Onyxia's Lair", and
+   a "👁️ Watching Onyxia's Lair" message should land in your Discord channel.
+
+If the deploy logs stop at a handshake step, set `LOG_LEVEL=debug`, redeploy, and
+read where it stops — the *Limitations* section maps each stopping point to a
+cause.
 
 ---
 
