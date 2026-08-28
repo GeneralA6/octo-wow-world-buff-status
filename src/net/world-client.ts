@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
+import { FatalError } from "../errors.js";
 import { AUTH_OK, WorldOpcode } from "../protocol/opcodes.js";
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
 import { silentLogger, type Logger } from "../logger.js";
@@ -192,7 +193,9 @@ export class WorldClient {
     const match = characters.find((entry) => entry.name.toLowerCase() === wanted);
     if (!match) {
       const names = characters.map((entry) => entry.name).join(", ") || "(none)";
-      throw new Error(`world: character "${this.#characterName}" not found. Available: ${names}`);
+      throw new FatalError(
+        `world: character "${this.#characterName}" not found. Available: ${names}`,
+      );
     }
     this.#logger.debug(`world: logging in character ${match.name}`);
     this.#send(WorldOpcode.CMSG_PLAYER_LOGIN, buildPlayerLoginBody(match.guid));

@@ -1,5 +1,6 @@
 import { connect, type Socket } from "node:net";
 import { computeSrp6Proof } from "../crypto/srp6.js";
+import { FatalError } from "../errors.js";
 import { LogonResult } from "../protocol/opcodes.js";
 import { createLogger, type Logger } from "../logger.js";
 import {
@@ -68,7 +69,7 @@ export class AuthClient {
         !challenge.largeSafePrime ||
         !challenge.salt
       ) {
-        throw new Error(`auth: ${describeLogonResult(challenge.result)}`);
+        throw new FatalError(`auth: ${describeLogonResult(challenge.result)}`);
       }
 
       const proof = computeSrp6Proof({
@@ -83,10 +84,10 @@ export class AuthClient {
       socket.write(buildLogonProof(proof.clientPublicKey, proof.clientProof));
       const proofResult = parseLogonProofServer(await readMessage(socket, parseLogonProofServer));
       if (proofResult.result !== LogonResult.Success || !proofResult.serverProof) {
-        throw new Error(`auth: ${describeLogonResult(proofResult.result)}`);
+        throw new FatalError(`auth: ${describeLogonResult(proofResult.result)}`);
       }
       if (!proofResult.serverProof.equals(proof.expectedServerProof)) {
-        throw new Error("auth: server proof mismatch (wrong password or spoofed server)");
+        throw new FatalError("auth: server proof mismatch (wrong password or spoofed server)");
       }
       this.#logger.debug("auth: SRP6 proof accepted");
 
