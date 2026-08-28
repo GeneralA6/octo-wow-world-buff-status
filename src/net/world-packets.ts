@@ -83,11 +83,12 @@ export function buildAuthSessionBody(
   clientSeed: number,
   serverSeed: number,
   sessionKey: Buffer,
+  build: number = CLIENT_BUILD,
   addonInfo: Buffer = ADDON_INFO,
 ): Buffer {
   const digest = computeAuthSessionDigest(account, clientSeed, serverSeed, sessionKey);
   return new PacketWriter()
-    .u32LE(CLIENT_BUILD)
+    .u32LE(build)
     .u32LE(0) // login server id
     .cString(account.toUpperCase())
     .u32LE(clientSeed)

@@ -37,7 +37,7 @@ describe("computeAuthSessionDigest", () => {
 
 describe("buildAuthSessionBody", () => {
   it("lays out build, login-server id, account, seed and digest", () => {
-    const body = buildAuthSessionBody("Bot", 0x01020304, 0x0a0b0c0d, Buffer.alloc(40, 1), Buffer.alloc(0));
+    const body = buildAuthSessionBody("Bot", 0x01020304, 0x0a0b0c0d, Buffer.alloc(40, 1), 7272, Buffer.alloc(0));
     expect(body.readUInt32LE(0)).toBe(7272); // build (OctoWoW custom)
     expect(body.readUInt32LE(4)).toBe(0); // login server id
     // account CString "BOT\0" starts at offset 8
@@ -48,9 +48,12 @@ describe("buildAuthSessionBody", () => {
 
   it("appends the standard addon block by default", () => {
     const withAddon = buildAuthSessionBody("Bot", 1, 2, Buffer.alloc(40, 1));
-    const withoutAddon = buildAuthSessionBody("Bot", 1, 2, Buffer.alloc(40, 1), Buffer.alloc(0));
+    const withoutAddon = buildAuthSessionBody("Bot", 1, 2, Buffer.alloc(40, 1), 7272, Buffer.alloc(0));
     expect(withAddon.length).toBe(withoutAddon.length + 134);
     expect(withAddon.subarray(0, 4).toString("hex")).toBe("681c0000"); // build 7272 LE
+
+    const customBuild = buildAuthSessionBody("Bot", 1, 2, Buffer.alloc(40, 1), 9999, Buffer.alloc(0));
+    expect(customBuild.readUInt32LE(0)).toBe(9999);
   });
 });
 

@@ -26,7 +26,7 @@ const LOCALE = Buffer.from([0x42, 0x47, 0x6e, 0x65]); // "enGB" reversed -> "BGn
 // sends 3, matched here so our challenge is byte-identical to the real client.
 const PROTOCOL_VERSION = 3;
 
-export function buildLogonChallenge(username: string): Buffer {
+export function buildLogonChallenge(username: string, build: number = CLIENT_BUILD): Buffer {
   const accountBytes = Buffer.from(username.toUpperCase(), "utf8");
   if (accountBytes.length === 0 || accountBytes.length > 0xff) {
     throw new RangeError("account name must be 1..255 bytes");
@@ -37,7 +37,7 @@ export function buildLogonChallenge(username: string): Buffer {
     .u8(CLIENT_VERSION.major)
     .u8(CLIENT_VERSION.minor)
     .u8(CLIENT_VERSION.patch)
-    .u16LE(CLIENT_BUILD)
+    .u16LE(build)
     .bytes(PLATFORM)
     .bytes(OS)
     .bytes(LOCALE)

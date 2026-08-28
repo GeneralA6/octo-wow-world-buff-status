@@ -63,6 +63,7 @@ async function runConnection(
     username: config.account,
     password: config.password,
     integrityChecksum: config.integrityChecksum,
+    build: config.build,
   });
 
   const target = resolveWorldTarget(config, realms, logger);
@@ -86,6 +87,7 @@ async function runConnection(
       account: config.account,
       sessionKey,
       characterName: config.characterName,
+      build: config.build,
       logger,
       handlers: {
         onReady: () => {

@@ -83,6 +83,11 @@ describe("loadConfig", () => {
       /WOW_INTEGRITY_CHECKSUM must be 40 hex/,
     );
   });
+
+  it("defaults the build and accepts a WOW_BUILD override", () => {
+    expect(loadConfig({ ...minimalEnv }).build).toBe(7272);
+    expect(loadConfig({ ...minimalEnv, WOW_BUILD: "5875" }).build).toBe(5875);
+  });
 });
 
 describe("parseAddress", () => {

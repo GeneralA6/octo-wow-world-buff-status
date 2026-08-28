@@ -25,6 +25,8 @@ export interface AuthCredentials {
    * carries crc_hash = SHA1(A || checksum); when null, a zero crc_hash is sent.
    */
   readonly integrityChecksum: Buffer | null;
+  /** Client build advertised in the logon challenge. */
+  readonly build: number;
 }
 
 export interface AuthResult {
@@ -169,7 +171,7 @@ export class AuthClient {
       await waitForConnect(socket, timeoutMs);
       this.#logger.debug(`auth: connected to ${credentials.host}:${credentials.port}`);
 
-      socket.write(buildLogonChallenge(credentials.username));
+      socket.write(buildLogonChallenge(credentials.username, credentials.build));
       await receiver.settle(whenParses(parseLogonChallengeServer));
       const challenge = parseLogonChallengeServer(receiver.take());
       if (

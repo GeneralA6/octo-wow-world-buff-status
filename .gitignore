@@ -15,3 +15,6 @@ capture.json
 
 decode-mine.ts
 run.log
+world-capture-proxy.mjs
+world-capture.json
+decode-world.mjs

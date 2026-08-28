@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { FatalError } from "../errors.js";
-import { AUTH_OK, WorldOpcode } from "../protocol/opcodes.js";
+import { AUTH_OK, CLIENT_BUILD, WorldOpcode } from "../protocol/opcodes.js";
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
@@ -39,6 +39,8 @@ export interface WorldClientOptions {
   readonly pingIntervalMs?: number;
   /** Test seam: fixed 4-byte client seed. Defaults to secure random. */
   readonly clientSeed?: number;
+  /** Client build for the world auth session. Defaults to CLIENT_BUILD. */
+  readonly build?: number;
 }
 
 /**
@@ -55,6 +57,7 @@ export class WorldClient {
   readonly #logger: Logger;
   readonly #pingIntervalMs: number;
   readonly #clientSeed: number;
+  readonly #build: number;
 
   #crypt: VanillaHeaderCrypt | null = null;
   #recvBuffer = Buffer.alloc(0);
@@ -73,6 +76,7 @@ export class WorldClient {
     this.#logger = options.logger ?? silentLogger;
     this.#pingIntervalMs = options.pingIntervalMs ?? 30_000;
     this.#clientSeed = options.clientSeed ?? randomBytes(4).readUInt32LE(0);
+    this.#build = options.build ?? CLIENT_BUILD;
   }
 
   get isReady(): boolean {
@@ -174,7 +178,7 @@ export class WorldClient {
     // Auth session is sent in plaintext; encryption starts immediately after.
     this.#send(
       WorldOpcode.CMSG_AUTH_SESSION,
-      buildAuthSessionBody(this.#account, this.#clientSeed, serverSeed, this.#sessionKey),
+      buildAuthSessionBody(this.#account, this.#clientSeed, serverSeed, this.#sessionKey, this.#build),
     );
     this.#crypt = new VanillaHeaderCrypt(this.#sessionKey);
   }

@@ -1,5 +1,6 @@
 import type { LogLevel } from "./logger.js";
 import { DEFAULT_INTEGRITY_CHECKSUM } from "./crypto/integrity.js";
+import { CLIENT_BUILD } from "./protocol/opcodes.js";
 
 export interface BotConfig {
   readonly account: string;
@@ -13,6 +14,8 @@ export interface BotConfig {
   readonly worldPort: number | null;
   /** Client-integrity checksum for StrictVersionCheck servers; null disables it. */
   readonly integrityChecksum: Buffer | null;
+  /** Client build advertised at logon (OctoWoW's custom build; changes on a client patch). */
+  readonly build: number;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   readonly pollIntervalMs: number;
@@ -71,6 +74,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     }
   }
 
+  const build = intWithDefault("WOW_BUILD", CLIENT_BUILD, 1);
+
   const watchAreaId = intWithDefault("WATCH_AREA_ID", 2159, 1);
   const watchAreaName = env.WATCH_AREA_NAME?.trim() || "Onyxia's Lair";
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
@@ -102,6 +107,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     worldHost,
     worldPort,
     integrityChecksum,
+    build,
     watchAreaId,
     watchAreaName,
     pollIntervalMs,
