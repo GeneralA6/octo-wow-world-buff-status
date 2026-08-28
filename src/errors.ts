@@ -10,6 +10,18 @@ export class FatalError extends Error {
   }
 }
 
+/**
+ * The server rejected our client version/integrity (a wrong build or integrity
+ * checksum — typically after an OctoWoW client patch). Signals the supervisor to
+ * re-resolve the current values from the CDN and retry, rather than give up.
+ */
+export class VersionMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VersionMismatchError";
+  }
+}
+
 type CodedError = Error & { code?: unknown };
 
 /**

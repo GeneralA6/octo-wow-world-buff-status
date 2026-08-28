@@ -170,8 +170,14 @@ WorldClient ──auth session(K)──► header cipher on ──► char login
                                 │
 OnyxiaWatcher diffs successive snapshots ──► entered / left / roster-changed
                                 │
+   raidAlerts applies WOW_MIN_RAID_SIZE floor, keeps only entered / left
+                                │
        formatEvent ──► DiscordWebhookNotifier ──► your channel
 ```
+
+Alerts are deliberately quiet: a zone under `WOW_MIN_RAID_SIZE` counts as empty (no
+lone-scout pings), roster churn while a raid is inside is silent, and the startup
+"bot online" message is off unless `WOW_ANNOUNCE_STARTUP` is set.
 
 Everything below the network edge is pure and unit-tested. The full handshake →
 in-world → `/who` path is covered by an integration test that runs the client
@@ -185,7 +191,7 @@ Layout:
 | `src/crypto/` | SRP6 client, vanilla header cipher, BigInt/LE helpers |
 | `src/net/` | packet codecs (auth + world) and the two socket clients |
 | `src/protocol/` | opcodes and the `/who` request/response codec |
-| `src/watcher/` | roster-diff → events |
+| `src/watcher/` | roster-diff → events, and the raid-size / enter-leave alert filter |
 | `src/notify/` | `Notifier` interface + Discord webhook + message formatting |
 | `src/config.ts`, `src/index.ts` | config validation and the supervisor loop |
 

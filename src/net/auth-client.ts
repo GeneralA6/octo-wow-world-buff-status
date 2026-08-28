@@ -2,7 +2,7 @@ import { connect, type Socket } from "node:net";
 import { computeSrp6Proof } from "../crypto/srp6.js";
 import { integrityCrcHash } from "../crypto/integrity.js";
 import { AuthCommand, LogonResult } from "../protocol/opcodes.js";
-import { FatalError } from "../errors.js";
+import { FatalError, VersionMismatchError } from "../errors.js";
 import { createLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
 import {
@@ -67,6 +67,17 @@ export function whenParses(parse: (buffer: Buffer) => unknown): Complete {
 export const whenRealmListComplete: Complete = (buffer) => {
   if (buffer.length < 3) return false;
   return buffer.length >= 3 + buffer.readUInt16LE(1);
+};
+
+/**
+ * A proof reply is either the proof server packet (opcode 0x01) or a version /
+ * integrity rejection, which the server sends in the 3-byte challenge-error shape
+ * (opcode 0x00, result code). Complete on whichever arrives.
+ */
+export const whenProofResponse: Complete = (buffer) => {
+  if (buffer.length < 1) return false;
+  if (buffer[0] === AuthCommand.LogonChallenge) return buffer.length >= 3;
+  return whenParses(parseLogonProofServer)(buffer);
 };
 
 /**
@@ -174,14 +185,20 @@ export class AuthClient {
       socket.write(buildLogonChallenge(credentials.username, credentials.build));
       await receiver.settle(whenParses(parseLogonChallengeServer));
       const challenge = parseLogonChallengeServer(receiver.take());
+      if (challenge.result !== LogonResult.Success) {
+        // A version rejection here means a wrong build — recoverable by re-resolving.
+        if (challenge.result === LogonResult.VersionInvalid) {
+          throw new VersionMismatchError(`auth: ${describeLogonResult(challenge.result)}`);
+        }
+        throw new FatalError(`auth: ${describeLogonResult(challenge.result)}`);
+      }
       if (
-        challenge.result !== LogonResult.Success ||
         !challenge.serverPublicKey ||
         !challenge.generator ||
         !challenge.largeSafePrime ||
         !challenge.salt
       ) {
-        throw new FatalError(`auth: ${describeLogonResult(challenge.result)}`);
+        throw new FatalError("auth: incomplete challenge response");
       }
 
       const proof = computeSrp6Proof({
@@ -197,8 +214,15 @@ export class AuthClient {
         ? integrityCrcHash(proof.clientPublicKey, credentials.integrityChecksum)
         : Buffer.alloc(20);
       socket.write(buildLogonProof(proof.clientPublicKey, proof.clientProof, crcHash));
-      await receiver.settle(whenParses(parseLogonProofServer));
-      const proofResult = parseLogonProofServer(receiver.take());
+      await receiver.settle(whenProofResponse);
+      const proofResponse = receiver.take();
+      if (proofResponse[0] === AuthCommand.LogonChallenge) {
+        const code = proofResponse[2] ?? 0xff;
+        throw new VersionMismatchError(
+          `auth: client version/integrity rejected (code 0x${code.toString(16)})`,
+        );
+      }
+      const proofResult = parseLogonProofServer(proofResponse);
       if (proofResult.result !== LogonResult.Success || !proofResult.serverProof) {
         throw new FatalError(`auth: ${describeLogonResult(proofResult.result)}`);
       }

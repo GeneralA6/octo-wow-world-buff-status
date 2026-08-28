@@ -1,6 +1,7 @@
 import type { LogLevel } from "./logger.js";
 import { DEFAULT_INTEGRITY_CHECKSUM } from "./crypto/integrity.js";
 import { CLIENT_BUILD } from "./protocol/opcodes.js";
+import { OCTOWOW_CDN } from "./net/client-resolver.js";
 
 export interface BotConfig {
   readonly account: string;
@@ -18,8 +19,16 @@ export interface BotConfig {
   readonly build: number;
   /** Client build in the world auth session — OctoWoW sends stock 5875 here, not the logon build. */
   readonly worldBuild: number;
+  /** Re-resolve the build + integrity checksum from the CDN when auth is version-rejected (self-heal on patch). */
+  readonly autoResolve: boolean;
+  /** OctoWoW client CDN base used for auto-resolve. */
+  readonly clientCdn: string;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
+  /** Minimum players in the zone to count as a raid (filters out solo scouts). */
+  readonly minRaidSize: number;
+  /** Post a "bot online" message on startup. Off by default to stay quiet. */
+  readonly announceStartup: boolean;
   readonly pollIntervalMs: number;
   readonly discordWebhookUrl: string;
   /** Role to ping on raid enter/leave so only opted-in members are notified. */
@@ -79,8 +88,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const build = intWithDefault("WOW_BUILD", CLIENT_BUILD, 1);
   const worldBuild = intWithDefault("WOW_WORLD_BUILD", 5875, 1);
 
+  const autoResolveRaw = env.WOW_AUTO_RESOLVE?.trim().toLowerCase();
+  const autoResolve =
+    autoResolveRaw !== "false" && autoResolveRaw !== "0" && autoResolveRaw !== "none";
+  const clientCdn = env.WOW_CLIENT_CDN?.trim() || OCTOWOW_CDN;
+
   const watchAreaId = intWithDefault("WATCH_AREA_ID", 2159, 1);
   const watchAreaName = env.WATCH_AREA_NAME?.trim() || "Onyxia's Lair";
+  const minRaidSize = intWithDefault("WOW_MIN_RAID_SIZE", 5, 1);
+  const announceStartupRaw = env.WOW_ANNOUNCE_STARTUP?.trim().toLowerCase();
+  const announceStartup = announceStartupRaw === "true" || announceStartupRaw === "1";
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
 
   const discordWebhookUrl = required("DISCORD_WEBHOOK_URL");
@@ -112,8 +129,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     integrityChecksum,
     build,
     worldBuild,
+    autoResolve,
+    clientCdn,
     watchAreaId,
     watchAreaName,
+    minRaidSize,
+    announceStartup,
     pollIntervalMs,
     discordWebhookUrl,
     discordMentionRoleId,

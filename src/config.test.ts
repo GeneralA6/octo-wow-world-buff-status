@@ -88,6 +88,41 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv }).build).toBe(7272);
     expect(loadConfig({ ...minimalEnv, WOW_BUILD: "5875" }).build).toBe(5875);
   });
+
+  it("defaults the world build to 5875", () => {
+    expect(loadConfig({ ...minimalEnv }).worldBuild).toBe(5875);
+  });
+
+  it("enables auto-resolve by default and points at the OctoWoW CDN", () => {
+    const config = loadConfig({ ...minimalEnv });
+    expect(config.autoResolve).toBe(true);
+    expect(config.clientCdn).toContain("octowow");
+  });
+
+  it("disables auto-resolve when set to false/0/none", () => {
+    for (const value of ["false", "0", "none"]) {
+      expect(loadConfig({ ...minimalEnv, WOW_AUTO_RESOLVE: value }).autoResolve).toBe(false);
+    }
+  });
+
+  it("defaults the raid-size floor to 5 and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).minRaidSize).toBe(5);
+    expect(loadConfig({ ...minimalEnv, WOW_MIN_RAID_SIZE: "10" }).minRaidSize).toBe(10);
+  });
+
+  it("rejects a raid-size floor below 1", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_MIN_RAID_SIZE: "0" })).toThrow(
+      /WOW_MIN_RAID_SIZE must be an integer >= 1/,
+    );
+  });
+
+  it("keeps the startup announcement off by default and on when opted in", () => {
+    expect(loadConfig({ ...minimalEnv }).announceStartup).toBe(false);
+    for (const value of ["true", "1"]) {
+      expect(loadConfig({ ...minimalEnv, WOW_ANNOUNCE_STARTUP: value }).announceStartup).toBe(true);
+    }
+    expect(loadConfig({ ...minimalEnv, WOW_ANNOUNCE_STARTUP: "false" }).announceStartup).toBe(false);
+  });
 });
 
 describe("parseAddress", () => {
