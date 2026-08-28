@@ -16,6 +16,8 @@ export interface BotConfig {
   readonly integrityChecksum: Buffer | null;
   /** Client build advertised at logon (OctoWoW's custom build; changes on a client patch). */
   readonly build: number;
+  /** Client build in the world auth session — OctoWoW sends stock 5875 here, not the logon build. */
+  readonly worldBuild: number;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   readonly pollIntervalMs: number;
@@ -75,6 +77,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   }
 
   const build = intWithDefault("WOW_BUILD", CLIENT_BUILD, 1);
+  const worldBuild = intWithDefault("WOW_WORLD_BUILD", 5875, 1);
 
   const watchAreaId = intWithDefault("WATCH_AREA_ID", 2159, 1);
   const watchAreaName = env.WATCH_AREA_NAME?.trim() || "Onyxia's Lair";
@@ -108,6 +111,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     worldPort,
     integrityChecksum,
     build,
+    worldBuild,
     watchAreaId,
     watchAreaName,
     pollIntervalMs,

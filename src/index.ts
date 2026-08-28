@@ -87,7 +87,7 @@ async function runConnection(
       account: config.account,
       sessionKey,
       characterName: config.characterName,
-      build: config.build,
+      build: config.worldBuild,
       logger,
       handlers: {
         onReady: () => {

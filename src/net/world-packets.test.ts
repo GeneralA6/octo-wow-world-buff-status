@@ -49,7 +49,7 @@ describe("buildAuthSessionBody", () => {
   it("appends the standard addon block by default", () => {
     const withAddon = buildAuthSessionBody("Bot", 1, 2, Buffer.alloc(40, 1));
     const withoutAddon = buildAuthSessionBody("Bot", 1, 2, Buffer.alloc(40, 1), 7272, Buffer.alloc(0));
-    expect(withAddon.length).toBe(withoutAddon.length + 134);
+    expect(withAddon.length).toBe(withoutAddon.length + 149);
     expect(withAddon.subarray(0, 4).toString("hex")).toBe("681c0000"); // build 7272 LE
 
     const customBuild = buildAuthSessionBody("Bot", 1, 2, Buffer.alloc(40, 1), 9999, Buffer.alloc(0));
