@@ -55,14 +55,19 @@ export function buildLogonChallenge(username: string): Buffer {
     .toBuffer();
 }
 
-export function buildLogonProof(clientPublicKey: Buffer, clientProof: Buffer): Buffer {
+export function buildLogonProof(
+  clientPublicKey: Buffer,
+  clientProof: Buffer,
+  crcHash: Buffer = Buffer.alloc(20),
+): Buffer {
   if (clientPublicKey.length !== 32) throw new RangeError("A must be 32 bytes");
   if (clientProof.length !== 20) throw new RangeError("M1 must be 20 bytes");
+  if (crcHash.length !== 20) throw new RangeError("crc_hash must be 20 bytes");
   return new PacketWriter()
     .u8(AuthCommand.LogonProof)
     .bytes(clientPublicKey)
     .bytes(clientProof)
-    .bytes(Buffer.alloc(20)) // crc_hash — unused, zeroed
+    .bytes(crcHash) // client-integrity proof (zeros if the server has no StrictVersionCheck)
     .u8(0) // number of telemetry keys
     .u8(0) // security flags
     .toBuffer();

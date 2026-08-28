@@ -1,8 +1,10 @@
 import { connect, type Socket } from "node:net";
 import { computeSrp6Proof } from "../crypto/srp6.js";
+import { integrityCrcHash } from "../crypto/integrity.js";
+import { AuthCommand, LogonResult } from "../protocol/opcodes.js";
 import { FatalError } from "../errors.js";
-import { LogonResult } from "../protocol/opcodes.js";
 import { createLogger, type Logger } from "../logger.js";
+import type { NodeSocketLike } from "./socket.js";
 import {
   buildLogonChallenge,
   buildLogonProof,
@@ -18,6 +20,11 @@ export interface AuthCredentials {
   readonly port: number;
   readonly username: string;
   readonly password: string;
+  /**
+   * Client-integrity checksum for StrictVersionCheck servers. When set, the proof
+   * carries crc_hash = SHA1(A || checksum); when null, a zero crc_hash is sent.
+   */
+  readonly integrityChecksum: Buffer | null;
 }
 
 export interface AuthResult {
@@ -39,12 +46,113 @@ function describeLogonResult(result: number): string {
   return LOGON_RESULT_MESSAGE[result] ?? `logon failed (code 0x${result.toString(16)})`;
 }
 
+/** True once the full logical message has arrived (parser no longer needs bytes). */
+export type Complete = (buffer: Buffer) => boolean;
+
+export function whenParses(parse: (buffer: Buffer) => unknown): Complete {
+  return (buffer) => {
+    try {
+      parse(buffer);
+      return true;
+    } catch (error) {
+      if (error instanceof RangeError) return false; // not fully arrived yet
+      throw error; // a real protocol error — let it surface
+    }
+  };
+}
+
+/** The realm-list response is [opcode u8][u16 size][payload]; complete when all present. */
+export const whenRealmListComplete: Complete = (buffer) => {
+  if (buffer.length < 3) return false;
+  return buffer.length >= 3 + buffer.readUInt16LE(1);
+};
+
 /**
- * Performs the SRP6 logon handshake against the auth server and fetches the realm
- * list. The auth server sends one response per request with no length framing, so
- * each step accumulates bytes and parses the whole buffer once it is complete
- * (a RangeError from the parser means "need more bytes").
+ * Reads the auth server's replies. That protocol has no length framing, and each
+ * reply carries a trailing tail (crc / security-flag bytes) whose exact length
+ * varies by server core. Rather than parse the tail, we wait until the logical
+ * message has arrived AND the socket has gone briefly idle, then take the whole
+ * buffer and discard whatever we didn't read. That makes each reply self-delimiting
+ * without knowing its tail, and stops leftover bytes leaking into the next read.
  */
+export class AuthReceiver {
+  #buffer = Buffer.alloc(0);
+  #idleTimer: NodeJS.Timeout | null = null;
+  #pending: { resolve: () => void; reject: (error: Error) => void; complete: Complete } | null =
+    null;
+  #failure: Error | null = null;
+  readonly #idleMs: number;
+  readonly #logger: Logger;
+
+  constructor(socket: NodeSocketLike, idleMs: number, logger: Logger) {
+    this.#idleMs = idleMs;
+    this.#logger = logger;
+    socket.on("data", (chunk: Buffer) => this.#onData(chunk));
+    socket.once("error", (error: Error) => this.#fail(error));
+    socket.once("close", () => this.#fail(new Error("auth connection closed early")));
+    socket.once("timeout", () => this.#fail(new Error("auth connection timed out")));
+  }
+
+  #onData(chunk: Buffer): void {
+    this.#buffer = Buffer.concat([this.#buffer, chunk]);
+    this.#logger.debug(`auth: recv ${chunk.length}B [${chunk.subarray(0, 48).toString("hex")}]`);
+    if (this.#pending) this.#armIdle();
+  }
+
+  #armIdle(): void {
+    if (this.#idleTimer) clearTimeout(this.#idleTimer);
+    this.#idleTimer = setTimeout(() => this.#onIdle(), this.#idleMs);
+    this.#idleTimer.unref?.();
+  }
+
+  #onIdle(): void {
+    this.#idleTimer = null;
+    const pending = this.#pending;
+    if (!pending) return;
+    let done = false;
+    try {
+      done = pending.complete(this.#buffer);
+    } catch (error) {
+      this.#pending = null;
+      pending.reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    if (done) {
+      this.#pending = null;
+      pending.resolve();
+    }
+    // otherwise keep waiting; the next chunk re-arms the idle timer
+  }
+
+  #fail(error: Error): void {
+    if (this.#failure) return;
+    this.#failure = error;
+    if (this.#idleTimer) {
+      clearTimeout(this.#idleTimer);
+      this.#idleTimer = null;
+    }
+    const pending = this.#pending;
+    this.#pending = null;
+    pending?.reject(error);
+  }
+
+  /** Resolve once `complete(buffer)` holds and the socket has been idle briefly. */
+  settle(complete: Complete): Promise<void> {
+    if (this.#failure) return Promise.reject(this.#failure);
+    return new Promise((resolve, reject) => {
+      this.#pending = { resolve, reject, complete };
+      if (this.#buffer.length > 0) this.#armIdle();
+    });
+  }
+
+  /** Return everything received so far and clear the buffer. */
+  take(): Buffer {
+    const taken = this.#buffer;
+    this.#buffer = Buffer.alloc(0);
+    return taken;
+  }
+}
+
 export class AuthClient {
   readonly #logger: Logger;
 
@@ -55,13 +163,15 @@ export class AuthClient {
   async login(credentials: AuthCredentials, timeoutMs = 15_000): Promise<AuthResult> {
     const socket = connect({ host: credentials.host, port: credentials.port });
     socket.setTimeout(timeoutMs);
+    const receiver = new AuthReceiver(socket, 200, this.#logger);
 
     try {
-      await once(socket, "connect", timeoutMs);
+      await waitForConnect(socket, timeoutMs);
       this.#logger.debug(`auth: connected to ${credentials.host}:${credentials.port}`);
 
       socket.write(buildLogonChallenge(credentials.username));
-      const challenge = parseLogonChallengeServer(await readMessage(socket, parseLogonChallengeServer));
+      await receiver.settle(whenParses(parseLogonChallengeServer));
+      const challenge = parseLogonChallengeServer(receiver.take());
       if (
         challenge.result !== LogonResult.Success ||
         !challenge.serverPublicKey ||
@@ -81,8 +191,12 @@ export class AuthClient {
         salt: challenge.salt,
       });
 
-      socket.write(buildLogonProof(proof.clientPublicKey, proof.clientProof));
-      const proofResult = parseLogonProofServer(await readMessage(socket, parseLogonProofServer));
+      const crcHash = credentials.integrityChecksum
+        ? integrityCrcHash(proof.clientPublicKey, credentials.integrityChecksum)
+        : Buffer.alloc(20);
+      socket.write(buildLogonProof(proof.clientPublicKey, proof.clientProof, crcHash));
+      await receiver.settle(whenParses(parseLogonProofServer));
+      const proofResult = parseLogonProofServer(receiver.take());
       if (proofResult.result !== LogonResult.Success || !proofResult.serverProof) {
         throw new FatalError(`auth: ${describeLogonResult(proofResult.result)}`);
       }
@@ -92,7 +206,12 @@ export class AuthClient {
       this.#logger.debug("auth: SRP6 proof accepted");
 
       socket.write(buildRealmListRequest());
-      const realms = parseRealmList(await readRealmListPayload(socket));
+      await receiver.settle(whenRealmListComplete);
+      const realmResponse = receiver.take();
+      if (realmResponse.length < 3 || realmResponse[0] !== AuthCommand.RealmList) {
+        throw new Error("auth: unexpected realm-list response");
+      }
+      const realms = parseRealmList(realmResponse.subarray(3));
       this.#logger.debug(`auth: ${realms.length} realm(s) returned`);
 
       return { sessionKey: proof.sessionKey, realms };
@@ -102,68 +221,19 @@ export class AuthClient {
   }
 }
 
-/** Resolve once `event` fires, or reject on timeout/error/close. */
-function once(socket: Socket, event: "connect", timeoutMs: number): Promise<void> {
+function waitForConnect(socket: Socket, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => finish(new Error(`timed out waiting for ${event}`)), timeoutMs);
+    const timer = setTimeout(() => finish(new Error("timed out waiting for connect")), timeoutMs);
     const finish = (error?: Error): void => {
       clearTimeout(timer);
-      socket.off(event, onEvent);
+      socket.off("connect", onConnect);
       socket.off("error", onError);
       if (error) reject(error);
       else resolve();
     };
-    const onEvent = (): void => finish();
+    const onConnect = (): void => finish();
     const onError = (error: Error): void => finish(error);
-    socket.once(event, onEvent);
+    socket.once("connect", onConnect);
     socket.once("error", onError);
   });
-}
-
-/**
- * Accumulate bytes until `parse` succeeds, then resolve the whole buffer. Used
- * for the fixed-shape challenge/proof responses; the parser throwing RangeError
- * means the message is not fully arrived yet.
- */
-function readMessage<T>(socket: Socket, parse: (buf: Buffer) => T): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    let acc = Buffer.alloc(0);
-    const onData = (chunk: Buffer): void => {
-      acc = Buffer.concat([acc, chunk]);
-      try {
-        parse(acc);
-      } catch (error) {
-        if (error instanceof RangeError) return; // need more bytes
-        finish(error instanceof Error ? error : new Error(String(error)));
-        return;
-      }
-      finish(undefined, acc);
-    };
-    const onError = (error: Error): void => finish(error);
-    const onClose = (): void => finish(new Error("auth connection closed early"));
-    const onTimeout = (): void => finish(new Error("auth connection timed out"));
-    const finish = (error?: Error, value?: Buffer): void => {
-      socket.off("data", onData);
-      socket.off("error", onError);
-      socket.off("close", onClose);
-      socket.off("timeout", onTimeout);
-      if (error) reject(error);
-      else if (value) resolve(value);
-    };
-    socket.on("data", onData);
-    socket.once("error", onError);
-    socket.once("close", onClose);
-    socket.once("timeout", onTimeout);
-  });
-}
-
-/** The realm-list response is [opcode u8][u16 size][payload]; return the payload. */
-async function readRealmListPayload(socket: Socket): Promise<Buffer> {
-  const full = await readMessage(socket, (buf) => {
-    if (buf.length < 3) throw new RangeError("need header");
-    const size = buf.readUInt16LE(1);
-    if (buf.length < 3 + size) throw new RangeError("need body");
-    return true;
-  });
-  return full.subarray(3);
 }

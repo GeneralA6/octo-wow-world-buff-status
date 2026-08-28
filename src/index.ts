@@ -62,6 +62,7 @@ async function runConnection(
     port: config.authPort,
     username: config.account,
     password: config.password,
+    integrityChecksum: config.integrityChecksum,
   });
 
   const target = resolveWorldTarget(config, realms, logger);

@@ -67,6 +67,22 @@ describe("loadConfig", () => {
       /DISCORD_MENTION_ROLE_ID must be a numeric/,
     );
   });
+
+  it("defaults the integrity checksum to a 20-byte value", () => {
+    const checksum = loadConfig({ ...minimalEnv }).integrityChecksum;
+    expect(checksum?.length).toBe(20);
+  });
+
+  it("disables the integrity checksum when set to 'none'", () => {
+    const config = loadConfig({ ...minimalEnv, WOW_INTEGRITY_CHECKSUM: "none" });
+    expect(config.integrityChecksum).toBeNull();
+  });
+
+  it("rejects a malformed integrity checksum", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_INTEGRITY_CHECKSUM: "xyz" })).toThrow(
+      /WOW_INTEGRITY_CHECKSUM must be 40 hex/,
+    );
+  });
 });
 
 describe("parseAddress", () => {

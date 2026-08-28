@@ -1,4 +1,5 @@
 import type { LogLevel } from "./logger.js";
+import { DEFAULT_INTEGRITY_CHECKSUM } from "./crypto/integrity.js";
 
 export interface BotConfig {
   readonly account: string;
@@ -10,6 +11,8 @@ export interface BotConfig {
   /** Optional world-server override; when unset the realm list is used. */
   readonly worldHost: string | null;
   readonly worldPort: number | null;
+  /** Client-integrity checksum for StrictVersionCheck servers; null disables it. */
+  readonly integrityChecksum: Buffer | null;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   readonly pollIntervalMs: number;
@@ -56,6 +59,18 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const worldPortRaw = env.WOW_WORLD_PORT?.trim();
   const worldPort = worldPortRaw ? intWithDefault("WOW_WORLD_PORT", 0, 1) : null;
 
+  // Client-integrity checksum: defaults to the verified 1.12.1 value; "none" disables.
+  const rawChecksum = env.WOW_INTEGRITY_CHECKSUM?.trim();
+  let integrityChecksum: Buffer | null = null;
+  if (rawChecksum !== "none") {
+    const hex = rawChecksum && rawChecksum.length > 0 ? rawChecksum : DEFAULT_INTEGRITY_CHECKSUM;
+    if (!/^[0-9a-fA-F]{40}$/.test(hex)) {
+      errors.push("WOW_INTEGRITY_CHECKSUM must be 40 hex chars (20 bytes) or 'none'");
+    } else {
+      integrityChecksum = Buffer.from(hex, "hex");
+    }
+  }
+
   const watchAreaId = intWithDefault("WATCH_AREA_ID", 2159, 1);
   const watchAreaName = env.WATCH_AREA_NAME?.trim() || "Onyxia's Lair";
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
@@ -86,6 +101,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     characterName,
     worldHost,
     worldPort,
+    integrityChecksum,
     watchAreaId,
     watchAreaName,
     pollIntervalMs,

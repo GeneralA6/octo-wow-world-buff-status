@@ -39,7 +39,19 @@ describe("buildLogonProof", () => {
     expect(packet[0]).toBe(0x01);
     expect(packet.subarray(1, 33).equals(a)).toBe(true);
     expect(packet.subarray(33, 53).equals(m1)).toBe(true);
-    expect(packet.subarray(53, 73).equals(Buffer.alloc(20))).toBe(true);
+    expect(packet.subarray(53, 73).equals(Buffer.alloc(20))).toBe(true); // crc defaults to zeros
+  });
+
+  it("carries the provided crc_hash for StrictVersionCheck servers", () => {
+    const crc = Buffer.alloc(20, 0x5a);
+    const packet = buildLogonProof(Buffer.alloc(32), Buffer.alloc(20), crc);
+    expect(packet.subarray(53, 73).equals(crc)).toBe(true);
+  });
+
+  it("rejects a wrong-sized crc_hash", () => {
+    expect(() => buildLogonProof(Buffer.alloc(32), Buffer.alloc(20), Buffer.alloc(19))).toThrow(
+      /crc_hash must be 20/,
+    );
   });
 
   it("rejects wrong-sized A or M1", () => {
