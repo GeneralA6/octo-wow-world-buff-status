@@ -42,6 +42,10 @@ export enum WorldOpcode {
 /** SMSG_AUTH_RESPONSE result byte we treat as "you are in". */
 export const AUTH_OK = 0x0c;
 
-/** WoW 1.12.1 client build. */
-export const CLIENT_BUILD = 5875;
+/**
+ * Client build advertised at logon. OctoWoW's custom client reports 7272 (stock
+ * 1.12.1 is 5875), and its server keys the integrity check on this build — the
+ * challenge accepts 5875 but the version check does not.
+ */
+export const CLIENT_BUILD = 7272;
 export const CLIENT_VERSION = { major: 1, minor: 12, patch: 1 } as const;

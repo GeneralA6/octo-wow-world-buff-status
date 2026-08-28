@@ -15,14 +15,14 @@ describe("buildLogonChallenge", () => {
     const hex = packet.toString("hex");
 
     expect(packet[0]).toBe(0x00); // opcode
-    expect(packet[1]).toBe(0x08); // protocol version
+    expect(packet[1]).toBe(0x03); // protocol version (matches the OctoWoW client)
     expect(packet.readUInt16LE(2)).toBe(packet.length - 4); // size covers the rest
     expect(hex).toContain("576f5700"); // "WoW\0"
     expect(hex).toContain("010c01"); // version 1.12.1
-    expect(hex).toContain("f316"); // build 5875 LE
+    expect(hex).toContain("681c"); // build 7272 LE (OctoWoW custom build)
     expect(hex).toContain("36387800"); // "x86" reversed
     expect(hex).toContain("6e695700"); // "Win" reversed
-    expect(hex).toContain("53556e65"); // "enUS" reversed
+    expect(hex).toContain("42476e65"); // "enGB" reversed
     expect(hex).toContain("7f000001"); // client ip 127.0.0.1
     expect(hex.endsWith("54455354")).toBe(true); // "TEST"
     expect(packet[packet.length - 5]).toBe(4); // account name length

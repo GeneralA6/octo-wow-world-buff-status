@@ -20,11 +20,11 @@ import {
 const GAME_NAME = Buffer.from([0x57, 0x6f, 0x57, 0x00]); // "WoW\0"
 const PLATFORM = Buffer.from([0x36, 0x38, 0x78, 0x00]); // "x86" reversed -> "68x\0"
 const OS = Buffer.from([0x6e, 0x69, 0x57, 0x00]); // "Win" reversed -> "niW\0"
-const LOCALE = Buffer.from([0x53, 0x55, 0x6e, 0x65]); // "enUS" reversed -> "SUne"
+const LOCALE = Buffer.from([0x42, 0x47, 0x6e, 0x65]); // "enGB" reversed -> "BGne" (OctoWoW client)
 
-// The byte after the opcode. MaNGOS-family cores ignore it; 8 is what modern
-// references send.
-const PROTOCOL_VERSION = 8;
+// The byte after the opcode. MaNGOS-family cores ignore it; the OctoWoW client
+// sends 3, matched here so our challenge is byte-identical to the real client.
+const PROTOCOL_VERSION = 3;
 
 export function buildLogonChallenge(username: string): Buffer {
   const accountBytes = Buffer.from(username.toUpperCase(), "utf8");

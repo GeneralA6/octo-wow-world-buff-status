@@ -12,3 +12,6 @@ capture.json
 .env
 .env.*
 !.env.example
+
+decode-mine.ts
+run.log

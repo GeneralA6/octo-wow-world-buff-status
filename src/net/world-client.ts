@@ -115,6 +115,7 @@ export class WorldClient {
   }
 
   #onData(chunk: Buffer): void {
+    this.#logger.debug(`world: recv ${chunk.length}B [${chunk.subarray(0, 32).toString("hex")}]`);
     this.#recvBuffer = Buffer.concat([this.#recvBuffer, chunk]);
 
     for (;;) {

@@ -16,6 +16,17 @@ import { CLIENT_BUILD } from "../protocol/opcodes.js";
 export const WORLD_CLIENT_HEADER_SIZE = 6;
 export const WORLD_SERVER_HEADER_SIZE = 4;
 
+/**
+ * The standard 1.12 addon-info block appended to CMSG_AUTH_SESSION: a 4-byte
+ * uncompressed length followed by the zlib-compressed default addon list. The
+ * world server parses this, so it must be present or the session packet is
+ * rejected and the connection dropped.
+ */
+const ADDON_INFO = Buffer.from(
+  "56010000789c75ccbd0ec2300c04e0f21ebc0c614095c842c38c4ce2220bc7a98ccb4f9f1e16240673eb777781695940cb693367a326c7be5bd5c77adf7d12be16c08c7124e41249a8c2e495480ac9c53dd8b67a064bf8340f15467367bb38cc7ac7978bbddc26ccfe3042d6e6ca01a8b8908051fcb7a45070b812f33f2641fdb5379019668f",
+  "hex",
+);
+
 function u32le(value: number): Buffer {
   const buf = Buffer.alloc(4);
   buf.writeUInt32LE(value >>> 0, 0);
@@ -64,16 +75,15 @@ export function computeAuthSessionDigest(
 }
 
 /**
- * CMSG_AUTH_SESSION body. `addonInfo` defaults to empty: MaNGOS-family cores
- * treat the addon block as optional. If a server rejects the session right after
- * this packet, a real client's addon blob may be required.
+ * CMSG_AUTH_SESSION body. `addonInfo` defaults to the standard 1.12 addon block,
+ * which the world server requires to parse the packet.
  */
 export function buildAuthSessionBody(
   account: string,
   clientSeed: number,
   serverSeed: number,
   sessionKey: Buffer,
-  addonInfo: Buffer = Buffer.alloc(0),
+  addonInfo: Buffer = ADDON_INFO,
 ): Buffer {
   const digest = computeAuthSessionDigest(account, clientSeed, serverSeed, sessionKey);
   return new PacketWriter()
