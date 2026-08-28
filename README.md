@@ -115,6 +115,7 @@ to `dist/` and run `node dist/index.js`, with an on-failure restart policy.
    | `WOW_PASSWORD` | its password |
    | `WOW_CHARACTER` | the character to log in |
    | `DISCORD_WEBHOOK_URL` | your Discord webhook |
+   | `DISCORD_MENTION_ROLE_ID` | opt-in role id to ping (optional; see below) |
    | `WOW_REALM` | `Turtle WoW` (optional, this is the default) |
    | `WATCH_AREA_ID` | `2159` (optional) |
    | `POLL_INTERVAL_SECONDS` | `20` (optional) |
@@ -131,6 +132,32 @@ cause.
 
 ---
 
+## Personal / opt-in notifications
+
+By default the bot posts to the channel and everyone there sees it. To let members
+**opt in** to actually being *pinged* — instead of blasting the whole channel —
+use a self-assignable role. No extra code or bot needed:
+
+1. **Create a role**, e.g. `@OnyxiaWatch`, in *Server Settings → Roles*.
+2. **Let members give themselves the role.** The easy native way: *Server Settings
+   → Onboarding* (or *Channels & Roles*) → add it as a self-assignable/opt-in role.
+   Members pick it up in the server's onboarding/roles screen. (A reaction-role bot
+   works too, but isn't needed.)
+3. **Get the role id:** turn on *Discord → Settings → Advanced → Developer Mode*,
+   then right-click the role → **Copy Role ID**.
+4. Set `DISCORD_MENTION_ROLE_ID` to that id (in `.env` locally, or Railway
+   Variables). Now every **raid entered** and **cleared** post pings only that role
+   — so only members who took it get notified. Everyone else can mute the channel.
+
+Tip: put the webhook in a channel that only `@OnyxiaWatch` can see, and
+non-subscribers won't even see the posts.
+
+> Want the bot to **DM each subscriber privately** instead of posting in a channel
+> at all? That's a bigger change — Discord webhooks can't DM, so it needs a real
+> bot application (bot token, a subscriber list, and a `/subscribe` command). Ask
+> and I'll add it; the role approach above is the simple, no-extra-infrastructure
+> option.
+
 ## How it works
 
 ```
@@ -138,7 +165,7 @@ AuthClient ──SRP6 logon──► session key K
                                 │
 WorldClient ──auth session(K)──► header cipher on ──► char login ──► in world
                                 │
-     every POLL_INTERVAL: CMSG_WHO(zone=2159) ──► SMSG_WHO ──► players in the lair
+   every ~POLL_INTERVAL (jittered ±15%): CMSG_WHO(zone=2159) ──► SMSG_WHO ──► players
                                 │
 OnyxiaWatcher diffs successive snapshots ──► entered / left / roster-changed
                                 │

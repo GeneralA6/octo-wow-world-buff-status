@@ -43,20 +43,38 @@ const EMBED_COLOR: Record<NotifyKind, number> = {
   error: 0xe74c3c,
 };
 
+/** Event kinds worth pinging the opt-in role for — the actionable ones. */
+const MENTION_KINDS: ReadonlySet<NotifyKind> = new Set<NotifyKind>(["entered", "left"]);
+
+interface DiscordPayload {
+  embeds: { title: string; description: string; color: number }[];
+  content?: string;
+  allowed_mentions?: { parse: string[]; roles: string[] };
+}
+
+export interface DiscordWebhookOptions {
+  /** When set, raid enter/leave posts ping this role so only opted-in members are notified. */
+  readonly mentionRoleId?: string | null;
+  /** Injectable HTTP post for testing. */
+  readonly post?: HttpPostJson;
+}
+
 export class DiscordWebhookNotifier implements Notifier {
   readonly #webhookUrl: string;
   readonly #post: HttpPostJson;
+  readonly #mentionRoleId: string | null;
 
-  constructor(webhookUrl: string, post: HttpPostJson = defaultPost) {
+  constructor(webhookUrl: string, options: DiscordWebhookOptions = {}) {
     if (!/^https:\/\/discord(app)?\.com\/api\/webhooks\//.test(webhookUrl)) {
       throw new Error("DISCORD_WEBHOOK_URL must be a discord.com webhook URL");
     }
     this.#webhookUrl = webhookUrl;
-    this.#post = post;
+    this.#post = options.post ?? defaultPost;
+    this.#mentionRoleId = options.mentionRoleId ?? null;
   }
 
   async notify(message: NotifyMessage): Promise<void> {
-    const payload = JSON.stringify({
+    const payload: DiscordPayload = {
       embeds: [
         {
           title: message.title,
@@ -64,9 +82,15 @@ export class DiscordWebhookNotifier implements Notifier {
           color: EMBED_COLOR[message.kind],
         },
       ],
-    });
+    };
 
-    const response = await this.#post(this.#webhookUrl, payload);
+    if (this.#mentionRoleId && MENTION_KINDS.has(message.kind)) {
+      // A role only pings from message content, and allowed_mentions must permit it.
+      payload.content = `<@&${this.#mentionRoleId}>`;
+      payload.allowed_mentions = { parse: [], roles: [this.#mentionRoleId] };
+    }
+
+    const response = await this.#post(this.#webhookUrl, JSON.stringify(payload));
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       throw new Error(`Discord webhook failed with ${response.status}: ${detail}`.trim());

@@ -7,7 +7,11 @@ import { WorldClient } from "./net/world-client.js";
 import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
 import { formatEvent } from "./notify/format.js";
 import { OnyxiaWatcher } from "./watcher/onyxia-watcher.js";
+import { jitter } from "./schedule.js";
 import type { WhoResult } from "./protocol/who.js";
+
+/** +/- 15% randomization on the poll interval so the cadence isn't a fixed tick. */
+const POLL_JITTER_RATIO = 0.15;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -69,7 +73,7 @@ async function runConnection(
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
-      if (pollTimer) clearInterval(pollTimer);
+      if (pollTimer) clearTimeout(pollTimer);
       if (error) reject(error);
       else resolve();
     };
@@ -85,17 +89,19 @@ async function runConnection(
       handlers: {
         onReady: () => {
           logger.info(
-            `in world; watching ${config.watchAreaName} every ${config.pollIntervalMs / 1000}s`,
+            `in world; watching ${config.watchAreaName} about every ${config.pollIntervalMs / 1000}s`,
           );
-          world.requestWho(query);
-          pollTimer = setInterval(() => {
+          const poll = (): void => {
             try {
               world.requestWho(query);
             } catch (error) {
               logger.warn(`who request failed: ${(error as Error).message}`);
             }
-          }, config.pollIntervalMs);
-          pollTimer.unref?.();
+            if (settled) return;
+            pollTimer = setTimeout(poll, jitter(config.pollIntervalMs, POLL_JITTER_RATIO));
+            pollTimer.unref?.();
+          };
+          poll();
         },
         onWho: onWho,
         onError: (error) => {
@@ -119,7 +125,9 @@ async function main(): Promise<void> {
 
   const config = loadConfig(process.env);
   const logger = createLogger(config.logLevel);
-  const notifier: Notifier = new DiscordWebhookNotifier(config.discordWebhookUrl);
+  const notifier: Notifier = new DiscordWebhookNotifier(config.discordWebhookUrl, {
+    mentionRoleId: config.discordMentionRoleId,
+  });
   const watcher = new OnyxiaWatcher();
 
   const push = async (message: NotifyMessage): Promise<void> => {

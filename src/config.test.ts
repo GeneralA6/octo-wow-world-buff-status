@@ -52,6 +52,21 @@ describe("loadConfig", () => {
   it("rejects an unknown log level", () => {
     expect(() => loadConfig({ ...minimalEnv, LOG_LEVEL: "verbose" })).toThrow(/LOG_LEVEL must be/);
   });
+
+  it("defaults the mention role to null", () => {
+    expect(loadConfig({ ...minimalEnv }).discordMentionRoleId).toBeNull();
+  });
+
+  it("keeps a numeric mention role id", () => {
+    const config = loadConfig({ ...minimalEnv, DISCORD_MENTION_ROLE_ID: "123456789012345678" });
+    expect(config.discordMentionRoleId).toBe("123456789012345678");
+  });
+
+  it("rejects a non-numeric mention role id", () => {
+    expect(() => loadConfig({ ...minimalEnv, DISCORD_MENTION_ROLE_ID: "@OnyxiaWatch" })).toThrow(
+      /DISCORD_MENTION_ROLE_ID must be a numeric/,
+    );
+  });
 });
 
 describe("parseAddress", () => {

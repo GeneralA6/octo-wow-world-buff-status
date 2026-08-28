@@ -14,6 +14,8 @@ export interface BotConfig {
   readonly watchAreaName: string;
   readonly pollIntervalMs: number;
   readonly discordWebhookUrl: string;
+  /** Role to ping on raid enter/leave so only opted-in members are notified. */
+  readonly discordMentionRoleId: string | null;
   readonly logLevel: LogLevel;
 }
 
@@ -60,6 +62,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const discordWebhookUrl = required("DISCORD_WEBHOOK_URL");
 
+  const discordMentionRoleId = env.DISCORD_MENTION_ROLE_ID?.trim() || null;
+  if (discordMentionRoleId && !/^\d+$/.test(discordMentionRoleId)) {
+    errors.push("DISCORD_MENTION_ROLE_ID must be a numeric Discord role id");
+  }
+
   const logLevelRaw = (env.LOG_LEVEL?.trim() || "info") as LogLevel;
   const logLevel: LogLevel = LOG_LEVELS.includes(logLevelRaw) ? logLevelRaw : "info";
   if (env.LOG_LEVEL && !LOG_LEVELS.includes(logLevelRaw)) {
@@ -83,6 +90,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     watchAreaName,
     pollIntervalMs,
     discordWebhookUrl,
+    discordMentionRoleId,
     logLevel,
   };
 }
