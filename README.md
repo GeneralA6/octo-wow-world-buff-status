@@ -116,7 +116,8 @@ to `dist/` and run `node dist/index.js`, with an on-failure restart policy.
    | `WOW_CHARACTER` | the character to log in |
    | `DISCORD_WEBHOOK_URL` | your Discord webhook |
    | `DISCORD_MENTION_ROLE_ID` | opt-in role id to ping (optional; see below) |
-   | `WOW_REALM` | `Turtle WoW` (optional, this is the default) |
+   | `WOW_AUTH_HOST` | your server's realmlist host, e.g. `octowow.st` (default) |
+   | `WOW_REALM` | the realm your character is on, e.g. `N'Zoth` (default) |
    | `WATCH_AREA_ID` | `2159` (optional) |
    | `POLL_INTERVAL_SECONDS` | `20` (optional) |
    | `LOG_LEVEL` | `info`, or `debug` while you verify it |

@@ -47,9 +47,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const account = required("WOW_ACCOUNT");
   const password = required("WOW_PASSWORD");
-  const authHost = env.WOW_AUTH_HOST?.trim() || "logon.turtle-wow.org";
+  const authHost = env.WOW_AUTH_HOST?.trim() || "octowow.st";
   const authPort = intWithDefault("WOW_AUTH_PORT", 3724, 1);
-  const realm = env.WOW_REALM?.trim() || "Turtle WoW";
+  const realm = env.WOW_REALM?.trim() || "N'Zoth";
   const characterName = required("WOW_CHARACTER");
 
   const worldHost = env.WOW_WORLD_HOST?.trim() || null;

@@ -11,9 +11,9 @@ const minimalEnv = {
 describe("loadConfig", () => {
   it("fills defaults for a minimal valid environment", () => {
     const config = loadConfig({ ...minimalEnv });
-    expect(config.authHost).toBe("logon.turtle-wow.org");
+    expect(config.authHost).toBe("octowow.st");
     expect(config.authPort).toBe(3724);
-    expect(config.realm).toBe("Turtle WoW");
+    expect(config.realm).toBe("N'Zoth");
     expect(config.watchAreaId).toBe(2159);
     expect(config.watchAreaName).toBe("Onyxia's Lair");
     expect(config.pollIntervalMs).toBe(20_000);

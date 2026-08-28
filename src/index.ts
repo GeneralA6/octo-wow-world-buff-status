@@ -1,7 +1,7 @@
 import { connect, type Socket } from "node:net";
 import { loadConfig, parseAddress, type BotConfig } from "./config.js";
 import { createLogger, type Logger } from "./logger.js";
-import { FatalError } from "./errors.js";
+import { describeError, FatalError } from "./errors.js";
 import { AuthClient } from "./net/auth-client.js";
 import { WorldClient } from "./net/world-client.js";
 import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
@@ -175,8 +175,7 @@ async function main(): Promise<void> {
         await push({ kind: "error", title: "Bot stopped", body: error.message });
         process.exit(1);
       }
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn(`connection error: ${message}; retrying in ${backoffMs / 1000}s`);
+      logger.warn(`connection error: ${describeError(error)}; retrying in ${backoffMs / 1000}s`);
       await delay(backoffMs);
       backoffMs = Math.min(backoffMs * 2, 60_000);
     }
