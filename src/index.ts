@@ -6,9 +6,8 @@ import { AuthClient } from "./net/auth-client.js";
 import { WorldClient } from "./net/world-client.js";
 import { resolveBuild } from "./net/client-resolver.js";
 import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
-import { formatEvent } from "./notify/format.js";
-import { OnyxiaWatcher } from "./watcher/onyxia-watcher.js";
-import { raidAlerts } from "./watcher/raid-alerts.js";
+import { formatRaidEvent } from "./notify/format.js";
+import { RaidTracker } from "./watcher/raid-tracker.js";
 import { jitter } from "./schedule.js";
 import type { WhoResult } from "./protocol/who.js";
 
@@ -152,7 +151,7 @@ async function main(): Promise<void> {
   const notifier: Notifier = new DiscordWebhookNotifier(config.discordWebhookUrl, {
     mentionRoleId: config.discordMentionRoleId,
   });
-  const watcher = new OnyxiaWatcher();
+  const tracker = new RaidTracker(config.minRaidSize, config.raidGrouping);
 
   // Client identity values; re-resolved from the CDN if the server rejects them.
   const client: ClientValues = {
@@ -175,8 +174,8 @@ async function main(): Promise<void> {
       `who ${config.watchAreaName}: ${inZone.length} in zone ` +
         `(${result.players.length} returned, ${result.onlineCount} online)`,
     );
-    for (const event of raidAlerts(watcher, inZone, config.minRaidSize)) {
-      void push(formatEvent(event, config.watchAreaName));
+    for (const event of tracker.update(inZone)) {
+      void push(formatRaidEvent(event, config.watchAreaName));
     }
   };
 

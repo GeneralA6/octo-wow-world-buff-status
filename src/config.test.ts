@@ -105,14 +105,26 @@ describe("loadConfig", () => {
     }
   });
 
-  it("defaults the raid-size floor to 5 and accepts an override", () => {
-    expect(loadConfig({ ...minimalEnv }).minRaidSize).toBe(5);
-    expect(loadConfig({ ...minimalEnv, WOW_MIN_RAID_SIZE: "10" }).minRaidSize).toBe(10);
+  it("defaults the raid-forming threshold to 15 and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).minRaidSize).toBe(15);
+    expect(loadConfig({ ...minimalEnv, WOW_MIN_RAID_SIZE: "20" }).minRaidSize).toBe(20);
   });
 
-  it("rejects a raid-size floor below 1", () => {
+  it("rejects a raid-forming threshold below 1", () => {
     expect(() => loadConfig({ ...minimalEnv, WOW_MIN_RAID_SIZE: "0" })).toThrow(
       /WOW_MIN_RAID_SIZE must be an integer >= 1/,
+    );
+  });
+
+  it("defaults raid grouping to auto and accepts guild/lair", () => {
+    expect(loadConfig({ ...minimalEnv }).raidGrouping).toBe("auto");
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_GROUPING: "lair" }).raidGrouping).toBe("lair");
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_GROUPING: "GUILD" }).raidGrouping).toBe("guild");
+  });
+
+  it("rejects an unknown raid grouping", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_RAID_GROUPING: "instance" })).toThrow(
+      /WOW_RAID_GROUPING must be one of/,
     );
   });
 

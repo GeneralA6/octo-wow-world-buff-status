@@ -2,6 +2,13 @@ import type { LogLevel } from "./logger.js";
 import { DEFAULT_INTEGRITY_CHECKSUM } from "./crypto/integrity.js";
 import { CLIENT_BUILD } from "./protocol/opcodes.js";
 import { OCTOWOW_CDN } from "./net/client-resolver.js";
+import type { GroupingMode } from "./watcher/raid-tracker.js";
+
+const GROUPING_MODES: readonly GroupingMode[] = ["auto", "guild", "lair"];
+
+function isGroupingMode(value: string): value is GroupingMode {
+  return GROUPING_MODES.some((mode) => mode === value);
+}
 
 export interface BotConfig {
   readonly account: string;
@@ -25,8 +32,10 @@ export interface BotConfig {
   readonly clientCdn: string;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
-  /** Minimum players in the zone to count as a raid (filters out solo scouts). */
+  /** Members a cohort must reach for a raid to count as forming ("about to start"). */
   readonly minRaidSize: number;
+  /** How to tell concurrent raids apart: auto (guild raids + a pickup pool), guild, or lair. */
+  readonly raidGrouping: GroupingMode;
   /** Post a "bot online" message on startup. Off by default to stay quiet. */
   readonly announceStartup: boolean;
   readonly pollIntervalMs: number;
@@ -95,7 +104,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const watchAreaId = intWithDefault("WATCH_AREA_ID", 2159, 1);
   const watchAreaName = env.WATCH_AREA_NAME?.trim() || "Onyxia's Lair";
-  const minRaidSize = intWithDefault("WOW_MIN_RAID_SIZE", 5, 1);
+  const minRaidSize = intWithDefault("WOW_MIN_RAID_SIZE", 15, 1);
+
+  const groupingRaw = env.WOW_RAID_GROUPING?.trim().toLowerCase();
+  const raidGrouping: GroupingMode = groupingRaw && isGroupingMode(groupingRaw) ? groupingRaw : "auto";
+  if (groupingRaw && !isGroupingMode(groupingRaw)) {
+    errors.push(`WOW_RAID_GROUPING must be one of ${GROUPING_MODES.join(", ")}`);
+  }
+
   const announceStartupRaw = env.WOW_ANNOUNCE_STARTUP?.trim().toLowerCase();
   const announceStartup = announceStartupRaw === "true" || announceStartupRaw === "1";
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
@@ -134,6 +150,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     watchAreaId,
     watchAreaName,
     minRaidSize,
+    raidGrouping,
     announceStartup,
     pollIntervalMs,
     discordWebhookUrl,

@@ -1,68 +1,56 @@
 import { describe, expect, it } from "vitest";
-import type { WhoPlayer } from "../protocol/who.js";
-import { formatEvent } from "./format.js";
-
-function player(name: string, guild = "Fortitude"): WhoPlayer {
-  return { name, guild, level: 60, classId: 1, raceId: 2, areaId: 2159 };
-}
+import type { RaidCohortSnapshot } from "../watcher/raid-tracker.js";
+import { formatRaidEvent } from "./format.js";
 
 const AREA = "Onyxia's Lair";
 
-describe("formatEvent", () => {
-  it("phrases a fresh entry as incoming and names the dominant guild", () => {
-    const message = formatEvent(
-      { kind: "raid-entered", initial: false, players: [player("A"), player("B")] },
-      AREA,
-    );
+function cohort(over: Partial<RaidCohortSnapshot> = {}): RaidCohortSnapshot {
+  return { key: "Nightfall", label: "<Nightfall>", count: 16, peak: 16, members: [], ...over };
+}
+
+describe("formatRaidEvent", () => {
+  it("announces a forming raid with its label and count", () => {
+    const message = formatRaidEvent({ kind: "raid-forming", initial: false, cohort: cohort() }, AREA);
     expect(message.kind).toBe("entered");
-    expect(message.title).toBe("🐉 Raid entered Onyxia's Lair");
-    expect(message.body).toContain("2 players");
-    expect(message.body).toContain("<Fortitude>");
-    expect(message.body).toContain("world buff");
+    expect(message.title).toBe("🐉 Raid forming in Onyxia's Lair");
+    expect(message.body).toContain("<Nightfall>");
+    expect(message.body).toContain("16");
+    expect(message.body).toContain("about to start");
   });
 
-  it("phrases an initial in-progress raid differently", () => {
-    const message = formatEvent(
-      { kind: "raid-entered", initial: true, players: [player("A")] },
-      AREA,
-    );
-    expect(message.title).toBe("🐉 Raid already in Onyxia's Lair");
-    expect(message.body).toContain("1 player already inside");
+  it("words an already-in-progress raid differently", () => {
+    const message = formatRaidEvent({ kind: "raid-forming", initial: true, cohort: cohort() }, AREA);
+    expect(message.title).toBe("🐉 Raid in Onyxia's Lair");
+    expect(message.body).toContain("already");
+    expect(message.body).not.toContain("about to start");
   });
 
-  it("phrases a clear with the previous count", () => {
-    const message = formatEvent(
-      { kind: "raid-left", previousPlayers: [player("A"), player("B"), player("C")] },
+  it("reports a departed raid with its peak", () => {
+    const message = formatRaidEvent(
+      { kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) },
       AREA,
     );
     expect(message.kind).toBe("left");
-    expect(message.title).toBe("✅ Onyxia's Lair cleared");
-    expect(message.body).toContain("was 3 players");
+    expect(message.title).toBe("✅ Raid left Onyxia's Lair");
+    expect(message.body).toContain("<Nightfall>");
+    expect(message.body).toContain("peaked 25 players");
   });
 
-  it("summarizes a roster change with +/- counts", () => {
-    const message = formatEvent(
-      {
-        kind: "roster-changed",
-        entered: [player("C")],
-        left: ["A"],
-        players: [player("B"), player("C")],
-      },
+  it("carries the pickup-bucket label through unchanged", () => {
+    const message = formatRaidEvent(
+      { kind: "raid-forming", initial: false, cohort: cohort({ key: " pickup", label: "a pickup group" }) },
       AREA,
     );
-    expect(message.kind).toBe("changed");
-    expect(message.body).toContain("+1");
-    expect(message.body).toContain("-1");
-    expect(message.body).toContain("2 players now");
+    expect(message.body).toContain("a pickup group");
+    expect(message.body).not.toContain("<");
   });
 
-  it("uses singular wording for one player and omits an empty guild", () => {
-    const message = formatEvent(
-      { kind: "raid-entered", initial: false, players: [player("Solo", "")] },
+  it("uses singular wording for a peak of one", () => {
+    const message = formatRaidEvent(
+      { kind: "raid-left", cohort: cohort({ count: 0, peak: 1 }) },
       AREA,
     );
-    expect(message.body).toContain("1 player just appeared");
-    expect(message.body).not.toContain("<>");
-    expect(message.body).not.toContain("mostly");
+    expect(message.body).toContain("peaked 1 player");
+    expect(message.body).not.toContain("1 players");
   });
 });

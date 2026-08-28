@@ -168,16 +168,36 @@ WorldClient ──auth session(K)──► header cipher on ──► char login
                                 │
    every ~POLL_INTERVAL (jittered ±15%): CMSG_WHO(zone=2159) ──► SMSG_WHO ──► players
                                 │
-OnyxiaWatcher diffs successive snapshots ──► entered / left / roster-changed
+RaidTracker groups players into cohorts (by guild, or the whole lair) and follows
+each roster ──► raid-forming (crossed WOW_MIN_RAID_SIZE) / raid-left (roster empty)
                                 │
-   raidAlerts applies WOW_MIN_RAID_SIZE floor, keeps only entered / left
-                                │
-       formatEvent ──► DiscordWebhookNotifier ──► your channel
+    formatRaidEvent ──► DiscordWebhookNotifier ──► your channel
 ```
 
-Alerts are deliberately quiet: a zone under `WOW_MIN_RAID_SIZE` counts as empty (no
-lone-scout pings), roster churn while a raid is inside is silent, and the startup
-"bot online" message is off unless `WOW_ANNOUNCE_STARTUP` is set.
+`/who` returns one flat list of everyone in the zone (all instances merged, capped
+at 49 names) with **no instance or raid-group id**, so the only field that can tell
+two concurrent raids apart is the guild tag — and even that fails for a pickup raid
+whose members are scattered across guilds. `RaidTracker` copes with both via
+`WOW_RAID_GROUPING` (default `auto`):
+
+- **`auto`** — a guild that reaches `WOW_MIN_RAID_SIZE` is its own named raid
+  (`<Nightfall>`); everyone else, scattered guilds and the unguilded, pools into one
+  **pickup** cohort that forms its own raid. So a guild raid and a concurrent pickup
+  raid are seen as two.
+- **`guild`** — every guild is its own raid; misses a pickup raid spread across guilds.
+- **`lair`** — the whole zone is one raid; simplest, never splits concurrents.
+
+Each cohort keeps its roster by name and fires **exactly one alert when it first
+reaches the threshold** (~about to start) and **one when that same roster has fully
+left** — never on a steady raid poll after poll. Membership churn while a raid is
+inside is silent, and a named guild raid stays named even if it dips below the
+threshold. The first poll baselines: a raid already in progress reports once with
+"already in progress" wording. The startup "bot online" message is off unless
+`WOW_ANNOUNCE_STARTUP` is set.
+
+> Two concurrent *pickup* raids still read as one — no `/who` field can separate
+> them. And the 49-name cap means two full ~25-player raids (≈50) sit right at the
+> limit; three or more undercount. A single raid forming is well under it.
 
 Everything below the network edge is pure and unit-tested. The full handshake →
 in-world → `/who` path is covered by an integration test that runs the client

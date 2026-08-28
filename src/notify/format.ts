@@ -1,49 +1,33 @@
-import { dominantGuild, type WatchEvent } from "../watcher/onyxia-watcher.js";
+import type { RaidEvent } from "../watcher/raid-tracker.js";
 import type { NotifyMessage } from "./notifier.js";
 
-/** Turn a watch event into a human-readable notification for the given zone. */
-export function formatEvent(event: WatchEvent, areaName: string): NotifyMessage {
+/** Turn a raid event into a human-readable notification for the given zone. */
+export function formatRaidEvent(event: RaidEvent, areaName: string): NotifyMessage {
   switch (event.kind) {
-    case "raid-entered": {
-      const count = event.players.length;
-      const guild = guildSuffix(dominantGuild(event.players));
+    case "raid-forming": {
+      const { label, count } = event.cohort;
       if (event.initial) {
         return {
           kind: "entered",
-          title: `🐉 Raid already in ${areaName}`,
-          body: `${count} ${plural(count, "player")} already inside${guild}.`,
+          title: `🐉 Raid in ${areaName}`,
+          body: `${label} is already ${count} strong in ${areaName}.`,
         };
       }
       return {
         kind: "entered",
-        title: `🐉 Raid entered ${areaName}`,
-        body: `${count} ${plural(count, "player")} just appeared in ${areaName}${guild}. A kill — and a world buff — may be on the way.`,
+        title: `🐉 Raid forming in ${areaName}`,
+        body: `${label} just reached ${count} in ${areaName} — a raid is about to start.`,
       };
     }
     case "raid-left": {
-      const count = event.previousPlayers.length;
+      const { label, peak } = event.cohort;
       return {
         kind: "left",
-        title: `✅ ${areaName} cleared`,
-        body: `The raid has left ${areaName} (was ${count} ${plural(count, "player")}).`,
-      };
-    }
-    case "roster-changed": {
-      const count = event.players.length;
-      const parts: string[] = [];
-      if (event.entered.length > 0) parts.push(`+${event.entered.length}`);
-      if (event.left.length > 0) parts.push(`-${event.left.length}`);
-      return {
-        kind: "changed",
-        title: `👥 ${areaName}: ${count} inside`,
-        body: `Roster changed (${parts.join(", ")}). ${count} ${plural(count, "player")} now in ${areaName}.`,
+        title: `✅ Raid left ${areaName}`,
+        body: `${label} has cleared out of ${areaName} (peaked ${peak} ${plural(peak, "player")}).`,
       };
     }
   }
-}
-
-function guildSuffix(guild: { guild: string; count: number } | null): string {
-  return guild ? ` — mostly <${guild.guild}>` : "";
 }
 
 function plural(count: number, word: string): string {
