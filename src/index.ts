@@ -10,6 +10,7 @@ import { DiscordDmSender } from "./notify/discord-dm.js";
 import { DiscordGateway } from "./notify/discord-gateway.js";
 import { formatRaidEvent, formatRaidWhisper } from "./notify/format.js";
 import { RaidTracker, type RaidEvent } from "./watcher/raid-tracker.js";
+import { RaidCensus, summarizeDepartures } from "./watcher/raid-census.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { DiscordLinker } from "./chat/discord-linker.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
@@ -46,6 +47,11 @@ const OFFLINE_FALLBACK_TTL_MS = 60_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Milliseconds to whole minutes, for readable census logging. */
+function mins(ms: number): number {
+  return Math.round(ms / 60_000);
 }
 
 function resolveWorldTarget(
@@ -85,6 +91,7 @@ function connectSocket(host: string, port: number, timeoutMs = 15_000): Promise<
 /** Everything a connection needs beyond config: shared state and the alert sinks. */
 interface ConnectionServices {
   readonly tracker: RaidTracker;
+  readonly census: RaidCensus;
   readonly store: SubscriberStore;
   readonly router: CommandRouter;
   readonly dm: DiscordDmSender;
@@ -98,7 +105,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { tracker, store, router, dm, push, client } = services;
+  const { tracker, census, store, router, dm, push, client } = services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -191,6 +198,19 @@ async function runConnection(
         `who ${config.watchAreaName}: ${inZone.length} in zone ` +
           `(${result.players.length} returned, ${result.onlineCount} online)`,
       );
+
+      // Observational census (no alerts): records per-player timing so temporal raid
+      // detection and duration learning can be built and tuned on real cycles.
+      const change = census.observe(inZone.map((player) => player.name), Date.now());
+      if (change.arrived.length > 0 || change.departed.length > 0) {
+        const dep = summarizeDepartures(change.departed);
+        const depPart = dep
+          ? ` -${dep.count} left (stayed ~${mins(dep.medianStayMs)}m [${mins(dep.minStayMs)}-${mins(dep.maxStayMs)}], arrived within ${mins(dep.arrivalSpanMs)}m)`
+          : "";
+        const arrPart = change.arrived.length > 0 ? ` +${change.arrived.length} arrived` : "";
+        logger.info(`census: ${change.present} in zone${arrPart}${depPart}`);
+      }
+
       for (const event of tracker.update(inZone)) void announce(event);
     };
 
@@ -289,6 +309,7 @@ async function main(): Promise<void> {
     mentionRoleId: config.discordMentionRoleId,
   });
   const tracker = new RaidTracker(config.minRaidSize, config.raidGrouping, config.raidClearSize);
+  const census = new RaidCensus();
 
   // Client identity values; re-resolved from the CDN if the server rejects them.
   const client: ClientValues = {
@@ -324,7 +345,7 @@ async function main(): Promise<void> {
     areaName: config.watchAreaName,
     linker: dm.isConfigured ? linker : null,
   });
-  const services: ConnectionServices = { tracker, store, router, dm, push, client };
+  const services: ConnectionServices = { tracker, census, store, router, dm, push, client };
 
   // Link flow A: listen for DMs the bot receives and complete any pending code.
   let gateway: DiscordGateway | null = null;
