@@ -116,6 +116,17 @@ describe("loadConfig", () => {
     );
   });
 
+  it("defaults the raid clear floor to a third of the raid size and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidClearSize).toBe(5); // floor(15 / 3)
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_CLEAR_SIZE: "8" }).raidClearSize).toBe(8);
+  });
+
+  it("rejects a clear floor at or above the raid size", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_RAID_CLEAR_SIZE: "15" })).toThrow(
+      /WOW_RAID_CLEAR_SIZE must be less than WOW_MIN_RAID_SIZE/,
+    );
+  });
+
   it("defaults raid grouping to auto and accepts guild/lair", () => {
     expect(loadConfig({ ...minimalEnv }).raidGrouping).toBe("auto");
     expect(loadConfig({ ...minimalEnv, WOW_RAID_GROUPING: "lair" }).raidGrouping).toBe("lair");

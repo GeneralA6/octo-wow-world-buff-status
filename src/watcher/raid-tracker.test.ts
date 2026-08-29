@@ -110,6 +110,28 @@ describe("RaidTracker (auto grouping — the default)", () => {
     const events = tracker.update(guildCrowd("Nightfall", 18));
     expect(events[0]).toMatchObject({ kind: "raid-forming", initial: true });
   });
+
+  it("re-arms on a drop below the clear floor and fires again — the busy-lair cycle", () => {
+    const tracker = new RaidTracker(15, "auto", 5); // leaveAt = 5
+    // A pickup raid forms at 17.
+    expect(tracker.update(scattered(17)).map((e) => e.kind)).toEqual(["raid-forming"]);
+    // It leaves but one straggler remains (1 < 5, not empty) → raid-left + re-arm.
+    const left = tracker.update(scattered(1));
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatchObject({ kind: "raid-left" });
+    expect(left[0]?.cohort.peak).toBe(17);
+    // A new raid builds up to 21 → forms again (not "initial").
+    const again = tracker.update(scattered(21));
+    expect(again).toHaveLength(1);
+    expect(again[0]).toMatchObject({ kind: "raid-forming", initial: false });
+  });
+
+  it("stays active on a dip that holds at or above the clear floor", () => {
+    const tracker = new RaidTracker(15, "auto", 5);
+    tracker.update(scattered(20));
+    expect(tracker.update(scattered(6))).toEqual([]); // 6 >= 5 → still the same raid
+    expect(tracker.update(scattered(22))).toEqual([]); // churn back up, still silent
+  });
 });
 
 describe("RaidTracker (guild mode)", () => {

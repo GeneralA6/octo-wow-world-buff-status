@@ -19,12 +19,14 @@ import type { WhoPlayer } from "../protocol/who.js";
  * Each cohort keeps its roster by name and reports two transitions, independently and
  * simultaneously:
  *
- *   - a cohort first reaching `formAt` members  => "raid-forming"
- *   - an active cohort's roster emptying out     => "raid-left"
+ *   - a cohort first reaching `formAt` members       => "raid-forming"
+ *   - an active cohort dropping below `leaveAt`       => "raid-left" (then it re-arms)
  *
  * Once a cohort has formed it stays active through membership churn — a few members
  * leaving and rejoining is silent, and in "auto" mode a named guild raid stays named
- * even if it dips below the threshold — until nobody from it is left in the zone. The
+ * even if it dips below the form threshold — until it drops below `leaveAt`, when it
+ * reports "raid-left" and re-arms so the NEXT raid to fill the lair fires again (a
+ * busy lair rarely empties to exactly zero, so a low floor is what re-arms it). The
  * very first poll sets a baseline: a cohort already at strength then reports
  * "raid-forming" with `initial: true` so a caller can word it "already in progress".
  *
@@ -70,12 +72,19 @@ interface CohortState {
 
 export class RaidTracker {
   readonly #formAt: number;
+  readonly #leaveAt: number;
   readonly #mode: GroupingMode;
   readonly #cohorts = new Map<string, CohortState>();
   #firstPoll = true;
 
-  constructor(formAt: number, mode: GroupingMode = "auto") {
+  /**
+   * `formAt` — members needed to declare a raid. `leaveAt` — the hysteresis floor:
+   * an active raid clears (and re-arms) when it drops BELOW this, not only at zero,
+   * so a raid that leaves a straggler or two behind still resets for the next one.
+   */
+  constructor(formAt: number, mode: GroupingMode = "auto", leaveAt = Math.max(1, Math.floor(formAt / 3))) {
     this.#formAt = formAt;
+    this.#leaveAt = Math.min(leaveAt, formAt - 1 > 0 ? formAt - 1 : 1);
     this.#mode = mode;
   }
 
@@ -120,7 +129,12 @@ export class RaidTracker {
       if (current.length > state.peak) state.peak = current.length;
       this.#cohorts.set(key, state);
 
-      if (!state.active && current.length >= this.#formAt) {
+      if (state.active && current.length < this.#leaveAt) {
+        // Dropped below the clear floor — the raid has left; re-arm for the next one.
+        events.push({ kind: "raid-left", cohort: snapshot(key, state, current) });
+        state.active = false;
+        state.peak = current.length;
+      } else if (!state.active && current.length >= this.#formAt) {
         state.active = true;
         events.push({ kind: "raid-forming", cohort: snapshot(key, state, current), initial });
       }

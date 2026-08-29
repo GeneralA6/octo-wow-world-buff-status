@@ -288,7 +288,7 @@ async function main(): Promise<void> {
   const notifier: Notifier = new DiscordWebhookNotifier(config.discordWebhookUrl, {
     mentionRoleId: config.discordMentionRoleId,
   });
-  const tracker = new RaidTracker(config.minRaidSize, config.raidGrouping);
+  const tracker = new RaidTracker(config.minRaidSize, config.raidGrouping, config.raidClearSize);
 
   // Client identity values; re-resolved from the CDN if the server rejects them.
   const client: ClientValues = {

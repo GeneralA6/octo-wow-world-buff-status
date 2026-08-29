@@ -34,6 +34,8 @@ export interface BotConfig {
   readonly watchAreaName: string;
   /** Members a cohort must reach for a raid to count as forming ("about to start"). */
   readonly minRaidSize: number;
+  /** Hysteresis floor: an active raid clears (and re-arms) when it drops below this. */
+  readonly raidClearSize: number;
   /** How to tell concurrent raids apart: auto (guild raids + a pickup pool), guild, or lair. */
   readonly raidGrouping: GroupingMode;
   /** Post a "bot online" message on startup. Off by default to stay quiet. */
@@ -119,6 +121,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const watchAreaId = intWithDefault("WATCH_AREA_ID", 2159, 1);
   const watchAreaName = env.WATCH_AREA_NAME?.trim() || "Onyxia's Lair";
   const minRaidSize = intWithDefault("WOW_MIN_RAID_SIZE", 15, 1);
+  const raidClearSize = intWithDefault(
+    "WOW_RAID_CLEAR_SIZE",
+    Math.max(1, Math.floor(minRaidSize / 3)),
+    1,
+  );
+  if (raidClearSize >= minRaidSize) {
+    errors.push("WOW_RAID_CLEAR_SIZE must be less than WOW_MIN_RAID_SIZE");
+  }
 
   const groupingRaw = env.WOW_RAID_GROUPING?.trim().toLowerCase();
   const raidGrouping: GroupingMode = groupingRaw && isGroupingMode(groupingRaw) ? groupingRaw : "auto";
@@ -175,6 +185,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     watchAreaId,
     watchAreaName,
     minRaidSize,
+    raidClearSize,
     raidGrouping,
     announceStartup,
     whispersEnabled,
