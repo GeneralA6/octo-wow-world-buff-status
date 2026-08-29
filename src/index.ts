@@ -10,7 +10,7 @@ import { DiscordDmSender } from "./notify/discord-dm.js";
 import { DiscordGateway } from "./notify/discord-gateway.js";
 import { formatRaidEvent, formatRaidWhisper } from "./notify/format.js";
 import { RaidTracker, type RaidEvent } from "./watcher/raid-tracker.js";
-import { RaidCensus, summarizeDepartures } from "./watcher/raid-census.js";
+import { PresenceTracker, summarizeDepartures, WHO_RESULT_CAP } from "./watcher/presence.js";
 import { RaidSessions } from "./watcher/raid-sessions.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { DiscordLinker } from "./chat/discord-linker.js";
@@ -96,7 +96,7 @@ function connectSocket(host: string, port: number, timeoutMs = 15_000): Promise<
 interface ConnectionServices {
   readonly tracker: RaidTracker;
   readonly sessions: RaidSessions;
-  readonly census: RaidCensus;
+  readonly presence: PresenceTracker;
   readonly store: SubscriberStore;
   readonly router: CommandRouter;
   readonly dm: DiscordDmSender;
@@ -110,7 +110,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { tracker, sessions, census, store, router, dm, push, client } = services;
+  const { tracker, sessions, presence, store, router, dm, push, client } = services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -208,9 +208,11 @@ async function runConnection(
           `(${result.players.length} returned, ${result.onlineCount} online)`,
       );
 
-      // Observational census (no alerts): records per-player timing so temporal raid
-      // detection and duration learning can be built and tuned on real cycles.
-      const change = census.observe(inZone.map((player) => player.name), Date.now());
+      // Presence census (no alerts): per-player timing with completeness/confidence,
+      // the data foundation for temporal detection and duration learning. A /who at
+      // the 49 cap is a TRUNCATED view, so mark it incomplete.
+      const complete = inZone.length < WHO_RESULT_CAP;
+      const change = presence.observe(inZone.map((player) => player.name), Date.now(), complete);
 
       // Followed a blind gap (long disconnect / server outage): re-baseline every
       // detector and skip this read, so a crash-and-refill isn't a fake raid ending.
@@ -221,13 +223,14 @@ async function runConnection(
         return;
       }
 
-      if (change.arrived.length > 0 || change.departed.length > 0) {
-        const dep = summarizeDepartures(change.departed);
+      if (change.arrivals.length > 0 || change.departures.length > 0) {
+        const dep = summarizeDepartures(change.departures.filter((d) => d.confident));
         const depPart = dep
           ? ` -${dep.count} left (stayed ~${mins(dep.medianStayMs)}m [${mins(dep.minStayMs)}-${mins(dep.maxStayMs)}], arrived within ${mins(dep.arrivalSpanMs)}m)`
           : "";
-        const arrPart = change.arrived.length > 0 ? ` +${change.arrived.length} arrived` : "";
-        logger.info(`census: ${change.present} in zone${arrPart}${depPart}`);
+        const arrPart = change.arrivals.length > 0 ? ` +${change.arrivals.length} arrived` : "";
+        const truncPart = complete ? "" : " [truncated: /who at cap]";
+        logger.info(`census: ${change.present} in zone${arrPart}${depPart}${truncPart}`);
       }
 
       // Two detectors run every poll; the configured one drives alerts, the other is
@@ -349,7 +352,7 @@ async function main(): Promise<void> {
   });
   const tracker = new RaidTracker(config.minRaidSize, config.raidGrouping, config.raidClearSize);
   const sessions = new RaidSessions({ formAt: config.minRaidSize });
-  const census = new RaidCensus();
+  const presence = new PresenceTracker();
 
   // Client identity values; re-resolved from the CDN if the server rejects them.
   const client: ClientValues = {
@@ -385,7 +388,7 @@ async function main(): Promise<void> {
     areaName: config.watchAreaName,
     linker: dm.isConfigured ? linker : null,
   });
-  const services: ConnectionServices = { tracker, sessions, census, store, router, dm, push, client };
+  const services: ConnectionServices = { tracker, sessions, presence, store, router, dm, push, client };
 
   // Link flow A: listen for DMs the bot receives and complete any pending code.
   let gateway: DiscordGateway | null = null;

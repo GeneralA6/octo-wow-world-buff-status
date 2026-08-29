@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PresenceTracker } from "./presence.js";
+import { type Departure, PresenceTracker } from "./presence.js";
 
 const MIN = 60_000;
 const seq = (n: number, prefix = "p") => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
@@ -90,12 +90,12 @@ describe("PresenceTracker — bounded under sustained truncation", () => {
   it("evicts absent players at the hard timeout even while truncated, but low-confidence", () => {
     const p = new PresenceTracker({ graceMs: 2 * MIN, hardTimeoutMs: 5 * MIN });
     p.observe(["A", "B"], 0, false); // truncated view
-    let evicted: { confident: boolean }[] = [];
+    const evicted: Departure[] = [];
     for (let k = 1; k <= 7; k++) {
-      evicted = evicted.concat(p.observe(["B"], k * MIN, false).departures);
+      for (const d of p.observe(["B"], k * MIN, false).departures) evicted.push(d);
     }
-    expect(evicted.map((d) => (d as { name: string }).name === "A" || true)).toContain(true);
+    expect(evicted.some((d) => d.name === "A")).toBe(true); // A bounded out
     expect(evicted.every((d) => !d.confident)).toBe(true); // never a confident (raid) departure
-    expect(p.tracked).toBe(1); // only B remains; A was bounded out
+    expect(p.tracked).toBe(1); // only B remains
   });
 });

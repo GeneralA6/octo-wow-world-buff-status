@@ -1,4 +1,4 @@
-import { summarizeDepartures, type CensusChange } from "./raid-census.js";
+import { summarizeDepartures, type PresenceChange } from "./presence.js";
 import type { ActiveRaid, RaidEvent } from "./raid-tracker.js";
 
 /**
@@ -53,7 +53,7 @@ export class RaidSessions {
     return this.#active.map((session) => ({ label: "a raid", count: session.peak, peak: session.peak }));
   }
 
-  update(change: CensusChange): RaidEvent[] {
+  update(change: PresenceChange): RaidEvent[] {
     if (change.blackout) {
       this.#forming.clear();
       this.#active = [];
@@ -64,8 +64,8 @@ export class RaidSessions {
     const events: RaidEvent[] = [];
 
     // Forming pool: recent arrivals, minus anyone who left or has been around too long.
-    for (const name of change.arrived) this.#forming.set(name, now);
-    for (const departed of change.departed) this.#forming.delete(departed.name);
+    for (const arrival of change.arrivals) this.#forming.set(arrival.name, now);
+    for (const departure of change.departures) this.#forming.delete(departure.name);
     for (const [name, firstSeen] of this.#forming) {
       if (now - firstSeen > this.#formWindowMs) this.#forming.delete(name);
     }
@@ -89,8 +89,11 @@ export class RaidSessions {
       this.#forming.clear();
     }
 
-    // Leaving: a departure cluster whose members arrived together.
-    const summary = summarizeDepartures(change.departed);
+    // Leaving: a CONFIDENT departure cluster whose members arrived together. Only
+    // confident departures count — a truncated view or hard-timeout eviction never
+    // fires a raid-left.
+    const confident = change.departures.filter((departure) => departure.confident);
+    const summary = summarizeDepartures(confident);
     if (summary && summary.count >= this.#leaveClusterSize && summary.arrivalSpanMs <= this.#arrivalSpanMaxMs) {
       const session = this.#active.shift();
       const peak = session ? Math.max(session.peak, summary.count) : summary.count;
@@ -101,7 +104,7 @@ export class RaidSessions {
           label: "a raid",
           count: 0,
           peak,
-          members: change.departed.map((departed) => departed.name),
+          members: confident.map((departure) => departure.name),
         },
       });
     }

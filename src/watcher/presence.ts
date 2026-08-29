@@ -137,3 +137,28 @@ export class PresenceTracker {
     return { now, present: names.length, complete, blackout: false, gapMs, arrivals, departures };
   }
 }
+
+export interface DepartureSummary {
+  readonly count: number;
+  readonly minStayMs: number;
+  readonly maxStayMs: number;
+  readonly medianStayMs: number;
+  /** Spread of arrival times among the leavers — small means they came in together. */
+  readonly arrivalSpanMs: number;
+}
+
+/** Summarise a batch of departures — the shape that reveals a raid leaving together. */
+export function summarizeDepartures(
+  departures: readonly { firstSeen: number; stayedMs: number }[],
+): DepartureSummary | null {
+  if (departures.length === 0) return null;
+  const stays = departures.map((d) => d.stayedMs).sort((a, b) => a - b);
+  const firsts = departures.map((d) => d.firstSeen);
+  return {
+    count: departures.length,
+    minStayMs: stays[0] ?? 0,
+    maxStayMs: stays[stays.length - 1] ?? 0,
+    medianStayMs: stays[Math.floor(stays.length / 2)] ?? 0,
+    arrivalSpanMs: Math.max(...firsts) - Math.min(...firsts),
+  };
+}
