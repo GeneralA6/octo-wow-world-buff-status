@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { FatalError } from "../errors.js";
-import { AUTH_OK, CLIENT_BUILD, WorldOpcode } from "../protocol/opcodes.js";
+import { AUTH_OK, ChatType, CLIENT_BUILD, WorldOpcode } from "../protocol/opcodes.js";
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
+import { buildWhisper, parseServerChat } from "../protocol/chat.js";
+import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
 import {
@@ -22,6 +24,8 @@ export interface WorldClientHandlers {
   /** Character is in the world; /who can now be requested. */
   onReady?: () => void;
   onWho?: (result: WhoResult) => void;
+  /** A player whispered the bot; `sender` is resolved to a character name. */
+  onWhisper?: (sender: string, text: string) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
   /** Server sent warden data — anticheat is active and unhandled. */
@@ -66,6 +70,9 @@ export class WorldClient {
   #closed = false;
   #pingTimer: NodeJS.Timeout | null = null;
   #pingSequence = 0;
+  /** Resolved sender names, and whispers held while a name query is in flight. */
+  readonly #nameCache = new Map<bigint, string>();
+  readonly #pendingWhispers = new Map<bigint, string[]>();
 
   constructor(options: WorldClientOptions) {
     this.#socket = options.socket;
@@ -93,6 +100,12 @@ export class WorldClient {
   requestWho(query: WhoQuery): void {
     if (!this.#ready) throw new Error("cannot /who before the character is in world");
     this.#send(WorldOpcode.CMSG_WHO, buildWhoRequestBody(query));
+  }
+
+  /** Whisper a player by character name. */
+  whisper(target: string, message: string): void {
+    if (!this.#ready) throw new Error("cannot whisper before the character is in world");
+    this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildWhisper(target, message));
   }
 
   close(): void {
@@ -157,6 +170,12 @@ export class WorldClient {
         case WorldOpcode.SMSG_WHO:
           this.#handlers.onWho?.(parseWhoResponseBody(body));
           break;
+        case WorldOpcode.SMSG_MESSAGECHAT:
+          this.#handleChat(body);
+          break;
+        case WorldOpcode.SMSG_NAME_QUERY_RESPONSE:
+          this.#handleNameQueryResponse(body);
+          break;
         case WorldOpcode.SMSG_PONG:
           break;
         case WorldOpcode.SMSG_WARDEN_DATA:
@@ -214,6 +233,51 @@ export class WorldClient {
       this.#pingTimer.unref?.();
     }
     this.#handlers.onReady?.();
+  }
+
+  /**
+   * A player whispered us. The packet carries only the sender's GUID, so if we
+   * don't already know the name we hold the text and fire a name query, flushing
+   * it when the response arrives. Parsing is guarded: a chat packet we can't read
+   * is logged and dropped, never allowed to tear down the session.
+   */
+  #handleChat(body: Buffer): void {
+    try {
+      const chat = parseServerChat(body);
+      if (chat.type !== ChatType.Whisper) return; // only inbound whispers are commands
+      const text = chat.text.trim();
+      if (!text) return;
+
+      const known = this.#nameCache.get(chat.senderGuid);
+      if (known) {
+        this.#handlers.onWhisper?.(known, text);
+        return;
+      }
+      const queued = this.#pendingWhispers.get(chat.senderGuid);
+      if (queued) {
+        queued.push(text); // a name query is already in flight for this sender
+        return;
+      }
+      this.#pendingWhispers.set(chat.senderGuid, [text]);
+      this.#send(WorldOpcode.CMSG_NAME_QUERY, buildNameQuery(chat.senderGuid));
+    } catch (error) {
+      this.#logger.debug(
+        `world: could not read chat [${body.subarray(0, 64).toString("hex")}]: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  #handleNameQueryResponse(body: Buffer): void {
+    try {
+      const { guid, name } = parseNameQueryResponse(body);
+      this.#nameCache.set(guid, name);
+      const queued = this.#pendingWhispers.get(guid);
+      if (!queued) return;
+      this.#pendingWhispers.delete(guid);
+      for (const text of queued) this.#handlers.onWhisper?.(name, text);
+    } catch (error) {
+      this.#logger.debug(`world: could not read name-query response: ${(error as Error).message}`);
+    }
   }
 
   #sendPing(): void {

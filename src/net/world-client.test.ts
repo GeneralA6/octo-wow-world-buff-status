@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
-import { AUTH_OK, WorldOpcode } from "../protocol/opcodes.js";
+import { AUTH_OK, ChatType, WorldOpcode } from "../protocol/opcodes.js";
 import type { WhoResult } from "../protocol/who.js";
-import { PacketWriter } from "./byte-buffer.js";
+import { PacketReader, PacketWriter } from "./byte-buffer.js";
 import type { NodeSocketLike } from "./socket.js";
 import { WorldClient } from "./world-client.js";
 
@@ -31,10 +31,32 @@ function whoResponseBody(players: { name: string; area: number }[]): Buffer {
 class MockServerSocket extends EventEmitter implements NodeSocketLike {
   #serverCrypt: VanillaHeaderCrypt | null = null;
   readonly #characters: { guid: bigint; name: string }[];
+  readonly #names = new Map<bigint, string>();
+  readonly sentWhispers: { target: string; message: string }[] = [];
 
   constructor(characters: { guid: bigint; name: string }[]) {
     super();
     this.#characters = characters;
+  }
+
+  /** Teach the mock a guid→name mapping for name-query replies. */
+  setName(guid: bigint, name: string): void {
+    this.#names.set(guid, name);
+  }
+
+  /** Deliver an incoming whisper from `senderGuid` to the client. */
+  pushWhisper(senderGuid: bigint, text: string): void {
+    const msg = Buffer.from(text, "utf8");
+    const body = new PacketWriter()
+      .u8(ChatType.Whisper)
+      .u32LE(7)
+      .u64LE(senderGuid)
+      .u32LE(msg.length + 1)
+      .bytes(msg)
+      .u8(0)
+      .u8(0)
+      .toBuffer();
+    this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
   }
 
   /** Kick off the session the way a real server does: it speaks first. */
@@ -56,7 +78,13 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     if (opcode === WorldOpcode.CMSG_AUTH_SESSION) {
       this.#serverCrypt = new VanillaHeaderCrypt(SESSION_KEY);
     }
-    this.#respond(opcode);
+    if (opcode === WorldOpcode.CMSG_MESSAGECHAT) {
+      const reader = new PacketReader(body);
+      reader.u32LE(); // type
+      reader.u32LE(); // language
+      this.sentWhispers.push({ target: reader.cString(), message: reader.cString() });
+    }
+    this.#respond(opcode, body);
     return true;
   }
 
@@ -64,11 +92,20 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     queueMicrotask(() => this.emit("close"));
   }
 
-  #respond(opcode: number): void {
+  #respond(opcode: number, body: Buffer): void {
     switch (opcode) {
       case WorldOpcode.CMSG_AUTH_SESSION:
         this.#sendServer(WorldOpcode.SMSG_AUTH_RESPONSE, Buffer.from([AUTH_OK]));
         break;
+      case WorldOpcode.CMSG_NAME_QUERY: {
+        const guid = new PacketReader(body).u64LE();
+        const name = this.#names.get(guid) ?? "Unknown";
+        this.#sendServer(
+          WorldOpcode.SMSG_NAME_QUERY_RESPONSE,
+          new PacketWriter().u64LE(guid).cString(name).cString("").u32LE(1).u32LE(0).u32LE(1).toBuffer(),
+        );
+        break;
+      }
       case WorldOpcode.CMSG_CHAR_ENUM: {
         const writer = new PacketWriter().u8(this.#characters.length);
         for (const character of this.#characters) {
@@ -178,6 +215,46 @@ describe("WorldClient (against a scripted mock server)", () => {
     expect(error.message).toContain('character "Botchar" not found');
     expect(error.message).toContain("SomeoneElse");
     expect(client.isReady).toBe(false);
+
+    client.close();
+  });
+
+  it("resolves a whisper sender via name query and can whisper back", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+    socket.setName(0x555n, "Raider");
+
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    let deliverWhisper: (v: { sender: string; text: string }) => void = () => {};
+    const whispered = new Promise<{ sender: string; text: string }>((resolve) => {
+      deliverWhisper = resolve;
+    });
+
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x22,
+      pingIntervalMs: 0,
+      handlers: {
+        onReady: () => markReady(),
+        onWhisper: (sender, text) => deliverWhisper({ sender, text }),
+      },
+    });
+
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    // The whisper carries only a guid; the client name-queries and then reports it.
+    socket.pushWhisper(0x555n, "subscribe");
+    expect(await withTimeout(whispered)).toEqual({ sender: "Raider", text: "subscribe" });
+
+    client.whisper("Raider", "Subscribed!");
+    expect(socket.sentWhispers).toContainEqual({ target: "Raider", message: "Subscribed!" });
 
     client.close();
   });

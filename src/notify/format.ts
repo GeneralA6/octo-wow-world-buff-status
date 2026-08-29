@@ -30,6 +30,17 @@ export function formatRaidEvent(event: RaidEvent, areaName: string): NotifyMessa
   }
 }
 
+/** A single terse line for an in-game whisper (no markup, well under the length cap). */
+export function formatRaidWhisper(event: RaidEvent, areaName: string): string {
+  if (event.kind === "raid-left") {
+    return `${event.cohort.label} has left ${areaName} (peaked ${event.cohort.peak}).`;
+  }
+  const { label, count } = event.cohort;
+  return event.initial
+    ? `A raid is already underway in ${areaName}: ${label} (${count}).`
+    : `${label} is forming in ${areaName} (${count}) — a raid is about to start!`;
+}
+
 function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
 }

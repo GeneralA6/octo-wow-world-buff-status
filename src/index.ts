@@ -6,8 +6,13 @@ import { AuthClient } from "./net/auth-client.js";
 import { WorldClient } from "./net/world-client.js";
 import { resolveBuild } from "./net/client-resolver.js";
 import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
-import { formatRaidEvent } from "./notify/format.js";
-import { RaidTracker } from "./watcher/raid-tracker.js";
+import { formatRaidEvent, formatRaidWhisper } from "./notify/format.js";
+import { RaidTracker, type RaidEvent } from "./watcher/raid-tracker.js";
+import { CommandRouter } from "./chat/command-router.js";
+import { WhisperQueue } from "./chat/whisper-queue.js";
+import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
+import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
+import type { SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 import type { WhoResult } from "./protocol/who.js";
 
@@ -70,13 +75,22 @@ function connectSocket(host: string, port: number, timeoutMs = 15_000): Promise<
   });
 }
 
-/** One connection lifetime: log in, enter world, poll /who until the link drops. */
+/** Everything a connection needs beyond config: shared state and the alert sinks. */
+interface ConnectionServices {
+  readonly tracker: RaidTracker;
+  readonly store: SubscriberStore;
+  readonly router: CommandRouter;
+  readonly push: (message: NotifyMessage) => Promise<void>;
+  readonly client: ClientValues;
+}
+
+/** One connection lifetime: log in, enter world, poll /who and serve whispers. */
 async function runConnection(
   config: BotConfig,
   logger: Logger,
-  onWho: (result: WhoResult) => void,
-  client: ClientValues,
+  services: ConnectionServices,
 ): Promise<void> {
+  const { tracker, store, router, push, client } = services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -91,16 +105,55 @@ async function runConnection(
 
   await new Promise<void>((resolve, reject) => {
     let pollTimer: NodeJS.Timeout | null = null;
+    let whisperQueue: WhisperQueue | null = null;
     let settled = false;
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
       if (pollTimer) clearTimeout(pollTimer);
+      whisperQueue?.stop();
       if (error) reject(error);
       else resolve();
     };
 
     const query = { minLevel: 0, maxLevel: 100, zoneIds: [config.watchAreaId] } as const;
+
+    // A raid event: post to Discord, then whisper every subscriber (if enabled).
+    const announce = async (event: RaidEvent): Promise<void> => {
+      await push(formatRaidEvent(event, config.watchAreaName));
+      if (!config.whispersEnabled || !whisperQueue) return;
+      try {
+        const subscribers = await store.all();
+        if (subscribers.length > 0) {
+          whisperQueue.enqueueAll(
+            subscribers.map((subscriber) => subscriber.name),
+            formatRaidWhisper(event, config.watchAreaName),
+          );
+        }
+      } catch (error) {
+        logger.error(`subscribers: ${describeError(error)}`);
+      }
+    };
+
+    const onWho = (result: WhoResult): void => {
+      const inZone = result.players.filter((player) => player.areaId === config.watchAreaId);
+      logger.debug(
+        `who ${config.watchAreaName}: ${inZone.length} in zone ` +
+          `(${result.players.length} returned, ${result.onlineCount} online)`,
+      );
+      for (const event of tracker.update(inZone)) void announce(event);
+    };
+
+    const onWhisper = (sender: string, text: string): void => {
+      void (async () => {
+        try {
+          const replies = await router.handle(sender, text);
+          for (const reply of replies) whisperQueue?.enqueue(sender, reply);
+        } catch (error) {
+          logger.error(`command from ${sender}: ${describeError(error)}`);
+        }
+      })();
+    };
 
     const world = new WorldClient({
       socket,
@@ -126,7 +179,8 @@ async function runConnection(
           };
           poll();
         },
-        onWho: onWho,
+        onWho,
+        onWhisper: config.whispersEnabled ? onWhisper : undefined,
         onError: (error) => {
           world.close();
           settle(error);
@@ -135,8 +189,39 @@ async function runConnection(
       },
     });
 
+    whisperQueue = new WhisperQueue(
+      (targetName, message) => world.whisper(targetName, message),
+      config.whisperThrottleMs,
+      (error, targetName) => logger.debug(`whisper to ${targetName} failed: ${describeError(error)}`),
+    );
+
     world.start();
   });
+}
+
+/** Open the subscriber store — Mongo when configured, else in-memory. */
+async function openStore(
+  config: BotConfig,
+  logger: Logger,
+  push: (message: NotifyMessage) => Promise<void>,
+): Promise<SubscriberStore> {
+  if (!config.mongodbUri) {
+    logger.warn("subscribers: no MONGODB_URI — keeping subscribers in memory (lost on restart)");
+    return new InMemorySubscriberStore();
+  }
+  try {
+    const store = await MongoSubscriberStore.connect(config.mongodbUri, config.mongodbDb);
+    logger.info(`subscribers: connected to MongoDB db "${config.mongodbDb}"`);
+    return store;
+  } catch (error) {
+    logger.error(`subscribers: MongoDB connect failed (${describeError(error)}); using memory`);
+    await push({
+      kind: "error",
+      title: "⚠️ Subscriber store offline",
+      body: "MongoDB is unreachable — in-game subscriptions are in memory until restart.",
+    });
+    return new InMemorySubscriberStore();
+  }
 }
 
 async function main(): Promise<void> {
@@ -168,16 +253,11 @@ async function main(): Promise<void> {
     }
   };
 
-  const onWho = (result: WhoResult): void => {
-    const inZone = result.players.filter((player) => player.areaId === config.watchAreaId);
-    logger.debug(
-      `who ${config.watchAreaName}: ${inZone.length} in zone ` +
-        `(${result.players.length} returned, ${result.onlineCount} online)`,
-    );
-    for (const event of tracker.update(inZone)) {
-      void push(formatRaidEvent(event, config.watchAreaName));
-    }
-  };
+  const store = config.whispersEnabled
+    ? await openStore(config, logger, push)
+    : new InMemorySubscriberStore();
+  const router = new CommandRouter({ store, tracker, areaName: config.watchAreaName });
+  const services: ConnectionServices = { tracker, store, router, push, client };
 
   logger.info(`turtle-onyxia-bot starting as ${config.characterName}`);
   if (config.announceStartup) {
@@ -192,14 +272,14 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => {
     shuttingDown = true;
     logger.info("shutting down");
-    process.exit(0);
+    void store.close().finally(() => process.exit(0));
   });
 
   const heal: HealState = { lastCheckMs: 0, alertedStuck: false };
   let backoffMs = 5_000;
   while (!shuttingDown) {
     try {
-      await runConnection(config, logger, onWho, client);
+      await runConnection(config, logger, services);
       logger.warn("connection closed; reconnecting shortly");
       backoffMs = 5_000;
       heal.alertedStuck = false; // a clean run clears the "stuck" latch

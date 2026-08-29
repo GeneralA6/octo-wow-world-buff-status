@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RaidCohortSnapshot } from "../watcher/raid-tracker.js";
-import { formatRaidEvent } from "./format.js";
+import { formatRaidEvent, formatRaidWhisper } from "./format.js";
 
 const AREA = "Onyxia's Lair";
 
@@ -52,5 +52,25 @@ describe("formatRaidEvent", () => {
     );
     expect(message.body).toContain("peaked 1 player");
     expect(message.body).not.toContain("1 players");
+  });
+});
+
+describe("formatRaidWhisper", () => {
+  it("is a single terse line with no markup for a forming raid", () => {
+    const line = formatRaidWhisper({ kind: "raid-forming", initial: false, cohort: cohort() }, AREA);
+    expect(line).toContain("<Nightfall>");
+    expect(line).toContain("about to start");
+    expect(line).not.toContain("\n");
+  });
+
+  it("words an already-underway raid on the first poll", () => {
+    const line = formatRaidWhisper({ kind: "raid-forming", initial: true, cohort: cohort() }, AREA);
+    expect(line).toContain("already underway");
+  });
+
+  it("announces a departure with its peak", () => {
+    const line = formatRaidWhisper({ kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) }, AREA);
+    expect(line).toContain("has left");
+    expect(line).toContain("25");
   });
 });

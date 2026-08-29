@@ -38,6 +38,14 @@ export interface BotConfig {
   readonly raidGrouping: GroupingMode;
   /** Post a "bot online" message on startup. Off by default to stay quiet. */
   readonly announceStartup: boolean;
+  /** Whether the in-game whisper interface (commands + subscriber alerts) is active. */
+  readonly whispersEnabled: boolean;
+  /** Delay between outgoing whispers (ms) to stay under the server's chat throttle. */
+  readonly whisperThrottleMs: number;
+  /** MongoDB connection string for the subscriber store; null keeps subscribers in memory. */
+  readonly mongodbUri: string | null;
+  /** MongoDB database name for the subscriber store. */
+  readonly mongodbDb: string;
   readonly pollIntervalMs: number;
   readonly discordWebhookUrl: string;
   /** Role to ping on raid enter/leave so only opted-in members are notified. */
@@ -114,6 +122,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const announceStartupRaw = env.WOW_ANNOUNCE_STARTUP?.trim().toLowerCase();
   const announceStartup = announceStartupRaw === "true" || announceStartupRaw === "1";
+
+  const whispersRaw = env.WOW_WHISPERS?.trim().toLowerCase();
+  const whispersEnabled = whispersRaw !== "false" && whispersRaw !== "0" && whispersRaw !== "none";
+  const whisperThrottleMs = intWithDefault("WOW_WHISPER_THROTTLE_MS", 1200, 200);
+  const mongodbUri = env.MONGODB_URI?.trim() || null;
+  const mongodbDb = env.MONGODB_DB?.trim() || "onyxiabot";
+
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
 
   const discordWebhookUrl = required("DISCORD_WEBHOOK_URL");
@@ -152,6 +167,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     minRaidSize,
     raidGrouping,
     announceStartup,
+    whispersEnabled,
+    whisperThrottleMs,
+    mongodbUri,
+    mongodbDb,
     pollIntervalMs,
     discordWebhookUrl,
     discordMentionRoleId,

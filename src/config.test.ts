@@ -135,6 +135,31 @@ describe("loadConfig", () => {
     }
     expect(loadConfig({ ...minimalEnv, WOW_ANNOUNCE_STARTUP: "false" }).announceStartup).toBe(false);
   });
+
+  it("enables in-game whispers by default and disables them on false/0/none", () => {
+    expect(loadConfig({ ...minimalEnv }).whispersEnabled).toBe(true);
+    for (const value of ["false", "0", "none"]) {
+      expect(loadConfig({ ...minimalEnv, WOW_WHISPERS: value }).whispersEnabled).toBe(false);
+    }
+  });
+
+  it("defaults the whisper throttle and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).whisperThrottleMs).toBe(1200);
+    expect(loadConfig({ ...minimalEnv, WOW_WHISPER_THROTTLE_MS: "800" }).whisperThrottleMs).toBe(800);
+  });
+
+  it("defaults the Mongo settings and reads overrides", () => {
+    const bare = loadConfig({ ...minimalEnv });
+    expect(bare.mongodbUri).toBeNull();
+    expect(bare.mongodbDb).toBe("onyxiabot");
+    const configured = loadConfig({
+      ...minimalEnv,
+      MONGODB_URI: "mongodb://localhost:27017",
+      MONGODB_DB: "raids",
+    });
+    expect(configured.mongodbUri).toBe("mongodb://localhost:27017");
+    expect(configured.mongodbDb).toBe("raids");
+  });
 });
 
 describe("parseAddress", () => {
