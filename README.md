@@ -213,7 +213,10 @@ alerts to players in-game. Whisper the character:
 |---|---|
 | `subscribe` (`sub`, `start`) | opt in to in-game raid alerts |
 | `unsubscribe` (`unsub`, `stop`) | opt out |
+| `discord <id>` (`discord off`) | link / unlink a Discord user id (auto-subscribes) |
+| `mode both` \| `mode offline` | Discord always, or only when your character is offline |
 | `status` | the current raid state, right now |
+| `me` | your own subscription settings |
 | `help` | the command list |
 
 A whisper's packet carries only the sender's **GUID**, so the bot name-queries to
@@ -221,6 +224,15 @@ resolve who whispered (and to reply). Outgoing whispers are **throttled** so a r
 alert to many subscribers can't trip the server's spam mute. Subscribers persist in
 **MongoDB** (`MONGODB_URI`); without it they live in memory and are lost on restart.
 Set `WOW_WHISPERS=false` to disable the whole interface.
+
+**Discord delivery is a personal @mention in the channel**, not a DM: the bot posts
+via a webhook, which can't DM users, but an `@mention` still notifies the person
+(bypassing channel mute). So a subscriber links their Discord id, and on a raid the
+bot pings `<@their-id>` in the alert post. `mode both` pings them every time; `mode
+offline` pings them **only when their character is offline in-game** — detected by
+the whisper bouncing (`SMSG_CHAT_PLAYER_NOT_FOUND`), with a 60s fallback window.
+(A true private DM would need a separate Discord *bot token* and the user allowing
+DMs — deliberately not required here.)
 
 > This makes the character actively talk in-game — much more visible and reportable
 > than the silent `/who` poller, and a bigger ban risk. It's off with one env var.
