@@ -38,6 +38,8 @@ export interface BotConfig {
   readonly raidClearSize: number;
   /** How to tell concurrent raids apart: auto (guild raids + a pickup pool), guild, or lair. */
   readonly raidGrouping: GroupingMode;
+  /** Which detector drives alerts: "count" (hysteresis) or "temporal" (arrival/departure). */
+  readonly raidDetector: "count" | "temporal";
   /** Post a "bot online" message on startup. Off by default to stay quiet. */
   readonly announceStartup: boolean;
   /** Whether the in-game whisper interface (commands + subscriber alerts) is active. */
@@ -136,6 +138,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     errors.push(`WOW_RAID_GROUPING must be one of ${GROUPING_MODES.join(", ")}`);
   }
 
+  const detectorRaw = env.WOW_RAID_DETECTOR?.trim().toLowerCase();
+  const raidDetector: "count" | "temporal" = detectorRaw === "temporal" ? "temporal" : "count";
+  if (detectorRaw && detectorRaw !== "count" && detectorRaw !== "temporal") {
+    errors.push('WOW_RAID_DETECTOR must be "count" or "temporal"');
+  }
+
   const announceStartupRaw = env.WOW_ANNOUNCE_STARTUP?.trim().toLowerCase();
   const announceStartup = announceStartupRaw === "true" || announceStartupRaw === "1";
 
@@ -187,6 +195,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     minRaidSize,
     raidClearSize,
     raidGrouping,
+    raidDetector,
     announceStartup,
     whispersEnabled,
     whisperThrottleMs,

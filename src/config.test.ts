@@ -127,6 +127,12 @@ describe("loadConfig", () => {
     );
   });
 
+  it("defaults the raid detector to count and accepts temporal", () => {
+    expect(loadConfig({ ...minimalEnv }).raidDetector).toBe("count");
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_DETECTOR: "temporal" }).raidDetector).toBe("temporal");
+    expect(() => loadConfig({ ...minimalEnv, WOW_RAID_DETECTOR: "magic" })).toThrow(/WOW_RAID_DETECTOR/);
+  });
+
   it("defaults raid grouping to auto and accepts guild/lair", () => {
     expect(loadConfig({ ...minimalEnv }).raidGrouping).toBe("auto");
     expect(loadConfig({ ...minimalEnv, WOW_RAID_GROUPING: "lair" }).raidGrouping).toBe("lair");
