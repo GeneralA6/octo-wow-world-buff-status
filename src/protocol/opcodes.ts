@@ -27,8 +27,12 @@ export enum WorldOpcode {
   SMSG_CHAR_ENUM = 0x3b,
   CMSG_PLAYER_LOGIN = 0x3d,
   CMSG_LOGOUT_REQUEST = 0x4b,
+  CMSG_NAME_QUERY = 0x50,
+  SMSG_NAME_QUERY_RESPONSE = 0x51,
   CMSG_WHO = 0x62,
   SMSG_WHO = 0x63,
+  CMSG_MESSAGECHAT = 0x95,
+  SMSG_MESSAGECHAT = 0x96,
   CMSG_PING = 0x1dc,
   SMSG_PONG = 0x1dd,
   SMSG_AUTH_CHALLENGE = 0x1ec,
@@ -38,6 +42,24 @@ export enum WorldOpcode {
   SMSG_WARDEN_DATA = 0x2e6,
   CMSG_WARDEN_DATA = 0x2e7,
 }
+
+/** Chat message types (SMSG/CMSG_MESSAGECHAT `type` field), 1.12 values. */
+export enum ChatType {
+  Say = 0x00,
+  Party = 0x01,
+  Raid = 0x02,
+  Guild = 0x03,
+  Officer = 0x04,
+  Yell = 0x05,
+  Whisper = 0x06,
+  WhisperInform = 0x07,
+  Emote = 0x08,
+  System = 0x0a,
+  Channel = 0x11,
+}
+
+/** Universal language — readable by everyone, so a whisper is never garbled. */
+export const LANG_UNIVERSAL = 0;
 
 /** SMSG_AUTH_RESPONSE result byte we treat as "you are in". */
 export const AUTH_OK = 0x0c;
