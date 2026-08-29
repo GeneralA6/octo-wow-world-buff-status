@@ -148,7 +148,9 @@ async function runConnection(
     // A raid event: post to the Discord channel, whisper every subscriber in-game,
     // DM "both"-mode subscribers, and arm the DM fallback for "offline"-mode ones.
     const announce = async (event: RaidEvent): Promise<void> => {
-      await push(formatRaidEvent(event, config.watchAreaName));
+      const message = formatRaidEvent(event, config.watchAreaName);
+      logger.info(`raid ${event.kind}: ${message.body}`);
+      await push(message);
       if (!config.whispersEnabled) return;
 
       let subscribers: Subscriber[] = [];
