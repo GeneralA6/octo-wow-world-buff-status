@@ -213,11 +213,12 @@ alerts to players in-game. Whisper the character:
 |---|---|
 | `subscribe` (`sub`, `start`) | opt in to in-game raid alerts |
 | `unsubscribe` (`unsub`, `stop`) | opt out |
-| `discord <id>` (`discord off`) | link / unlink a Discord user id (auto-subscribes) |
-| `mode both` \| `mode offline` | Discord always, or only when your character is offline |
-| `status` | the current raid state, right now |
-| `me` | your own subscription settings |
-| `help` | the command list |
+| `discord` | link Discord by DMing the bot a code (flow A) |
+| `discord <id>` | link by pasting your id; the bot DMs you a code (flow B) |
+| `confirm <code>` / `<code>` | confirm a flow-B code in-game |
+| `discord off` | unlink |
+| `mode both` \| `mode offline` | DM always, or only when your character is offline |
+| `status` / `me` / `help` | current raid state / your settings / commands |
 
 A whisper's packet carries only the sender's **GUID**, so the bot name-queries to
 resolve who whispered (and to reply). Outgoing whispers are **throttled** so a raid
@@ -225,19 +226,23 @@ alert to many subscribers can't trip the server's spam mute. Subscribers persist
 **MongoDB** (`MONGODB_URI`); without it they live in memory and are lost on restart.
 Set `WOW_WHISPERS=false` to disable the whole interface.
 
-**Discord delivery is a personal @mention in the channel**, not a DM: the bot posts
-via a webhook, which can't DM users, but an `@mention` still notifies the person
-(bypassing channel mute). So a subscriber links their Discord id, and on a raid the
-bot pings `<@their-id>` in the alert post. `mode both` pings them every time; `mode
-offline` pings them **only when their character is offline in-game** — detected by
-the whisper bouncing (`SMSG_CHAT_PLAYER_NOT_FOUND`), with a 60s fallback window.
-(A true private DM would need a separate Discord *bot token* and the user allowing
-DMs — deliberately not required here.)
+**Discord delivery is a real bot DM** (needs `DISCORD_BOT_TOKEN`; the bot must share
+a server with the recipient). Linking is verified two ways so a player can pick
+whichever is easier — both mint a one-time code and end at a verified Discord id:
+
+- **Flow A** — whisper `discord` → get a code + the server invite → join and **DM
+  the bot** the code. The bot reads it over its gateway (`ws`, `DISCORD_GATEWAY`,
+  MESSAGE CONTENT intent) and links the DM author's id. No ID hunting.
+- **Flow B** — whisper `discord <id>` → the bot **DMs that id** a code (or, on a
+  403, tells you to join / open DMs) → whisper the code back in-game.
+
+Then `mode both` DMs on every raid; `mode offline` DMs **only when the character is
+offline** — detected by the in-game whisper bouncing (`SMSG_CHAT_PLAYER_NOT_FOUND`),
+with a 60s fallback window. Without a bot token, the `discord` commands say so and
+only in-game whispers + the webhook channel post run.
 
 > This makes the character actively talk in-game — much more visible and reportable
 > than the silent `/who` poller, and a bigger ban risk. It's off with one env var.
-> In-game alerts only reach players who are **online** (whispers don't queue);
-> Discord stays the reliable channel.
 
 Layout:
 
@@ -247,9 +252,9 @@ Layout:
 | `src/net/` | packet codecs (auth + world) and the two socket clients |
 | `src/protocol/` | opcodes, the `/who` codec, and the chat / name-query codecs |
 | `src/watcher/` | the cohort raid tracker (forming / left events) |
-| `src/chat/` | whisper command router and the throttled outgoing-whisper queue |
-| `src/subscribers/` | `SubscriberStore` interface + in-memory and MongoDB impls |
-| `src/notify/` | `Notifier` interface + Discord webhook + message formatting |
+| `src/chat/` | whisper command router, whisper queue, and the Discord linker |
+| `src/subscribers/` | `SubscriberStore` (in-memory + MongoDB) and pending link codes |
+| `src/notify/` | webhook, message formatting, Discord DM sender, and the gateway |
 | `src/config.ts`, `src/index.ts` | config validation and the supervisor loop |
 
 ---
