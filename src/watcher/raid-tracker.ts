@@ -55,6 +55,12 @@ export type RaidEvent =
   | { readonly kind: "raid-forming"; readonly cohort: RaidCohortSnapshot; readonly initial: boolean }
   | { readonly kind: "raid-left"; readonly cohort: RaidCohortSnapshot };
 
+export interface ActiveRaid {
+  readonly label: string;
+  readonly count: number;
+  readonly peak: number;
+}
+
 interface CohortState {
   active: boolean;
   peak: number;
@@ -77,6 +83,15 @@ export class RaidTracker {
   get rosters(): Map<string, string[]> {
     const out = new Map<string, string[]>();
     for (const [key, state] of this.#cohorts) out.set(key, [...state.members.keys()]);
+    return out;
+  }
+
+  /** Raids that have formed and not yet cleared — for a live status query. */
+  activeRaids(): ActiveRaid[] {
+    const out: ActiveRaid[] = [];
+    for (const state of this.#cohorts.values()) {
+      if (state.active) out.push({ label: state.label, count: state.members.size, peak: state.peak });
+    }
     return out;
   }
 
