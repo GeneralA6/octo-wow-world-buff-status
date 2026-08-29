@@ -187,7 +187,7 @@ async function runConnection(
 
     const onWho = (result: WhoResult): void => {
       const inZone = result.players.filter((player) => player.areaId === config.watchAreaId);
-      logger.debug(
+      logger.info(
         `who ${config.watchAreaName}: ${inZone.length} in zone ` +
           `(${result.players.length} returned, ${result.onlineCount} online)`,
       );
