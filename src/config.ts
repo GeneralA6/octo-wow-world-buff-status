@@ -42,6 +42,12 @@ export interface BotConfig {
   readonly whispersEnabled: boolean;
   /** Delay between outgoing whispers (ms) to stay under the server's chat throttle. */
   readonly whisperThrottleMs: number;
+  /** Discord bot token for DM delivery + DM-based linking; null disables both. */
+  readonly discordBotToken: string | null;
+  /** Server invite shown in link instructions (subscribers must share a server to be DM'd). */
+  readonly discordServerInvite: string | null;
+  /** Run the Discord gateway (link flow A — DM the bot a code). Needs the MESSAGE CONTENT intent. */
+  readonly discordGateway: boolean;
   /** MongoDB connection string for the subscriber store; null keeps subscribers in memory. */
   readonly mongodbUri: string | null;
   /** MongoDB database name for the subscriber store. */
@@ -126,6 +132,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const whispersRaw = env.WOW_WHISPERS?.trim().toLowerCase();
   const whispersEnabled = whispersRaw !== "false" && whispersRaw !== "0" && whispersRaw !== "none";
   const whisperThrottleMs = intWithDefault("WOW_WHISPER_THROTTLE_MS", 1200, 200);
+  const discordBotToken = env.DISCORD_BOT_TOKEN?.trim() || null;
+  const discordServerInvite = env.DISCORD_SERVER_INVITE_URL?.trim() || null;
+  const gatewayRaw = env.DISCORD_GATEWAY?.trim().toLowerCase();
+  const discordGateway = gatewayRaw !== "false" && gatewayRaw !== "0" && gatewayRaw !== "none";
   const mongodbUri = env.MONGODB_URI?.trim() || null;
   const mongodbDb = env.MONGODB_DB?.trim() || "onyxiabot";
 
@@ -169,6 +179,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     announceStartup,
     whispersEnabled,
     whisperThrottleMs,
+    discordBotToken,
+    discordServerInvite,
+    discordGateway,
     mongodbUri,
     mongodbDb,
     pollIntervalMs,

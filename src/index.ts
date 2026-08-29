@@ -6,12 +6,16 @@ import { AuthClient } from "./net/auth-client.js";
 import { WorldClient } from "./net/world-client.js";
 import { resolveBuild } from "./net/client-resolver.js";
 import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
+import { DiscordDmSender } from "./notify/discord-dm.js";
+import { DiscordGateway } from "./notify/discord-gateway.js";
 import { formatRaidEvent, formatRaidWhisper } from "./notify/format.js";
 import { RaidTracker, type RaidEvent } from "./watcher/raid-tracker.js";
 import { CommandRouter } from "./chat/command-router.js";
+import { DiscordLinker } from "./chat/discord-linker.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
+import { PendingLinks } from "./subscribers/pending-links.js";
 import type { Subscriber, SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 import type { WhoResult } from "./protocol/who.js";
@@ -83,6 +87,7 @@ interface ConnectionServices {
   readonly tracker: RaidTracker;
   readonly store: SubscriberStore;
   readonly router: CommandRouter;
+  readonly dm: DiscordDmSender;
   readonly push: (message: NotifyMessage) => Promise<void>;
   readonly client: ClientValues;
 }
@@ -93,7 +98,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { tracker, store, router, push, client } = services;
+  const { tracker, store, router, dm, push, client } = services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -109,8 +114,8 @@ async function runConnection(
   await new Promise<void>((resolve, reject) => {
     let pollTimer: NodeJS.Timeout | null = null;
     let whisperQueue: WhisperQueue | null = null;
-    // Offline-mode subscribers whose in-game whisper may bounce → Discord instead.
-    const offlinePending = new Map<string, { message: NotifyMessage; timer: NodeJS.Timeout }>();
+    // Offline-mode subscribers whose in-game whisper may bounce → DM them instead.
+    const offlinePending = new Map<string, { discordId: string; message: string; timer: NodeJS.Timeout }>();
     const clearOfflinePending = (): void => {
       for (const { timer } of offlinePending.values()) clearTimeout(timer);
       offlinePending.clear();
@@ -129,57 +134,53 @@ async function runConnection(
 
     const query = { minLevel: 0, maxLevel: 100, zoneIds: [config.watchAreaId] } as const;
 
-    // Arm a Discord fallback for an offline-mode subscriber; delivered if their
-    // whisper bounces, else it expires quietly (they were online, got it in-game).
-    const armOfflineFallback = (name: string, message: NotifyMessage): void => {
+    // Arm a Discord DM for an offline-mode subscriber; delivered if their whisper
+    // bounces, else it expires quietly (they were online, got it in-game).
+    const armOfflineFallback = (name: string, discordId: string, message: string): void => {
       const key = name.toLowerCase();
       const existing = offlinePending.get(key);
       if (existing) clearTimeout(existing.timer);
       const timer = setTimeout(() => offlinePending.delete(key), OFFLINE_FALLBACK_TTL_MS);
       timer.unref?.();
-      offlinePending.set(key, { message, timer });
+      offlinePending.set(key, { discordId, message, timer });
     };
 
-    // A raid event: post to Discord (pinging "both"-mode subscribers), whisper
-    // everyone in-game, and arm the offline fallback for "offline"-mode subscribers.
+    // A raid event: post to the Discord channel, whisper every subscriber in-game,
+    // DM "both"-mode subscribers, and arm the DM fallback for "offline"-mode ones.
     const announce = async (event: RaidEvent): Promise<void> => {
+      await push(formatRaidEvent(event, config.watchAreaName));
+      if (!config.whispersEnabled) return;
+
       let subscribers: Subscriber[] = [];
-      if (config.whispersEnabled) {
-        try {
-          subscribers = await store.all();
-        } catch (error) {
-          logger.error(`subscribers: ${describeError(error)}`);
-        }
+      try {
+        subscribers = await store.all();
+      } catch (error) {
+        logger.error(`subscribers: ${describeError(error)}`);
+        return;
       }
+      if (subscribers.length === 0) return;
 
-      const bothMentions = subscribers.flatMap((subscriber) =>
-        subscriber.delivery === "both" && subscriber.discordId ? [subscriber.discordId] : [],
-      );
-      await push({ ...formatRaidEvent(event, config.watchAreaName), mentionUserIds: bothMentions });
+      const line = formatRaidWhisper(event, config.watchAreaName);
+      whisperQueue?.enqueueAll(subscribers.map((subscriber) => subscriber.name), line);
 
-      if (!config.whispersEnabled || !whisperQueue || subscribers.length === 0) return;
       for (const subscriber of subscribers) {
-        if (subscriber.delivery === "offline" && subscriber.discordId) {
-          armOfflineFallback(subscriber.name, {
-            ...formatRaidEvent(event, config.watchAreaName),
-            mentionUserIds: [subscriber.discordId],
-          });
+        if (!subscriber.discordId) continue;
+        if (subscriber.delivery === "both") {
+          void dm.send(subscriber.discordId, line); // in-game AND Discord, every time
+        } else {
+          armOfflineFallback(subscriber.name, subscriber.discordId, line); // DM only if offline
         }
       }
-      whisperQueue.enqueueAll(
-        subscribers.map((subscriber) => subscriber.name),
-        formatRaidWhisper(event, config.watchAreaName),
-      );
     };
 
-    // A whisper bounced: the target is offline — deliver their armed Discord ping.
+    // A whisper bounced: the target is offline — deliver their armed Discord DM.
     const onWhisperUndelivered = (target: string): void => {
       const key = target.toLowerCase();
       const pending = offlinePending.get(key);
       if (!pending) return;
       clearTimeout(pending.timer);
       offlinePending.delete(key);
-      void push(pending.message);
+      void dm.send(pending.discordId, pending.message);
     };
 
     const onWho = (result: WhoResult): void => {
@@ -304,8 +305,45 @@ async function main(): Promise<void> {
   const store = config.whispersEnabled
     ? await openStore(config, logger, push)
     : new InMemorySubscriberStore();
-  const router = new CommandRouter({ store, tracker, areaName: config.watchAreaName });
-  const services: ConnectionServices = { tracker, store, router, push, client };
+
+  // Discord DM delivery + linking (only when a bot token is configured).
+  const dm = new DiscordDmSender(config.discordBotToken);
+  const linker = new DiscordLinker({
+    store,
+    pending: new PendingLinks(),
+    dm,
+    serverInviteUrl: config.discordServerInvite,
+    areaName: config.watchAreaName,
+  });
+  const router = new CommandRouter({
+    store,
+    tracker,
+    areaName: config.watchAreaName,
+    linker: dm.isConfigured ? linker : null,
+  });
+  const services: ConnectionServices = { tracker, store, router, dm, push, client };
+
+  // Link flow A: listen for DMs the bot receives and complete any pending code.
+  let gateway: DiscordGateway | null = null;
+  const botToken = config.discordBotToken;
+  if (config.whispersEnabled && botToken && config.discordGateway) {
+    gateway = new DiscordGateway({
+      token: botToken,
+      logger,
+      onDirectMessage: (authorId, content) => {
+        void (async () => {
+          try {
+            const character = await linker.confirmFromDm(authorId, content);
+            if (character) logger.info(`discord: linked ${character} via DM`);
+          } catch (error) {
+            logger.error(`discord link: ${describeError(error)}`);
+          }
+        })();
+      },
+    });
+    gateway.start();
+    logger.info("discord gateway: started (DM linking active)");
+  }
 
   logger.info(`turtle-onyxia-bot starting as ${config.characterName}`);
   if (config.announceStartup) {
@@ -320,6 +358,7 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => {
     shuttingDown = true;
     logger.info("shutting down");
+    gateway?.stop();
     void store.close().finally(() => process.exit(0));
   });
 

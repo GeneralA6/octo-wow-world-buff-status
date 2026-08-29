@@ -148,6 +148,22 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_WHISPER_THROTTLE_MS: "800" }).whisperThrottleMs).toBe(800);
   });
 
+  it("defaults the Discord DM settings and reads overrides", () => {
+    const bare = loadConfig({ ...minimalEnv });
+    expect(bare.discordBotToken).toBeNull();
+    expect(bare.discordServerInvite).toBeNull();
+    expect(bare.discordGateway).toBe(true);
+    const configured = loadConfig({
+      ...minimalEnv,
+      DISCORD_BOT_TOKEN: "bot.tok.en",
+      DISCORD_SERVER_INVITE_URL: "https://discord.gg/abc",
+      DISCORD_GATEWAY: "false",
+    });
+    expect(configured.discordBotToken).toBe("bot.tok.en");
+    expect(configured.discordServerInvite).toBe("https://discord.gg/abc");
+    expect(configured.discordGateway).toBe(false);
+  });
+
   it("defaults the Mongo settings and reads overrides", () => {
     const bare = loadConfig({ ...minimalEnv });
     expect(bare.mongodbUri).toBeNull();
