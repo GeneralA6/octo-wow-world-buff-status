@@ -11,7 +11,7 @@ const minimalEnv = {
 describe("loadConfig", () => {
   it("fills defaults for a minimal valid environment", () => {
     const config = loadConfig({ ...minimalEnv });
-    expect(config.authHost).toBe("octowow.st");
+    expect(config.authHost).toBe("play.octowow.st");
     expect(config.authPort).toBe(3724);
     expect(config.realm).toBe("N'Zoth");
     expect(config.watchAreaId).toBe(2159);

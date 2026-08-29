@@ -17,8 +17,8 @@ describe("describeError", () => {
   });
 
   it("prefixes a coded error with its code", () => {
-    expect(describeError(coded("getaddrinfo ENOTFOUND octowow.st", "ENOTFOUND"))).toBe(
-      "ENOTFOUND: getaddrinfo ENOTFOUND octowow.st",
+    expect(describeError(coded("getaddrinfo ENOTFOUND play.octowow.st", "ENOTFOUND"))).toBe(
+      "ENOTFOUND: getaddrinfo ENOTFOUND play.octowow.st",
     );
   });
 

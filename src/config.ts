@@ -73,7 +73,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const account = required("WOW_ACCOUNT");
   const password = required("WOW_PASSWORD");
-  const authHost = env.WOW_AUTH_HOST?.trim() || "octowow.st";
+  const authHost = env.WOW_AUTH_HOST?.trim() || "play.octowow.st";
   const authPort = intWithDefault("WOW_AUTH_PORT", 3724, 1);
   const realm = env.WOW_REALM?.trim() || "N'Zoth";
   const characterName = required("WOW_CHARACTER");
