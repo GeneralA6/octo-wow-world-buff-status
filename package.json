@@ -16,12 +16,14 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "//dependencies": "mongodb pinned EXACT (no caret) at a ~9-month-proven release for the subscriber store; it is the bot's only runtime dep. Its optional peer deps (kerberos, snappy, aws-sdk, zstd, client-encryption) are not installed — none are used.",
+  "//dependencies": "Both pinned EXACT (no caret) at proven releases. mongodb 6.21.0 (~9 months) backs the subscriber store; its optional peers (kerberos, snappy, aws-sdk, zstd, client-encryption) are not installed. ws 8.21.1 (~6 weeks, past the <8.17.1 DoS fix) is the Discord gateway transport; it has zero runtime deps and its optional native peers (bufferutil, utf-8-validate) are not installed.",
   "dependencies": {
-    "mongodb": "6.21.0"
+    "mongodb": "6.21.0",
+    "ws": "8.21.1"
   },
   "devDependencies": {
     "@types/node": "22.7.5",
+    "@types/ws": "8.18.1",
     "tsx": "4.19.2",
     "typescript": "5.6.3",
     "vitest": "3.2.7"
