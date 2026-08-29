@@ -46,6 +46,9 @@ const HEAL_CHECK_COOLDOWN_MS = 5 * 60_000;
 /** How long an offline-mode Discord fallback waits for a whisper to bounce. */
 const OFFLINE_FALLBACK_TTL_MS = 60_000;
 
+/** Max time from connecting to reaching in-world before the handshake is deemed stalled. */
+const WORLD_READY_TIMEOUT_MS = 30_000;
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -123,6 +126,9 @@ async function runConnection(
   await new Promise<void>((resolve, reject) => {
     let pollTimer: NodeJS.Timeout | null = null;
     let whisperQueue: WhisperQueue | null = null;
+    // The world server can accept the TCP connection but stall the handshake, and
+    // there's no other timeout past connect — so bound the time to reach in-world.
+    let readyTimer: NodeJS.Timeout | null = null;
     // Offline-mode subscribers whose in-game whisper may bounce → DM them instead.
     const offlinePending = new Map<string, { discordId: string; message: string; timer: NodeJS.Timeout }>();
     const clearOfflinePending = (): void => {
@@ -135,6 +141,7 @@ async function runConnection(
       if (settled) return;
       settled = true;
       if (pollTimer) clearTimeout(pollTimer);
+      if (readyTimer) clearTimeout(readyTimer);
       whisperQueue?.stop();
       clearOfflinePending();
       if (error) reject(error);
@@ -257,6 +264,8 @@ async function runConnection(
       logger,
       handlers: {
         onReady: () => {
+          if (readyTimer) clearTimeout(readyTimer);
+          readyTimer = null;
           logger.info(
             `in world; watching ${config.watchAreaName} about every ${config.pollIntervalMs / 1000}s`,
           );
@@ -290,6 +299,14 @@ async function runConnection(
     );
 
     world.start();
+
+    // If we don't reach in-world within the window, the handshake stalled — tear it
+    // down and let the supervisor reconnect rather than hanging here forever.
+    readyTimer = setTimeout(() => {
+      world.close();
+      settle(new Error("timed out reaching world (handshake stalled)"));
+    }, WORLD_READY_TIMEOUT_MS);
+    readyTimer.unref?.();
   });
 }
 
