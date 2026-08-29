@@ -23,6 +23,14 @@ export interface CensusChange {
   readonly present: number;
   readonly arrived: readonly string[];
   readonly departed: readonly DepartedPlayer[];
+  /**
+   * True when this /who followed a gap long enough that we were blind — a long
+   * disconnect or a server outage/crash. The census re-baselines instead of
+   * reporting a fake mass-departure, and arrived/departed come back empty.
+   */
+  readonly blackout: boolean;
+  /** Time since the previous observation (0 on the first). */
+  readonly gapMs: number;
 }
 
 interface Seen {
@@ -31,13 +39,17 @@ interface Seen {
 }
 
 const DEFAULT_GRACE_MS = 120_000; // ~2 poll intervals
+const DEFAULT_BLACKOUT_MS = 180_000; // ~3 poll intervals — beyond this we were blind
 
 export class RaidCensus {
   readonly #players = new Map<string, Seen>();
   readonly #graceMs: number;
+  readonly #blackoutMs: number;
+  #lastObserved: number | null = null;
 
-  constructor(graceMs: number = DEFAULT_GRACE_MS) {
+  constructor(graceMs: number = DEFAULT_GRACE_MS, blackoutMs: number = DEFAULT_BLACKOUT_MS) {
     this.#graceMs = graceMs;
+    this.#blackoutMs = blackoutMs;
   }
 
   /** Names currently believed present (seen within the grace window). */
@@ -47,9 +59,21 @@ export class RaidCensus {
 
   /** Fold one /who snapshot in, returning who arrived and who has now departed. */
   observe(names: readonly string[], now: number): CensusChange {
+    const gapMs = this.#lastObserved === null ? 0 : now - this.#lastObserved;
+    const blackout = this.#lastObserved !== null && gapMs > this.#blackoutMs;
+    this.#lastObserved = now;
+
+    // Blind gap: re-baseline. Whoever is here now becomes the fresh baseline, and we
+    // report no arrivals or departures — we can't know what happened while we weren't
+    // looking, so a crash that empties and refills the lair isn't a fake raid ending.
+    if (blackout) {
+      this.#players.clear();
+      for (const name of names) this.#players.set(name, { firstSeen: now, lastSeen: now });
+      return { now, present: names.length, arrived: [], departed: [], blackout: true, gapMs };
+    }
+
     const present = new Set(names);
     const arrived: string[] = [];
-
     for (const name of names) {
       const seen = this.#players.get(name);
       if (seen) seen.lastSeen = now;
@@ -67,7 +91,7 @@ export class RaidCensus {
       }
     }
 
-    return { now, present: names.length, arrived, departed };
+    return { now, present: names.length, arrived, departed, blackout: false, gapMs };
   }
 }
 

@@ -104,6 +104,24 @@ export class RaidTracker {
     return out;
   }
 
+  /**
+   * Absorb the current /who as a fresh baseline WITHOUT emitting any events — used
+   * after a blind gap (long disconnect / server outage), so the raid that was active
+   * before isn't reported as leaving and whatever is here now doesn't re-announce.
+   */
+  rebaseline(players: readonly WhoPlayer[]): void {
+    this.#firstPoll = false;
+    this.#cohorts.clear();
+    for (const [key, members] of this.#assign(players)) {
+      this.#cohorts.set(key, {
+        active: members.length >= this.#formAt,
+        peak: members.length,
+        label: this.#labelFor(key, members),
+        members: new Map(members.map((player) => [player.name, player])),
+      });
+    }
+  }
+
   update(players: readonly WhoPlayer[]): RaidEvent[] {
     const initial = this.#firstPoll;
     this.#firstPoll = false;

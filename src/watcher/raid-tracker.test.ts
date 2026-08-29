@@ -132,6 +132,14 @@ describe("RaidTracker (auto grouping — the default)", () => {
     expect(tracker.update(scattered(6))).toEqual([]); // 6 >= 5 → still the same raid
     expect(tracker.update(scattered(22))).toEqual([]); // churn back up, still silent
   });
+
+  it("rebaseline absorbs the current lair silently, then re-arms for real transitions", () => {
+    const tracker = new RaidTracker(15, "auto", 5);
+    tracker.rebaseline(scattered(20)); // post-blackout baseline — emits nothing
+    expect(tracker.update(scattered(20))).toEqual([]); // steady → silent (already active)
+    const left = tracker.update(scattered(2)); // a real drop still fires
+    expect(left.map((e) => e.kind)).toEqual(["raid-left"]);
+  });
 });
 
 describe("RaidTracker (guild mode)", () => {

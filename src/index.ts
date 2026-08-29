@@ -202,6 +202,16 @@ async function runConnection(
       // Observational census (no alerts): records per-player timing so temporal raid
       // detection and duration learning can be built and tuned on real cycles.
       const change = census.observe(inZone.map((player) => player.name), Date.now());
+
+      // Followed a blind gap (long disconnect / server outage): re-baseline both the
+      // census and the tracker and skip this read, so a crash-and-refill isn't logged
+      // as a fake raid ending.
+      if (change.blackout) {
+        logger.warn(`recovered after a ~${mins(change.gapMs)}m blind gap — re-baselining, ignoring this read`);
+        tracker.rebaseline(inZone);
+        return;
+      }
+
       if (change.arrived.length > 0 || change.departed.length > 0) {
         const dep = summarizeDepartures(change.departed);
         const depPart = dep
