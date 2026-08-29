@@ -58,4 +58,46 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "help"))[0]).toMatch(/Commands:/);
     expect((await router.handle("Raider", "flibber"))[0]).toMatch(/Unknown command/);
   });
+
+  it("links a Discord id, auto-subscribing, and validates the format", async () => {
+    const { store, router } = deps();
+    expect((await router.handle("Raider", "discord 123456789012345678"))[0]).toMatch(/Discord linked/);
+    const sub = await store.get("Raider");
+    expect(sub).toMatchObject({ discordId: "123456789012345678", delivery: "both" });
+
+    expect((await router.handle("Raider", "discord 42"))[0]).toMatch(/isn't a Discord user id/);
+  });
+
+  it("unlinks a Discord id", async () => {
+    const { store, router } = deps();
+    await router.handle("Raider", "discord 123456789012345678");
+    expect((await router.handle("Raider", "discord off"))[0]).toMatch(/unlinked/);
+    expect((await store.get("Raider"))?.discordId).toBeNull();
+  });
+
+  it("sets the delivery mode and warns when offline has no Discord link", async () => {
+    const { store, router } = deps();
+    await router.handle("Raider", "subscribe");
+    const warned = await router.handle("Raider", "mode offline");
+    expect(warned[0]).toMatch(/link Discord/);
+    expect((await store.get("Raider"))?.delivery).toBe("offline");
+
+    await router.handle("Raider", "discord 123456789012345678");
+    const both = await router.handle("Raider", "mode both");
+    expect(both[0]).toMatch(/in-game and Discord/);
+    expect((await store.get("Raider"))?.delivery).toBe("both");
+  });
+
+  it("rejects an unknown mode", async () => {
+    const { router } = deps();
+    await router.handle("Raider", "subscribe");
+    expect((await router.handle("Raider", "mode sometimes"))[0]).toMatch(/mode both.*mode offline/);
+  });
+
+  it("shows the caller their own settings", async () => {
+    const { router } = deps();
+    expect((await router.handle("Raider", "me"))[0]).toMatch(/not subscribed/);
+    await router.handle("Raider", "discord 123456789012345678");
+    expect((await router.handle("Raider", "me"))[0]).toMatch(/Discord linked, delivery "both"/);
+  });
 });
