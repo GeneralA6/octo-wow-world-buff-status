@@ -204,14 +204,39 @@ in-world → `/who` path is covered by an integration test that runs the client
 against a scripted mock server speaking the real framed, encrypted wire format
 (`src/net/world-client.test.ts`).
 
+### In-game whisper interface
+
+Besides posting to Discord, the bot's character answers whispers and can whisper
+alerts to players in-game. Whisper the character:
+
+| command | effect |
+|---|---|
+| `subscribe` (`sub`, `start`) | opt in to in-game raid alerts |
+| `unsubscribe` (`unsub`, `stop`) | opt out |
+| `status` | the current raid state, right now |
+| `help` | the command list |
+
+A whisper's packet carries only the sender's **GUID**, so the bot name-queries to
+resolve who whispered (and to reply). Outgoing whispers are **throttled** so a raid
+alert to many subscribers can't trip the server's spam mute. Subscribers persist in
+**MongoDB** (`MONGODB_URI`); without it they live in memory and are lost on restart.
+Set `WOW_WHISPERS=false` to disable the whole interface.
+
+> This makes the character actively talk in-game — much more visible and reportable
+> than the silent `/who` poller, and a bigger ban risk. It's off with one env var.
+> In-game alerts only reach players who are **online** (whispers don't queue);
+> Discord stays the reliable channel.
+
 Layout:
 
 | path | what |
 |---|---|
 | `src/crypto/` | SRP6 client, vanilla header cipher, BigInt/LE helpers |
 | `src/net/` | packet codecs (auth + world) and the two socket clients |
-| `src/protocol/` | opcodes and the `/who` request/response codec |
-| `src/watcher/` | roster-diff → events, and the raid-size / enter-leave alert filter |
+| `src/protocol/` | opcodes, the `/who` codec, and the chat / name-query codecs |
+| `src/watcher/` | the cohort raid tracker (forming / left events) |
+| `src/chat/` | whisper command router and the throttled outgoing-whisper queue |
+| `src/subscribers/` | `SubscriberStore` interface + in-memory and MongoDB impls |
 | `src/notify/` | `Notifier` interface + Discord webhook + message formatting |
 | `src/config.ts`, `src/index.ts` | config validation and the supervisor loop |
 
