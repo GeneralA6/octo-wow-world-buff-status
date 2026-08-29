@@ -10,8 +10,9 @@ import { DiscordDmSender } from "./notify/discord-dm.js";
 import { DiscordGateway } from "./notify/discord-gateway.js";
 import { formatRaidEvent, formatRaidWhisper } from "./notify/format.js";
 import { RaidTracker, type RaidEvent } from "./watcher/raid-tracker.js";
-import { PresenceTracker, summarizeDepartures, WHO_RESULT_CAP } from "./watcher/presence.js";
+import { PresenceTracker, summarizeDepartures } from "./watcher/presence.js";
 import { RaidSessions } from "./watcher/raid-sessions.js";
+import { fetchRoster, type Roster } from "./watcher/roster.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { DiscordLinker } from "./chat/discord-linker.js";
@@ -21,7 +22,6 @@ import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
 import { PendingLinks } from "./subscribers/pending-links.js";
 import type { Subscriber, SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
-import type { WhoResult } from "./protocol/who.js";
 
 /** Client identity values that self-heal from the CDN across OctoWoW patches. */
 interface ClientValues {
@@ -150,8 +150,6 @@ async function runConnection(
       else resolve();
     };
 
-    const query = { minLevel: 0, maxLevel: 100, zoneIds: [config.watchAreaId] } as const;
-
     // Arm a Discord DM for an offline-mode subscriber; delivered if their whisper
     // bounces, else it expires quietly (they were online, got it in-game).
     const armOfflineFallback = (name: string, discordId: string, message: string): void => {
@@ -203,17 +201,18 @@ async function runConnection(
       void dm.send(pending.discordId, pending.message);
     };
 
-    const onWho = (result: WhoResult): void => {
-      const inZone = result.players.filter((player) => player.areaId === config.watchAreaId);
+    const processRoster = (roster: Roster): void => {
+      const inZone = roster.players.filter((player) => player.areaId === config.watchAreaId);
       logger.info(
         `who ${config.watchAreaName}: ${inZone.length} in zone ` +
-          `(${result.players.length} returned, ${result.onlineCount} online)`,
+          `(${roster.players.length} returned, ${roster.onlineCount} online)` +
+          (roster.sliced ? ` [class-sliced, complete=${roster.complete}]` : ""),
       );
 
       // Presence census (no alerts): per-player timing with completeness/confidence,
-      // the data foundation for temporal detection and duration learning. A /who at
-      // the 49 cap is a TRUNCATED view, so mark it incomplete.
-      const complete = inZone.length < WHO_RESULT_CAP;
+      // the data foundation for temporal detection and duration learning. The roster
+      // is complete unless even class-slicing was still truncated.
+      const complete = roster.complete;
       const names = inZone.map((player) => player.name);
       const change = presence.observe(names, Date.now(), complete);
 
@@ -281,19 +280,19 @@ async function runConnection(
           logger.info(
             `in world; watching ${config.watchAreaName} about every ${config.pollIntervalMs / 1000}s`,
           );
-          const poll = (): void => {
+          const poll = async (): Promise<void> => {
             try {
-              world.requestWho(query);
+              const roster = await fetchRoster((q) => world.whoOnce(q), config.watchAreaId);
+              if (!settled) processRoster(roster);
             } catch (error) {
-              logger.warn(`who request failed: ${(error as Error).message}`);
+              logger.warn(`who failed: ${describeError(error)}`);
             }
             if (settled) return;
-            pollTimer = setTimeout(poll, jitter(config.pollIntervalMs, POLL_JITTER_RATIO));
+            pollTimer = setTimeout(() => void poll(), jitter(config.pollIntervalMs, POLL_JITTER_RATIO));
             pollTimer.unref?.();
           };
-          poll();
+          void poll();
         },
-        onWho,
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
         onWhisperUndelivered: config.whispersEnabled ? onWhisperUndelivered : undefined,
         onError: (error) => {

@@ -68,6 +68,12 @@ export class WorldClient {
   #crypt: VanillaHeaderCrypt | null = null;
   #recvBuffer = Buffer.alloc(0);
   #pendingHeader: { opcode: number; bodyLength: number } | null = null;
+  /** Resolver for an in-flight whoOnce() — one /who at a time, so replies are in order. */
+  #whoPending: {
+    resolve: (result: WhoResult) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  } | null = null;
   #ready = false;
   #closed = false;
   #pingTimer: NodeJS.Timeout | null = null;
@@ -104,6 +110,33 @@ export class WorldClient {
     this.#send(WorldOpcode.CMSG_WHO, buildWhoRequestBody(query));
   }
 
+  /**
+   * Send one /who and resolve with its reply. Only one may be in flight — /who has
+   * no correlation id, so the caller must await each before sending the next (used
+   * to slice a query by class and merge, beating the 49-result cap).
+   */
+  whoOnce(query: WhoQuery, timeoutMs = 8_000): Promise<WhoResult> {
+    if (!this.#ready) return Promise.reject(new Error("cannot /who before the character is in world"));
+    if (this.#whoPending) return Promise.reject(new Error("a /who is already in flight"));
+    return new Promise<WhoResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#whoPending = null;
+        reject(new Error("/who timed out"));
+      }, timeoutMs);
+      timer.unref?.();
+      this.#whoPending = { resolve, reject, timer };
+      this.#send(WorldOpcode.CMSG_WHO, buildWhoRequestBody(query));
+    });
+  }
+
+  #rejectWho(reason: string): void {
+    if (!this.#whoPending) return;
+    clearTimeout(this.#whoPending.timer);
+    const { reject } = this.#whoPending;
+    this.#whoPending = null;
+    reject(new Error(reason));
+  }
+
   /** Whisper a player by character name. */
   whisper(target: string, message: string): void {
     if (!this.#ready) throw new Error("cannot whisper before the character is in world");
@@ -122,6 +155,7 @@ export class WorldClient {
   #onClose(): void {
     if (this.#pingTimer) clearInterval(this.#pingTimer);
     this.#pingTimer = null;
+    this.#rejectWho("world connection closed");
     if (!this.#closed) {
       this.#closed = true;
       this.#handlers.onClose?.();
@@ -170,9 +204,18 @@ export class WorldClient {
         case WorldOpcode.SMSG_LOGIN_VERIFY_WORLD:
           this.#handleInWorld();
           break;
-        case WorldOpcode.SMSG_WHO:
-          this.#handlers.onWho?.(parseWhoResponseBody(body));
+        case WorldOpcode.SMSG_WHO: {
+          const result = parseWhoResponseBody(body);
+          if (this.#whoPending) {
+            clearTimeout(this.#whoPending.timer);
+            const { resolve } = this.#whoPending;
+            this.#whoPending = null;
+            resolve(result);
+          } else {
+            this.#handlers.onWho?.(result);
+          }
           break;
+        }
         case WorldOpcode.SMSG_MESSAGECHAT:
           this.#handleChat(body);
           break;
