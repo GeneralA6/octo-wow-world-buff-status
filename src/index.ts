@@ -193,6 +193,7 @@ async function runConnection(
     };
 
     const onWhisper = (sender: string, text: string): void => {
+      logger.debug(`whisper command from ${sender}: ${JSON.stringify(text)}`);
       void (async () => {
         try {
           const replies = await router.handle(sender, text);

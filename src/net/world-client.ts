@@ -107,6 +107,7 @@ export class WorldClient {
   /** Whisper a player by character name. */
   whisper(target: string, message: string): void {
     if (!this.#ready) throw new Error("cannot whisper before the character is in world");
+    this.#logger.debug(`world: whisper -> ${target}: ${JSON.stringify(message)}`);
     this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildWhisper(target, message));
   }
 
@@ -247,8 +248,12 @@ export class WorldClient {
    * is logged and dropped, never allowed to tear down the session.
    */
   #handleChat(body: Buffer): void {
+    this.#logger.debug(`world: chat recv [${body.subarray(0, 80).toString("hex")}]`);
     try {
       const chat = parseServerChat(body);
+      this.#logger.debug(
+        `world: chat type=0x${chat.type.toString(16)} guid=0x${chat.senderGuid.toString(16)} text=${JSON.stringify(chat.text)}`,
+      );
       if (chat.type !== ChatType.Whisper) return; // only inbound whispers are commands
       const text = chat.text.trim();
       if (!text) return;
