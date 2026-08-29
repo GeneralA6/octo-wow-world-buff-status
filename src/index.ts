@@ -12,6 +12,7 @@ import { formatRaidEvent, formatRaidWhisper } from "./notify/format.js";
 import { RaidTracker, type RaidEvent } from "./watcher/raid-tracker.js";
 import { PresenceTracker, summarizeDepartures, WHO_RESULT_CAP } from "./watcher/presence.js";
 import { RaidSessions } from "./watcher/raid-sessions.js";
+import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { DiscordLinker } from "./chat/discord-linker.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
@@ -97,6 +98,7 @@ interface ConnectionServices {
   readonly tracker: RaidTracker;
   readonly sessions: RaidSessions;
   readonly presence: PresenceTracker;
+  readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
   readonly router: CommandRouter;
   readonly dm: DiscordDmSender;
@@ -110,7 +112,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { tracker, sessions, presence, store, router, dm, push, client } = services;
+  const { tracker, sessions, presence, snapshots, store, router, dm, push, client } = services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -212,7 +214,14 @@ async function runConnection(
       // the data foundation for temporal detection and duration learning. A /who at
       // the 49 cap is a TRUNCATED view, so mark it incomplete.
       const complete = inZone.length < WHO_RESULT_CAP;
-      const change = presence.observe(inZone.map((player) => player.name), Date.now(), complete);
+      const names = inZone.map((player) => player.name);
+      const change = presence.observe(names, Date.now(), complete);
+
+      // Persist the raw observation for offline replay/stats — best-effort, a DB
+      // hiccup must never break the poll loop.
+      void snapshots
+        .record({ ts: new Date(change.now), present: change.present, complete, names })
+        .catch((error) => logger.debug(`snapshot: ${describeError(error)}`));
 
       // Followed a blind gap (long disconnect / server outage): re-baseline every
       // detector and skip this read, so a crash-and-refill isn't a fake raid ending.
@@ -373,6 +382,17 @@ async function main(): Promise<void> {
     ? await openStore(config, logger, push)
     : new InMemorySubscriberStore();
 
+  // Raw /who snapshots for offline replay/stats — Mongo when configured, else memory.
+  let snapshots: SnapshotStore = new InMemorySnapshotStore();
+  if (config.mongodbUri) {
+    try {
+      snapshots = await MongoSnapshotStore.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("snapshots: recording /who history to MongoDB");
+    } catch (error) {
+      logger.error(`snapshots: MongoDB connect failed (${describeError(error)}); recording in memory`);
+    }
+  }
+
   // Discord DM delivery + linking (only when a bot token is configured).
   const dm = new DiscordDmSender(config.discordBotToken);
   const linker = new DiscordLinker({
@@ -388,7 +408,17 @@ async function main(): Promise<void> {
     areaName: config.watchAreaName,
     linker: dm.isConfigured ? linker : null,
   });
-  const services: ConnectionServices = { tracker, sessions, presence, store, router, dm, push, client };
+  const services: ConnectionServices = {
+    tracker,
+    sessions,
+    presence,
+    snapshots,
+    store,
+    router,
+    dm,
+    push,
+    client,
+  };
 
   // Link flow A: listen for DMs the bot receives and complete any pending code.
   let gateway: DiscordGateway | null = null;
@@ -426,7 +456,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info("shutting down");
     gateway?.stop();
-    void store.close().finally(() => process.exit(0));
+    void Promise.allSettled([store.close(), snapshots.close()]).finally(() => process.exit(0));
   });
 
   const heal: HealState = { lastCheckMs: 0, alertedStuck: false };
