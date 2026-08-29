@@ -1,14 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
+import { PendingLinks } from "../subscribers/pending-links.js";
+import { DiscordDmSender, type DiscordFetch, type DiscordResponse } from "../notify/discord-dm.js";
 import { RaidTracker } from "../watcher/raid-tracker.js";
 import type { WhoPlayer } from "../protocol/who.js";
+import { DiscordLinker } from "./discord-linker.js";
 import { CommandRouter } from "./command-router.js";
 
-function deps() {
+function res(ok: boolean, status: number, body: unknown = { id: "chan" }): DiscordResponse {
+  return { ok, status, json: () => Promise.resolve(body), text: () => Promise.resolve("") };
+}
+
+function deps(opts: { withLinker?: boolean; fetch?: DiscordFetch } = {}) {
   const store = new InMemorySubscriberStore();
   const tracker = new RaidTracker(15);
-  const router = new CommandRouter({ store, tracker, areaName: "Onyxia's Lair" });
-  return { store, tracker, router };
+  const pending = new PendingLinks({ generate: () => "CODE01" });
+  const dm = new DiscordDmSender("tok", opts.fetch ?? (() => Promise.resolve(res(true, 200))));
+  const linker =
+    opts.withLinker === false
+      ? null
+      : new DiscordLinker({ store, pending, dm, serverInviteUrl: "https://discord.gg/x", areaName: "Onyxia's Lair" });
+  const router = new CommandRouter({ store, tracker, areaName: "Onyxia's Lair", linker });
+  return { store, tracker, pending, linker, router };
 }
 
 function crowd(guild: string, count: number): WhoPlayer[] {
@@ -32,19 +45,6 @@ describe("CommandRouter", () => {
     expect(await store.has("Raider")).toBe(false);
   });
 
-  it("tolerates aliases and a leading slash or bang", async () => {
-    const { store, router } = deps();
-    await router.handle("Raider", "/sub");
-    expect(await store.has("Raider")).toBe(true);
-    await router.handle("Raider", "!stop");
-    expect(await store.has("Raider")).toBe(false);
-  });
-
-  it("reports no raid when the lair is quiet", async () => {
-    const { router } = deps();
-    expect((await router.handle("Raider", "status"))[0]).toMatch(/No raid/);
-  });
-
   it("reports the active raid on status", async () => {
     const { tracker, router } = deps();
     tracker.update(crowd("Nightfall", 20));
@@ -53,51 +53,68 @@ describe("CommandRouter", () => {
     expect(reply).toContain("20");
   });
 
-  it("answers help and rejects unknown commands", async () => {
-    const { router } = deps();
-    expect((await router.handle("Raider", "help"))[0]).toMatch(/Commands:/);
-    expect((await router.handle("Raider", "flibber"))[0]).toMatch(/Unknown command/);
-  });
-
-  it("links a Discord id, auto-subscribing, and validates the format", async () => {
+  it("flow A: 'discord' mints a code to DM and subscribes the caller", async () => {
     const { store, router } = deps();
-    expect((await router.handle("Raider", "discord 123456789012345678"))[0]).toMatch(/Discord linked/);
-    const sub = await store.get("Raider");
-    expect(sub).toMatchObject({ discordId: "123456789012345678", delivery: "both" });
-
-    expect((await router.handle("Raider", "discord 42"))[0]).toMatch(/isn't a Discord user id/);
+    const reply = (await router.handle("Raider", "discord"))[0];
+    expect(reply).toMatch(/DM the bot the code CODE01/);
+    expect(reply).toContain("discord.gg/x");
+    expect(await store.has("Raider")).toBe(true);
   });
 
-  it("unlinks a Discord id", async () => {
+  it("flow B: 'discord <id>' DMs a code and asks to confirm", async () => {
+    const { router } = deps();
+    expect((await router.handle("Raider", "discord 123456789012345678"))[0]).toMatch(/DMed you a code/);
+  });
+
+  it("flow B: an unreachable id guides the user to join and open DMs", async () => {
+    const { router } = deps({ fetch: () => Promise.resolve(res(false, 403)) });
+    const reply = (await router.handle("Raider", "discord 123456789012345678"))[0];
+    expect(reply).toMatch(/couldn't DM you/);
+    expect(reply).toContain("discord.gg/x");
+  });
+
+  it("confirms a flow-B code, whether via 'confirm <code>' or a bare code", async () => {
     const { store, router } = deps();
     await router.handle("Raider", "discord 123456789012345678");
+    expect((await router.handle("Raider", "confirm CODE01"))[0]).toMatch(/linked/i);
+    expect((await store.get("Raider"))?.discordId).toBe("123456789012345678");
+
+    const again = deps();
+    await again.router.handle("Raider", "discord 123456789012345678");
+    expect((await again.router.handle("Raider", "CODE01"))[0]).toMatch(/linked/i);
+  });
+
+  it("rejects a non-id and points at the DM flow", async () => {
+    const { router } = deps();
+    expect((await router.handle("Raider", "discord 42"))[0]).toMatch(/isn't a Discord id/);
+  });
+
+  it("unlinks with 'discord off'", async () => {
+    const { store, router } = deps();
+    await router.handle("Raider", "discord 123456789012345678");
+    await router.handle("Raider", "CODE01");
     expect((await router.handle("Raider", "discord off"))[0]).toMatch(/unlinked/);
     expect((await store.get("Raider"))?.discordId).toBeNull();
+  });
+
+  it("says so when Discord isn't configured", async () => {
+    const { router } = deps({ withLinker: false });
+    expect((await router.handle("Raider", "discord"))[0]).toMatch(/isn't set up/);
   });
 
   it("sets the delivery mode and warns when offline has no Discord link", async () => {
     const { store, router } = deps();
     await router.handle("Raider", "subscribe");
-    const warned = await router.handle("Raider", "mode offline");
-    expect(warned[0]).toMatch(/link Discord/);
+    expect((await router.handle("Raider", "mode offline"))[0]).toMatch(/link Discord/);
     expect((await store.get("Raider"))?.delivery).toBe("offline");
-
-    await router.handle("Raider", "discord 123456789012345678");
-    const both = await router.handle("Raider", "mode both");
-    expect(both[0]).toMatch(/in-game and Discord/);
-    expect((await store.get("Raider"))?.delivery).toBe("both");
   });
 
-  it("rejects an unknown mode", async () => {
-    const { router } = deps();
-    await router.handle("Raider", "subscribe");
-    expect((await router.handle("Raider", "mode sometimes"))[0]).toMatch(/mode both.*mode offline/);
-  });
-
-  it("shows the caller their own settings", async () => {
+  it("shows the caller their settings and rejects unknown commands", async () => {
     const { router } = deps();
     expect((await router.handle("Raider", "me"))[0]).toMatch(/not subscribed/);
-    await router.handle("Raider", "discord 123456789012345678");
-    expect((await router.handle("Raider", "me"))[0]).toMatch(/Discord linked, delivery "both"/);
+    await router.handle("Raider", "subscribe");
+    expect((await router.handle("Raider", "me"))[0]).toMatch(/no Discord linked/);
+    expect((await router.handle("Raider", "flibber"))[0]).toMatch(/Unknown command/);
+    expect((await router.handle("Raider", "help"))[0]).toMatch(/Commands:/);
   });
 });

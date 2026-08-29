@@ -1,24 +1,28 @@
 import type { DeliveryMode, SubscriberStore } from "../subscribers/store.js";
 import type { RaidTracker } from "../watcher/raid-tracker.js";
+import type { DiscordLinker } from "./discord-linker.js";
 
 /**
  * Routes a whisper from a player to a command and produces the reply line(s) to
- * whisper back. Pure aside from the injected store; kept terse because a whisper is
- * length-limited and a chatty bot is a reported bot.
+ * whisper back. Pure aside from the injected store/linker; terse because a whisper
+ * is length-limited and a chatty bot is a reported bot.
  *
  * Commands (case-insensitive, a leading !/./ tolerated):
  *   subscribe | sub | start        — opt in to in-game raid alerts
  *   unsubscribe | unsub | stop      — opt out
- *   discord <id> | discord off      — link / unlink a Discord user id
+ *   discord                         — link Discord by DMing the bot a code (flow A)
+ *   discord <id>                    — link by pasting your id; bot DMs a code (flow B)
+ *   discord off                     — unlink
+ *   confirm <code> | <code>         — confirm a flow-B code in-game
  *   mode both | mode offline        — Discord always, or only when offline in-game
- *   status                          — the current raid state
- *   me                              — your own subscription settings
- *   help                            — the command list
+ *   status | me | help
  */
 export interface CommandDeps {
   readonly store: SubscriberStore;
   readonly tracker: RaidTracker;
   readonly areaName: string;
+  /** Null when no bot token is configured — the discord commands then say so. */
+  readonly linker?: DiscordLinker | null;
 }
 
 const DISCORD_ID = /^\d{17,20}$/;
@@ -40,7 +44,7 @@ export class CommandRouter {
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
     const command = (parts[0] ?? "").toLowerCase();
     const arg = parts[1] ?? "";
-    const { store, tracker, areaName } = this.#deps;
+    const { store, tracker, areaName, linker } = this.#deps;
 
     switch (command) {
       case "subscribe":
@@ -49,7 +53,7 @@ export class CommandRouter {
         const added = await store.add(sender);
         return [
           added
-            ? `Subscribed — I'll whisper you when a raid forms or clears in ${areaName}. Link Discord with "discord <id>" for pings there too. "help" for more.`
+            ? `Subscribed — I'll whisper you when a raid forms or clears in ${areaName}. Whisper "discord" to also get Discord DMs. "help" for more.`
             : `You're already subscribed to ${areaName} alerts.`,
         ];
       }
@@ -65,6 +69,11 @@ export class CommandRouter {
       }
       case "discord":
         return this.#discord(sender, arg);
+      case "confirm": {
+        if (!linker) return ["Discord isn't set up on this bot."];
+        const ok = await linker.confirmFromWhisper(sender, arg);
+        return [ok ? this.#linkedLine() : `That code didn't match. Whisper "discord" to start again.`];
+      }
       case "mode":
         return this.#mode(sender, arg);
       case "me": {
@@ -84,38 +93,48 @@ export class CommandRouter {
       case "commands":
       case "?":
         return [
-          `I watch ${areaName}. Commands: subscribe, unsubscribe, discord <id>, ` +
-            `mode both|offline, status, me. Subscribe for in-game alerts; link Discord to be pinged there.`,
+          `I watch ${areaName}. Commands: subscribe, unsubscribe, discord [<id>], ` +
+            `mode both|offline, status, me. "discord" links Discord for DM alerts.`,
         ];
-      default:
+      default: {
+        // A bare confirmation code from a flow-B link.
+        if (linker && (await linker.confirmFromWhisper(sender, command))) return [this.#linkedLine()];
         return [`Unknown command. Whisper "help" for what I can do.`];
+      }
     }
   }
 
+  #linkedLine(): string {
+    return `Discord linked! You'll get ${this.#deps.areaName} alerts there too. "mode offline" for DMs only when you're offline.`;
+  }
+
   async #discord(sender: string, arg: string): Promise<string[]> {
-    const { store } = this.#deps;
+    const { linker } = this.#deps;
+    if (!linker) return ["Discord isn't set up on this bot."];
+    const invite = linker.serverInviteUrl;
+    const joinHint = invite ? ` Join ${invite} first.` : "";
+
     if (arg === "") {
-      return [
-        `Whisper "discord <your id>" to link Discord, or "discord off" to unlink. ` +
-          `In Discord: Developer Mode on, right-click yourself, Copy User ID.`,
-      ];
+      const code = await linker.startDmLink(sender);
+      return [`To link Discord:${joinHint} then DM the bot the code ${code} (expires ~15 min).`];
     }
     if (["off", "clear", "none", "remove"].includes(arg.toLowerCase())) {
-      const ok = await store.update(sender, { discordId: null });
-      return [ok ? `Discord unlinked — in-game whispers only.` : `You're not subscribed. Whisper "subscribe" first.`];
+      const ok = await linker.unlink(sender);
+      return [ok ? `Discord unlinked — in-game whispers only.` : `You're not subscribed.`];
     }
     if (!DISCORD_ID.test(arg)) {
-      return [
-        `That isn't a Discord user id (17-20 digits). In Discord: Developer Mode on, ` +
-          `right-click yourself, Copy User ID.`,
-      ];
+      return [`That isn't a Discord id. Whisper just "discord" to link by DMing me a code instead.`];
     }
-    await store.add(sender); // linking implies wanting alerts; make sure they exist
-    await store.update(sender, { discordId: arg });
-    return [
-      `Discord linked — raid alerts in-game and on Discord (mode "both"). ` +
-        `Whisper "mode offline" for Discord only when you're offline in-game.`,
-    ];
+    switch (await linker.startIdLink(sender, arg)) {
+      case "sent":
+        return [`I DMed you a code — whisper it back here to confirm.`];
+      case "unreachable":
+        return [`I couldn't DM you.${joinHint} Enable "DMs from server members", then try again.`];
+      case "not-configured":
+        return [`Discord isn't set up on this bot.`];
+      default:
+        return [`Trouble reaching Discord — try again in a moment.`];
+    }
   }
 
   async #mode(sender: string, arg: string): Promise<string[]> {
@@ -128,7 +147,7 @@ export class CommandRouter {
     if (!sub) return [`You're not subscribed. Whisper "subscribe" first.`];
     await store.update(sender, { delivery });
     if (delivery === "offline" && !sub.discordId) {
-      return [`Delivery set to "offline" — but link Discord with "discord <id>" so I can reach you when you're offline.`];
+      return [`Delivery set to "offline" — but link Discord with "discord" so I can reach you when you're offline.`];
     }
     return [
       delivery === "both"
