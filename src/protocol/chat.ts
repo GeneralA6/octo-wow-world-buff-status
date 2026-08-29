@@ -43,3 +43,8 @@ export function buildWhisper(target: string, message: string, language: number =
     .cString(message)
     .toBuffer();
 }
+
+/** SMSG_CHAT_PLAYER_NOT_FOUND body is the offline target's name as a CString. */
+export function parsePlayerNotFound(body: Buffer): string {
+  return new PacketReader(body).cString();
+}

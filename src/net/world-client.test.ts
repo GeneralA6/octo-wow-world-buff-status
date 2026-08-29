@@ -59,6 +59,14 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
   }
 
+  /** Tell the client a whisper target is offline. */
+  pushPlayerNotFound(name: string): void {
+    this.#sendServer(
+      WorldOpcode.SMSG_CHAT_PLAYER_NOT_FOUND,
+      new PacketWriter().cString(name).toBuffer(),
+    );
+  }
+
   /** Kick off the session the way a real server does: it speaks first. */
   begin(serverSeed: number): void {
     this.#sendServer(
@@ -255,6 +263,41 @@ describe("WorldClient (against a scripted mock server)", () => {
 
     client.whisper("Raider", "Subscribed!");
     expect(socket.sentWhispers).toContainEqual({ target: "Raider", message: "Subscribed!" });
+
+    client.close();
+  });
+
+  it("reports an undelivered whisper when the target is offline", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    let deliverUndelivered: (target: string) => void = () => {};
+    const undelivered = new Promise<string>((resolve) => {
+      deliverUndelivered = resolve;
+    });
+
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x33,
+      pingIntervalMs: 0,
+      handlers: {
+        onReady: () => markReady(),
+        onWhisperUndelivered: (target) => deliverUndelivered(target),
+      },
+    });
+
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    socket.pushPlayerNotFound("OfflineGuy");
+    expect(await withTimeout(undelivered)).toBe("OfflineGuy");
 
     client.close();
   });

@@ -14,7 +14,7 @@ function fakeResponse(ok: boolean, status: number, body = ""): HttpResponse {
 interface ParsedPayload {
   embeds: { title: string; description: string; color: number }[];
   content?: string;
-  allowed_mentions?: { parse: string[]; roles: string[] };
+  allowed_mentions?: { parse: string[]; roles: string[]; users: string[] };
 }
 
 function parsePayload(post: ReturnType<typeof vi.fn<HttpPostJson>>): ParsedPayload {
@@ -81,7 +81,33 @@ describe("DiscordWebhookNotifier", () => {
     });
     const payload = parsePayload(post);
     expect(payload.content).toBe("<@&998877>");
-    expect(payload.allowed_mentions).toEqual({ parse: [], roles: ["998877"] });
+    expect(payload.allowed_mentions).toEqual({ parse: [], roles: ["998877"], users: [] });
+  });
+
+  it("pings registered users personally, and both a role and users together", async () => {
+    const post = vi.fn<HttpPostJson>().mockResolvedValue(fakeResponse(true, 204));
+    await new DiscordWebhookNotifier(WEBHOOK, { post, mentionRoleId: "42" }).notify({
+      kind: "entered",
+      title: "t",
+      body: "b",
+      mentionUserIds: ["111", "222"],
+    });
+    const payload = parsePayload(post);
+    expect(payload.content).toBe("<@&42> <@111> <@222>");
+    expect(payload.allowed_mentions).toEqual({ parse: [], roles: ["42"], users: ["111", "222"] });
+  });
+
+  it("pings only the users when no role is configured", async () => {
+    const post = vi.fn<HttpPostJson>().mockResolvedValue(fakeResponse(true, 204));
+    await new DiscordWebhookNotifier(WEBHOOK, { post }).notify({
+      kind: "left",
+      title: "t",
+      body: "b",
+      mentionUserIds: ["999"],
+    });
+    const payload = parsePayload(post);
+    expect(payload.content).toBe("<@999>");
+    expect(payload.allowed_mentions).toEqual({ parse: [], roles: [], users: ["999"] });
   });
 
   it("pings the role on 'left' but not on 'info' or 'changed'", async () => {

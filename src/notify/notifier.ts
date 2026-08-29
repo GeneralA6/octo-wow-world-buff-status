@@ -12,6 +12,8 @@ export interface NotifyMessage {
   readonly kind: NotifyKind;
   readonly title: string;
   readonly body: string;
+  /** Discord user ids to ping personally in the post (registered subscribers). */
+  readonly mentionUserIds?: readonly string[];
 }
 
 export interface Notifier {
@@ -49,7 +51,7 @@ const MENTION_KINDS: ReadonlySet<NotifyKind> = new Set<NotifyKind>(["entered", "
 interface DiscordPayload {
   embeds: { title: string; description: string; color: number }[];
   content?: string;
-  allowed_mentions?: { parse: string[]; roles: string[] };
+  allowed_mentions?: { parse: string[]; roles: string[]; users: string[] };
 }
 
 export interface DiscordWebhookOptions {
@@ -84,10 +86,20 @@ export class DiscordWebhookNotifier implements Notifier {
       ],
     };
 
-    if (this.#mentionRoleId && MENTION_KINDS.has(message.kind)) {
-      // A role only pings from message content, and allowed_mentions must permit it.
-      payload.content = `<@&${this.#mentionRoleId}>`;
-      payload.allowed_mentions = { parse: [], roles: [this.#mentionRoleId] };
+    // A mention only pings from message content, and allowed_mentions must permit it.
+    const roleId = this.#mentionRoleId;
+    const roleMention = roleId && MENTION_KINDS.has(message.kind) ? roleId : null;
+    const userIds = message.mentionUserIds ?? [];
+    const content: string[] = [];
+    if (roleMention) content.push(`<@&${roleMention}>`);
+    for (const id of userIds) content.push(`<@${id}>`);
+    if (content.length > 0) {
+      payload.content = content.join(" ");
+      payload.allowed_mentions = {
+        parse: [],
+        roles: roleMention ? [roleMention] : [],
+        users: [...userIds],
+      };
     }
 
     const response = await this.#post(this.#webhookUrl, JSON.stringify(payload));

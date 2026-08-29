@@ -39,6 +39,8 @@ export enum WorldOpcode {
   CMSG_AUTH_SESSION = 0x1ed,
   SMSG_AUTH_RESPONSE = 0x1ee,
   SMSG_LOGIN_VERIFY_WORLD = 0x236,
+  /** Sent when a whisper target isn't online — our "character offline" signal. */
+  SMSG_CHAT_PLAYER_NOT_FOUND = 0x2a9,
   SMSG_WARDEN_DATA = 0x2e6,
   CMSG_WARDEN_DATA = 0x2e7,
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PacketReader, PacketWriter } from "../net/byte-buffer.js";
 import { ChatType, LANG_UNIVERSAL } from "./opcodes.js";
-import { buildWhisper, parseServerChat } from "./chat.js";
+import { buildWhisper, parsePlayerNotFound, parseServerChat } from "./chat.js";
 
 /** Assemble an SMSG_MESSAGECHAT player-message body the way the server would. */
 function serverChat(type: number, guid: bigint, text: string, language = 7): Buffer {
@@ -54,5 +54,12 @@ describe("buildWhisper", () => {
     const reader = new PacketReader(frame);
     reader.u32LE();
     expect(reader.u32LE()).toBe(7);
+  });
+});
+
+describe("parsePlayerNotFound", () => {
+  it("reads the offline target's name", () => {
+    const body = new PacketWriter().cString("OfflineGuy").toBuffer();
+    expect(parsePlayerNotFound(body)).toBe("OfflineGuy");
   });
 });

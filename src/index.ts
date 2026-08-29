@@ -12,7 +12,7 @@ import { CommandRouter } from "./chat/command-router.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
-import type { SubscriberStore } from "./subscribers/store.js";
+import type { Subscriber, SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 import type { WhoResult } from "./protocol/who.js";
 
@@ -36,6 +36,9 @@ const POLL_JITTER_RATIO = 0.15;
 
 /** Don't re-check the CDN build more often than this while a rejection persists. */
 const HEAL_CHECK_COOLDOWN_MS = 5 * 60_000;
+
+/** How long an offline-mode Discord fallback waits for a whisper to bounce. */
+const OFFLINE_FALLBACK_TTL_MS = 60_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -106,33 +109,77 @@ async function runConnection(
   await new Promise<void>((resolve, reject) => {
     let pollTimer: NodeJS.Timeout | null = null;
     let whisperQueue: WhisperQueue | null = null;
+    // Offline-mode subscribers whose in-game whisper may bounce → Discord instead.
+    const offlinePending = new Map<string, { message: NotifyMessage; timer: NodeJS.Timeout }>();
+    const clearOfflinePending = (): void => {
+      for (const { timer } of offlinePending.values()) clearTimeout(timer);
+      offlinePending.clear();
+    };
+
     let settled = false;
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
       if (pollTimer) clearTimeout(pollTimer);
       whisperQueue?.stop();
+      clearOfflinePending();
       if (error) reject(error);
       else resolve();
     };
 
     const query = { minLevel: 0, maxLevel: 100, zoneIds: [config.watchAreaId] } as const;
 
-    // A raid event: post to Discord, then whisper every subscriber (if enabled).
+    // Arm a Discord fallback for an offline-mode subscriber; delivered if their
+    // whisper bounces, else it expires quietly (they were online, got it in-game).
+    const armOfflineFallback = (name: string, message: NotifyMessage): void => {
+      const key = name.toLowerCase();
+      const existing = offlinePending.get(key);
+      if (existing) clearTimeout(existing.timer);
+      const timer = setTimeout(() => offlinePending.delete(key), OFFLINE_FALLBACK_TTL_MS);
+      timer.unref?.();
+      offlinePending.set(key, { message, timer });
+    };
+
+    // A raid event: post to Discord (pinging "both"-mode subscribers), whisper
+    // everyone in-game, and arm the offline fallback for "offline"-mode subscribers.
     const announce = async (event: RaidEvent): Promise<void> => {
-      await push(formatRaidEvent(event, config.watchAreaName));
-      if (!config.whispersEnabled || !whisperQueue) return;
-      try {
-        const subscribers = await store.all();
-        if (subscribers.length > 0) {
-          whisperQueue.enqueueAll(
-            subscribers.map((subscriber) => subscriber.name),
-            formatRaidWhisper(event, config.watchAreaName),
-          );
+      let subscribers: Subscriber[] = [];
+      if (config.whispersEnabled) {
+        try {
+          subscribers = await store.all();
+        } catch (error) {
+          logger.error(`subscribers: ${describeError(error)}`);
         }
-      } catch (error) {
-        logger.error(`subscribers: ${describeError(error)}`);
       }
+
+      const bothMentions = subscribers.flatMap((subscriber) =>
+        subscriber.delivery === "both" && subscriber.discordId ? [subscriber.discordId] : [],
+      );
+      await push({ ...formatRaidEvent(event, config.watchAreaName), mentionUserIds: bothMentions });
+
+      if (!config.whispersEnabled || !whisperQueue || subscribers.length === 0) return;
+      for (const subscriber of subscribers) {
+        if (subscriber.delivery === "offline" && subscriber.discordId) {
+          armOfflineFallback(subscriber.name, {
+            ...formatRaidEvent(event, config.watchAreaName),
+            mentionUserIds: [subscriber.discordId],
+          });
+        }
+      }
+      whisperQueue.enqueueAll(
+        subscribers.map((subscriber) => subscriber.name),
+        formatRaidWhisper(event, config.watchAreaName),
+      );
+    };
+
+    // A whisper bounced: the target is offline — deliver their armed Discord ping.
+    const onWhisperUndelivered = (target: string): void => {
+      const key = target.toLowerCase();
+      const pending = offlinePending.get(key);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      offlinePending.delete(key);
+      void push(pending.message);
     };
 
     const onWho = (result: WhoResult): void => {
@@ -181,6 +228,7 @@ async function runConnection(
         },
         onWho,
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
+        onWhisperUndelivered: config.whispersEnabled ? onWhisperUndelivered : undefined,
         onError: (error) => {
           world.close();
           settle(error);

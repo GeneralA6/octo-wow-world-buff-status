@@ -3,7 +3,7 @@ import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { FatalError } from "../errors.js";
 import { AUTH_OK, ChatType, CLIENT_BUILD, WorldOpcode } from "../protocol/opcodes.js";
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
-import { buildWhisper, parseServerChat } from "../protocol/chat.js";
+import { buildWhisper, parsePlayerNotFound, parseServerChat } from "../protocol/chat.js";
 import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
@@ -26,6 +26,8 @@ export interface WorldClientHandlers {
   onWho?: (result: WhoResult) => void;
   /** A player whispered the bot; `sender` is resolved to a character name. */
   onWhisper?: (sender: string, text: string) => void;
+  /** A whisper we sent could not be delivered — the target is offline. */
+  onWhisperUndelivered?: (target: string) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
   /** Server sent warden data — anticheat is active and unhandled. */
@@ -176,6 +178,9 @@ export class WorldClient {
         case WorldOpcode.SMSG_NAME_QUERY_RESPONSE:
           this.#handleNameQueryResponse(body);
           break;
+        case WorldOpcode.SMSG_CHAT_PLAYER_NOT_FOUND:
+          this.#handlePlayerNotFound(body);
+          break;
         case WorldOpcode.SMSG_PONG:
           break;
         case WorldOpcode.SMSG_WARDEN_DATA:
@@ -277,6 +282,14 @@ export class WorldClient {
       for (const text of queued) this.#handlers.onWhisper?.(name, text);
     } catch (error) {
       this.#logger.debug(`world: could not read name-query response: ${(error as Error).message}`);
+    }
+  }
+
+  #handlePlayerNotFound(body: Buffer): void {
+    try {
+      this.#handlers.onWhisperUndelivered?.(parsePlayerNotFound(body));
+    } catch (error) {
+      this.#logger.debug(`world: could not read player-not-found: ${(error as Error).message}`);
     }
   }
 
