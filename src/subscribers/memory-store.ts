@@ -1,4 +1,10 @@
-import { type Subscriber, type SubscriberStore, subscriberKey } from "./store.js";
+import {
+  DEFAULT_DELIVERY,
+  type Subscriber,
+  type SubscriberStore,
+  type SubscriberUpdate,
+  subscriberKey,
+} from "./store.js";
 
 /** In-memory subscriber store — the local/test fallback when no Mongo is configured. */
 export class InMemorySubscriberStore implements SubscriberStore {
@@ -7,7 +13,12 @@ export class InMemorySubscriberStore implements SubscriberStore {
   async add(name: string): Promise<boolean> {
     const key = subscriberKey(name);
     if (!key || this.#byKey.has(key)) return false;
-    this.#byKey.set(key, { name: name.trim(), subscribedAt: new Date() });
+    this.#byKey.set(key, {
+      name: name.trim(),
+      discordId: null,
+      delivery: DEFAULT_DELIVERY,
+      subscribedAt: new Date(),
+    });
     return true;
   }
 
@@ -17,6 +28,21 @@ export class InMemorySubscriberStore implements SubscriberStore {
 
   async has(name: string): Promise<boolean> {
     return this.#byKey.has(subscriberKey(name));
+  }
+
+  async get(name: string): Promise<Subscriber | null> {
+    return this.#byKey.get(subscriberKey(name)) ?? null;
+  }
+
+  async update(name: string, changes: SubscriberUpdate): Promise<boolean> {
+    const existing = this.#byKey.get(subscriberKey(name));
+    if (!existing) return false;
+    this.#byKey.set(subscriberKey(name), {
+      ...existing,
+      ...(changes.discordId !== undefined ? { discordId: changes.discordId } : {}),
+      ...(changes.delivery !== undefined ? { delivery: changes.delivery } : {}),
+    });
+    return true;
   }
 
   async all(): Promise<Subscriber[]> {

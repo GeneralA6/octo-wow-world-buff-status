@@ -1,10 +1,19 @@
 import { MongoClient } from "mongodb";
-import { type Subscriber, type SubscriberStore, subscriberKey } from "./store.js";
+import {
+  DEFAULT_DELIVERY,
+  type DeliveryMode,
+  type Subscriber,
+  type SubscriberStore,
+  type SubscriberUpdate,
+  subscriberKey,
+} from "./store.js";
 
 /** One subscriber document; `_id` is the canonical lowercased name (free uniqueness). */
 export interface SubscriberDoc {
   readonly _id: string;
   readonly name: string;
+  readonly discordId: string | null;
+  readonly delivery: DeliveryMode;
   readonly subscribedAt: Date;
 }
 
@@ -14,6 +23,9 @@ export interface UpsertOutcome {
 export interface DeleteOutcome {
   readonly deletedCount: number;
 }
+export interface UpdateOutcome {
+  readonly matchedCount: number;
+}
 
 /**
  * The narrow slice of a Mongo collection the store needs. `connect()` adapts a real
@@ -21,15 +33,21 @@ export interface DeleteOutcome {
  * without a live database.
  */
 export interface SubscriberDb {
-  upsertNew(key: string, name: string, subscribedAt: Date): Promise<UpsertOutcome>;
+  upsertNew(doc: SubscriberDoc): Promise<UpsertOutcome>;
   deleteByKey(key: string): Promise<DeleteOutcome>;
   countByKey(key: string): Promise<number>;
+  getByKey(key: string): Promise<SubscriberDoc | null>;
+  setFields(key: string, fields: Partial<Pick<SubscriberDoc, "discordId" | "delivery">>): Promise<UpdateOutcome>;
   list(): Promise<SubscriberDoc[]>;
   close(): Promise<void>;
 }
 
 const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "subscribers";
+
+function toSubscriber(doc: SubscriberDoc): Subscriber {
+  return { name: doc.name, discordId: doc.discordId, delivery: doc.delivery, subscribedAt: doc.subscribedAt };
+}
 
 /** Subscriber store backed by MongoDB, via the {@link SubscriberDb} port. */
 export class MongoSubscriberStore implements SubscriberStore {
@@ -45,10 +63,12 @@ export class MongoSubscriberStore implements SubscriberStore {
     await client.connect();
     const collection = client.db(dbName).collection<SubscriberDoc>(COLLECTION);
     const db: SubscriberDb = {
-      upsertNew: (key, name, subscribedAt) =>
-        collection.updateOne({ _id: key }, { $setOnInsert: { name, subscribedAt } }, { upsert: true }),
+      upsertNew: ({ _id, ...rest }) =>
+        collection.updateOne({ _id }, { $setOnInsert: rest }, { upsert: true }),
       deleteByKey: (key) => collection.deleteOne({ _id: key }),
       countByKey: (key) => collection.countDocuments({ _id: key }, { limit: 1 }),
+      getByKey: (key) => collection.findOne({ _id: key }),
+      setFields: (key, fields) => collection.updateOne({ _id: key }, { $set: fields }),
       list: () => collection.find().toArray(),
       close: () => client.close(),
     };
@@ -58,15 +78,20 @@ export class MongoSubscriberStore implements SubscriberStore {
   async add(name: string): Promise<boolean> {
     const key = subscriberKey(name);
     if (!key) return false;
-    const result = await this.#db.upsertNew(key, name.trim(), new Date());
+    const result = await this.#db.upsertNew({
+      _id: key,
+      name: name.trim(),
+      discordId: null,
+      delivery: DEFAULT_DELIVERY,
+      subscribedAt: new Date(),
+    });
     return result.upsertedCount === 1;
   }
 
   async remove(name: string): Promise<boolean> {
     const key = subscriberKey(name);
     if (!key) return false;
-    const result = await this.#db.deleteByKey(key);
-    return result.deletedCount === 1;
+    return (await this.#db.deleteByKey(key)).deletedCount === 1;
   }
 
   async has(name: string): Promise<boolean> {
@@ -75,9 +100,25 @@ export class MongoSubscriberStore implements SubscriberStore {
     return (await this.#db.countByKey(key)) > 0;
   }
 
+  async get(name: string): Promise<Subscriber | null> {
+    const key = subscriberKey(name);
+    if (!key) return null;
+    const doc = await this.#db.getByKey(key);
+    return doc ? toSubscriber(doc) : null;
+  }
+
+  async update(name: string, changes: SubscriberUpdate): Promise<boolean> {
+    const key = subscriberKey(name);
+    if (!key) return false;
+    const fields: { discordId?: string | null; delivery?: DeliveryMode } = {};
+    if (changes.discordId !== undefined) fields.discordId = changes.discordId;
+    if (changes.delivery !== undefined) fields.delivery = changes.delivery;
+    if (Object.keys(fields).length === 0) return this.has(name);
+    return (await this.#db.setFields(key, fields)).matchedCount === 1;
+  }
+
   async all(): Promise<Subscriber[]> {
-    const docs = await this.#db.list();
-    return docs.map((doc) => ({ name: doc.name, subscribedAt: doc.subscribedAt }));
+    return (await this.#db.list()).map(toSubscriber);
   }
 
   async close(): Promise<void> {

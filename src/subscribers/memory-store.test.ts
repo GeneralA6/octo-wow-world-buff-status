@@ -30,4 +30,27 @@ describe("InMemorySubscriberStore", () => {
     expect(await store.add("   ")).toBe(false);
     expect(await store.all()).toHaveLength(0);
   });
+
+  it("defaults a new subscriber to no Discord id and 'both' delivery", async () => {
+    const store = new InMemorySubscriberStore();
+    await store.add("Raider");
+    const sub = await store.get("raider");
+    expect(sub).toMatchObject({ name: "Raider", discordId: null, delivery: "both" });
+  });
+
+  it("updates the Discord id and delivery mode, and can clear the id", async () => {
+    const store = new InMemorySubscriberStore();
+    await store.add("Raider");
+    expect(await store.update("raider", { discordId: "123456789012345678", delivery: "offline" })).toBe(true);
+    expect(await store.get("raider")).toMatchObject({ discordId: "123456789012345678", delivery: "offline" });
+    await store.update("raider", { discordId: null });
+    expect((await store.get("raider"))?.discordId).toBeNull();
+    expect((await store.get("raider"))?.delivery).toBe("offline"); // untouched
+  });
+
+  it("does not update a name that isn't subscribed", async () => {
+    const store = new InMemorySubscriberStore();
+    expect(await store.update("Ghost", { delivery: "offline" })).toBe(false);
+    expect(await store.get("Ghost")).toBeNull();
+  });
 });
