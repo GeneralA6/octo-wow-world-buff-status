@@ -16,13 +16,17 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "//dependencies": "mongodb pinned EXACT (no caret) at a ~9-month-proven release for the subscriber store; it is the bot's only runtime dep. Its optional peer deps (kerberos, snappy, aws-sdk, zstd, client-encryption) are not installed — none are used.",
+  "dependencies": {
+    "mongodb": "6.21.0"
+  },
   "devDependencies": {
     "@types/node": "22.7.5",
     "tsx": "4.19.2",
     "typescript": "5.6.3",
     "vitest": "3.2.7"
   },
-  "//overrides": "Security pins, dev-tooling only (this bot ships zero runtime deps): esbuild<=0.24.2 GHSA-67mh-4wv8-2f99, vite<=6.4.2 GHSA-4w7w-66w2-5vf9 / GHSA-fx2h-pf6j-xcff, launch-editor GHSA-v6wh-96g9-6wx3 — all dev-server issues. vitest 3.2.4 pulls fixed vite 7; esbuild forced to 0.25.0 so tsx is covered too.",
+  "//overrides": "Security pins, dev-tooling only: esbuild<=0.24.2 GHSA-67mh-4wv8-2f99, vite<=6.4.2 GHSA-4w7w-66w2-5vf9 / GHSA-fx2h-pf6j-xcff, launch-editor GHSA-v6wh-96g9-6wx3 — all dev-server issues. vitest 3.2.4 pulls fixed vite 7; esbuild forced to 0.25.0 so tsx is covered too.",
   "overrides": {
     "esbuild": "0.25.0"
   }
