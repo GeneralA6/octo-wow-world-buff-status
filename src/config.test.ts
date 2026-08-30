@@ -139,6 +139,11 @@ describe("loadConfig", () => {
     );
   });
 
+  it("defaults the learn-min-samples to 15 and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidLearnMinSamples).toBe(15);
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_LEARN_MIN_SAMPLES: "25" }).raidLearnMinSamples).toBe(25);
+  });
+
   it("defaults the realm type to crossfaction and accepts faction", () => {
     expect(loadConfig({ ...minimalEnv }).realmType).toBe("crossfaction");
     expect(loadConfig({ ...minimalEnv, WOW_REALM_TYPE: "faction" }).realmType).toBe("faction");

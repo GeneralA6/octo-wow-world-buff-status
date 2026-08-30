@@ -64,6 +64,15 @@ describe("RaidSessions (temporal detection)", () => {
     expect(events[0]?.cohort.peak).toBeGreaterThanOrEqual(12);
   });
 
+  it("reports the form→clear duration on raid-left when it saw the raid form", () => {
+    const s = make();
+    s.update(change({ now: 0, arrivals: arrivals("a", 16) })); // forms, formedAt = 0
+    const events = s.update(change({ now: 50 * MIN, departures: cluster(12, 3 * MIN, 45 * MIN) }));
+    const e = events[0];
+    expect(e?.kind).toBe("raid-left");
+    if (e?.kind === "raid-left") expect(e.durationMs).toBe(50 * MIN);
+  });
+
   it("ignores a small departure, a spread-out one, or a NON-confident cluster", () => {
     expect(make().update(change({ departures: cluster(4, 3 * MIN, 40 * MIN) }))).toEqual([]); // too few
     expect(make().update(change({ departures: cluster(12, 90 * MIN, 40 * MIN) }))).toEqual([]); // arrived far apart

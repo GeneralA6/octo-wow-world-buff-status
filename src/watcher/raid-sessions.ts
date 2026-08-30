@@ -106,6 +106,8 @@ export class RaidSessions {
           peak,
           members: confident.map((departure) => departure.name),
         },
+        // form → clear duration, for the self-improving timer (only when we saw it form).
+        ...(session ? { durationMs: now - session.formedAt } : {}),
       });
     }
 

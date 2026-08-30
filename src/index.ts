@@ -17,6 +17,7 @@ import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldP
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
 import { InMemoryBuffStore, MongoBuffStore, type BuffStore, type Faction } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
+import { InMemoryDurationStore, MongoDurationStore, type DurationStore } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
 import { splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { shouldAlertForRaid } from "./watcher/buff-gate.js";
@@ -124,6 +125,7 @@ interface DetectionLane {
 interface ConnectionServices {
   readonly lanes: readonly DetectionLane[];
   readonly buffStore: BuffStore;
+  readonly durationStore: DurationStore;
   readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
   readonly router: CommandRouter;
@@ -161,7 +163,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, buffStore, snapshots, store, router, dm, outreach, push, client } = services;
+  const { lanes, buffStore, durationStore, snapshots, store, router, dm, outreach, push, client } = services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -267,6 +269,7 @@ async function runConnection(
       split: FactionSplit,
       complete: boolean,
       now: number,
+      raidDurationMs: number,
     ): Promise<void> => {
       const obs = lane.watch.observe(lane.players(split), now, complete);
 
@@ -292,7 +295,7 @@ async function runConnection(
       const events = useTemporal ? obs.temporalEvents : obs.countEvents;
       const shadow = useTemporal ? obs.countEvents : obs.temporalEvents;
       for (const event of events) {
-        const open = await openCitiesFor(event, lane.cities, buffStore, now, config.raidDurationEstimateMs);
+        const open = await openCitiesFor(event, lane.cities, buffStore, now, raidDurationMs);
         if (open.length > 0) await announceBuff(event, open);
         else logger.info(`${lane.label} ${event.kind} suppressed — every candidate city still has an active buff`);
       }
@@ -300,6 +303,27 @@ async function runConnection(
         logger.info(
           `${useTemporal ? "count" : "temporal"}(shadow) ${lane.label}: would ${event.kind} — ${event.cohort.label} peak ${event.cohort.peak}`,
         );
+      }
+
+      // Self-improving timer: record every observed form→clear duration (the temporal
+      // detector measures it), then log the learned median vs the estimate in use.
+      for (const event of obs.temporalEvents) {
+        if (event.kind !== "raid-left" || event.durationMs === undefined) continue;
+        const ms = event.durationMs;
+        void (async () => {
+          await durationStore.record({ ms, ts: new Date(now) });
+          const [learned, samples] = await Promise.all([
+            durationStore.median(config.raidLearnMinSamples),
+            durationStore.count(),
+          ]);
+          logger.info(
+            `raid clear recorded: ~${mins(ms)}m (${samples} samples; ` +
+              (learned
+                ? `learned median ${mins(learned)}m now driving the heads-up`
+                : `need ${config.raidLearnMinSamples} to switch off the ${mins(config.raidDurationEstimateMs)}m estimate`) +
+              ")",
+          );
+        })().catch((error) => logger.debug(`duration: ${describeError(error)}`));
       }
     };
 
@@ -318,6 +342,11 @@ async function runConnection(
         .record({ ts: new Date(now), present: inZone.length, complete, names: inZone.map((p) => p.name) })
         .catch((error) => logger.debug(`snapshot: ${describeError(error)}`));
 
+      // The forming heads-up predicts a raid's end from the LEARNED median clear time
+      // once enough raids are on record, else the config estimate.
+      const learnedMs = await durationStore.median(config.raidLearnMinSamples).catch(() => null);
+      const raidDurationMs = learnedMs ?? config.raidDurationEstimateMs;
+
       const split = splitByFaction(inZone);
       // In faction mode unmapped races belong to no lane; log them so a custom Turtle/
       // Octo race id can be added to the map. (Crossfaction's lair lane includes them.)
@@ -326,7 +355,7 @@ async function runConnection(
         logger.info(`${split.unknown.length} in zone with unmapped race ids [${races}] — not attributed`);
       }
       for (const lane of lanes) {
-        await processLane(lane, split, complete, now);
+        await processLane(lane, split, complete, now, raidDurationMs);
       }
     };
 
@@ -655,6 +684,17 @@ async function main(): Promise<void> {
       logger.error(`buffs: MongoDB connect failed (${describeError(error)}); recording in memory`);
     }
   }
+  // Learned raid clear-times for the self-improving forming heads-up.
+  let durationStore: DurationStore = new InMemoryDurationStore();
+  if (config.mongodbUri) {
+    try {
+      durationStore = await MongoDurationStore.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("durations: recording raid clear-times to MongoDB");
+    } catch (error) {
+      logger.error(`durations: MongoDB connect failed (${describeError(error)}); recording in memory`);
+    }
+  }
+
   const recordBuff = (faction: Faction, sourceName: string, text: string): void => {
     const appliedAt = new Date();
     logger.info(`buff drop: ${faction} buff is up (heard "${text}" from ${sourceName})`);
@@ -687,6 +727,7 @@ async function main(): Promise<void> {
   const services: ConnectionServices = {
     lanes,
     buffStore,
+    durationStore,
     snapshots,
     store,
     router,
@@ -732,7 +773,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info("shutting down");
     gateway?.stop();
-    void Promise.allSettled([store.close(), snapshots.close(), buffStore.close()]).finally(() =>
+    void Promise.allSettled([store.close(), snapshots.close(), buffStore.close(), durationStore.close()]).finally(() =>
       process.exit(0),
     );
   });

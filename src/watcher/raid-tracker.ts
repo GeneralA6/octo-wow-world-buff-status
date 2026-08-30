@@ -55,7 +55,12 @@ export interface RaidCohortSnapshot {
 
 export type RaidEvent =
   | { readonly kind: "raid-forming"; readonly cohort: RaidCohortSnapshot; readonly initial: boolean }
-  | { readonly kind: "raid-left"; readonly cohort: RaidCohortSnapshot };
+  | {
+      readonly kind: "raid-left";
+      readonly cohort: RaidCohortSnapshot;
+      /** How long the raid lasted (form → clear), when known — for duration learning. */
+      readonly durationMs?: number;
+    };
 
 export interface ActiveRaid {
   readonly label: string;
