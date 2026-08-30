@@ -56,8 +56,13 @@ const OFFLINE_FALLBACK_TTL_MS = 60_000;
 /** Max time from connecting to reaching in-world before the handshake is deemed stalled. */
 const WORLD_READY_TIMEOUT_MS = 30_000;
 
-/** How long to let the login object burst arrive before picking the nearest object. */
-const OBJECT_SETTLE_MS = 4_000;
+/** Re-check for a nearby object this often, and give up after this many tries. The
+ *  object burst can arrive over several seconds, so we poll rather than wait once. */
+const OBJECT_POLL_MS = 2_500;
+const OBJECT_POLL_MAX = 8;
+/** Only interact with an object this close — the one a character is parked on is ~0.5yd,
+ *  so a far transport (thousands of yd) is never the intended target. */
+const OBJECT_INTERACT_MAX_YD = 8;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -444,26 +449,37 @@ async function runListener(
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
           if (listener.onLogin === "sit") world.sit();
           else if (listener.onLogin === "interact") {
-            // Let the object burst arrive, then sit on the nearest object (e.g. a bench).
-            interactTimer = setTimeout(() => {
-              interacted = true;
+            // The object burst trickles in over several seconds, so poll: as soon as a
+            // GameObject is within reach (the one she's parked on), use it. Only a close
+            // object counts — a far transport is never what she's sitting on.
+            let attempts = 0;
+            const tryInteract = (): void => {
+              attempts += 1;
               const target = selfPos ? nearestGameObject(nearby, selfPos) : null;
-              if (!target) {
+              const dist =
+                target && selfPos
+                  ? Math.hypot(target.pos.x - selfPos.x, target.pos.y - selfPos.y, target.pos.z - selfPos.z)
+                  : Infinity;
+              if (target && dist <= OBJECT_INTERACT_MAX_YD) {
+                interacted = true;
+                logger.info(
+                  `${listener.characterName}: using nearest object entry=${target.entry} (~${dist.toFixed(1)} yd)`,
+                );
+                world.useGameObject(target.guid);
+                return;
+              }
+              if (attempts >= OBJECT_POLL_MAX) {
+                interacted = true;
                 logger.warn(
-                  `${listener.characterName}: no nearby object to interact with ` +
-                    `(self=${selfPos ? "yes" : "no"}, objects=${nearby.length})`,
+                  `${listener.characterName}: no object within ${OBJECT_INTERACT_MAX_YD}yd after ${attempts} tries ` +
+                    `(self=${selfPos ? "yes" : "no"}, objects=${nearby.length}, nearest=${dist === Infinity ? "none" : dist.toFixed(0) + "yd"})`,
                 );
                 return;
               }
-              const p = target.pos;
-              const d = selfPos
-                ? Math.hypot(p.x - selfPos.x, p.y - selfPos.y, p.z - selfPos.z)
-                : 0;
-              logger.info(
-                `${listener.characterName}: using nearest object entry=${target.entry} (~${d.toFixed(1)} yd)`,
-              );
-              world.useGameObject(target.guid);
-            }, OBJECT_SETTLE_MS);
+              interactTimer = setTimeout(tryInteract, OBJECT_POLL_MS);
+              interactTimer.unref?.();
+            };
+            interactTimer = setTimeout(tryInteract, OBJECT_POLL_MS);
             interactTimer.unref?.();
           }
         },
