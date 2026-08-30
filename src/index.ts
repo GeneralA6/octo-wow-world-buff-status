@@ -21,6 +21,7 @@ import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
 import { splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { shouldAlertForRaid } from "./watcher/buff-gate.js";
 import { CommandRouter } from "./chat/command-router.js";
+import { Outreach } from "./chat/outreach.js";
 import { DiscordLinker } from "./chat/discord-linker.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
@@ -127,6 +128,7 @@ interface ConnectionServices {
   readonly store: SubscriberStore;
   readonly router: CommandRouter;
   readonly dm: DiscordDmSender;
+  readonly outreach: Outreach;
   readonly push: (message: NotifyMessage) => Promise<void>;
   readonly client: ClientValues;
 }
@@ -159,7 +161,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, buffStore, snapshots, store, router, dm, push, client } = services;
+  const { lanes, buffStore, snapshots, store, router, dm, outreach, push, client } = services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -192,6 +194,7 @@ async function runConnection(
       if (pollTimer) clearTimeout(pollTimer);
       if (readyTimer) clearTimeout(readyTimer);
       whisperQueue?.stop();
+      outreach.setChannel(null, null); // watcher going away — stop greeting through it
       clearOfflinePending();
       if (error) reject(error);
       else resolve();
@@ -353,6 +356,13 @@ async function runConnection(
           logger.info(
             `in world; watching ${config.watchAreaName} about every ${config.pollIntervalMs / 1000}s`,
           );
+          // Offer Bufftracker's outbound channel so listeners can greet players through it.
+          if (config.whispersEnabled) {
+            outreach.setChannel(
+              (nameTo, msg) => whisperQueue?.enqueue(nameTo, msg),
+              (nameTo) => world.guildInvite(nameTo),
+            );
+          }
           const poll = async (): Promise<void> => {
             try {
               const roster = await fetchRoster((q) => world.whoOnce(q), config.watchAreaId);
@@ -405,6 +415,7 @@ async function runListener(
   logger: Logger,
   client: ClientValues,
   onBuffApplied: (faction: Faction, sourceName: string, text: string) => void,
+  outreach: Outreach,
 ): Promise<void> {
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
@@ -500,6 +511,8 @@ async function runListener(
           const faction = matchBuffYell(text);
           if (faction) onBuffApplied(faction, senderName, text);
         },
+        // A player whispered this parked character → Bufftracker greets them.
+        onWhisper: (sender) => outreach.onListenerContact(sender),
         onWorldObjects:
           listener.onLogin === "interact"
             ? (raw) => {
@@ -667,6 +680,10 @@ async function main(): Promise<void> {
     areaName: config.watchAreaName,
     linker: dm.isConfigured ? linker : null,
   });
+  const outreach = new Outreach(
+    { guildName: config.guildName, community: config.community, guildInviteEnabled: config.guildInviteEnabled },
+    logger,
+  );
   const services: ConnectionServices = {
     lanes,
     buffStore,
@@ -674,6 +691,7 @@ async function main(): Promise<void> {
     store,
     router,
     dm,
+    outreach,
     push,
     client,
   };
@@ -759,7 +777,7 @@ async function main(): Promise<void> {
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runListener(config, listener, log, client, recordBuff);
+        await runListener(config, listener, log, client, recordBuff, outreach);
         log.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
       } catch (error) {
