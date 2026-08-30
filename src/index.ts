@@ -24,7 +24,12 @@ import {
 } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
 import { formatHeartbeat } from "./watcher/heartbeat.js";
-import { InMemoryDurationStore, MongoDurationStore, type DurationStore } from "./watcher/duration-store.js";
+import {
+  InMemoryDurationStore,
+  MongoDurationStore,
+  isPlausibleClear,
+  type DurationStore,
+} from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
 import { splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { shouldAlertForRaid } from "./watcher/buff-gate.js";
@@ -322,6 +327,15 @@ async function runConnection(
       for (const event of obs.temporalEvents) {
         if (event.kind !== "raid-left" || event.durationMs === undefined) continue;
         const ms = event.durationMs;
+        // A raid that "cleared" faster than a real Onyxia clear can happen is churn —
+        // a crowd that gathered and scattered (common during a flaky server) — not a
+        // real run. Drop it so it can't drag the learned median down.
+        if (!isPlausibleClear(ms, config.raidMinClearMs)) {
+          logger.info(
+            `raid clear ignored: ~${mins(ms)}m is below the ${mins(config.raidMinClearMs)}m floor — churn, not a real clear`,
+          );
+          continue;
+        }
         void (async () => {
           await durationStore.record({ ms, ts: new Date(now) });
           const [learned, samples] = await Promise.all([

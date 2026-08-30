@@ -144,6 +144,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_LEARN_MIN_SAMPLES: "25" }).raidLearnMinSamples).toBe(25);
   });
 
+  it("defaults the min-clear floor to 10 minutes and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidMinClearMs).toBe(10 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_MIN_CLEAR_MINUTES: "8" }).raidMinClearMs).toBe(8 * 60_000);
+  });
+
   it("defaults the realm type to crossfaction and accepts faction", () => {
     expect(loadConfig({ ...minimalEnv }).realmType).toBe("crossfaction");
     expect(loadConfig({ ...minimalEnv, WOW_REALM_TYPE: "faction" }).realmType).toBe("faction");

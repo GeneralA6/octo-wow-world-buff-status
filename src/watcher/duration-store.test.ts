@@ -2,12 +2,26 @@ import { describe, expect, it, vi } from "vitest";
 import {
   InMemoryDurationStore,
   MongoDurationStore,
+  isPlausibleClear,
   medianOf,
   type DurationDb,
   type RaidDuration,
 } from "./duration-store.js";
 
 const dur = (ms: number): RaidDuration => ({ ms, ts: new Date() });
+const MIN = 60_000;
+
+describe("isPlausibleClear", () => {
+  const floor = 10 * MIN;
+  it("rejects a clear shorter than the floor as churn", () => {
+    expect(isPlausibleClear(4 * MIN, floor)).toBe(false);
+    expect(isPlausibleClear(0, floor)).toBe(false);
+  });
+  it("accepts a clear at or above the floor as a real raid", () => {
+    expect(isPlausibleClear(10 * MIN, floor)).toBe(true);
+    expect(isPlausibleClear(42 * MIN, floor)).toBe(true);
+  });
+});
 
 describe("medianOf", () => {
   it("returns the middle of an odd set and the mean of the two middles for an even set", () => {

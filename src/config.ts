@@ -64,6 +64,9 @@ export interface BotConfig {
   readonly raidDurationEstimateMs: number;
   /** Learned-median clear time replaces the estimate once this many raids are recorded. */
   readonly raidLearnMinSamples: number;
+  /** Floor on a plausible clear: shorter form→clear samples are churn, not a real raid,
+   *  and are dropped so they can't poison the learned median downward. */
+  readonly raidMinClearMs: number;
   /** crossfaction (Octo: /who is mixed, gate both cities) or faction (split per side). */
   readonly realmType: RealmType;
   /** How to tell concurrent raids apart: auto (guild raids + a pickup pool), guild, or lair. */
@@ -202,6 +205,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const buffDurationMs = intWithDefault("WOW_BUFF_DURATION_MINUTES", 120, 1) * 60_000;
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
   const raidLearnMinSamples = intWithDefault("WOW_RAID_LEARN_MIN_SAMPLES", 15, 1);
+  const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
 
   const realmRaw = env.WOW_REALM_TYPE?.trim().toLowerCase();
   const realmType: RealmType = realmRaw === "faction" ? "faction" : "crossfaction";
@@ -281,6 +285,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     buffDurationMs,
     raidDurationEstimateMs,
     raidLearnMinSamples,
+    raidMinClearMs,
     realmType,
     raidGrouping,
     raidDetector,

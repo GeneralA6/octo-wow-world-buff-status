@@ -23,6 +23,16 @@ export interface DurationStore {
   close(): Promise<void>;
 }
 
+/**
+ * Whether a form→clear duration is long enough to be a real Onyxia clear rather than
+ * churn — a crowd that gathered and scattered, common when the server is flaky. Such
+ * short "clears" are dropped before recording so they can't drag the learned median
+ * down (which would make the buff-timing gate predict raids ending too early).
+ */
+export function isPlausibleClear(ms: number, minMs: number): boolean {
+  return ms >= minMs;
+}
+
 export function medianOf(values: readonly number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
