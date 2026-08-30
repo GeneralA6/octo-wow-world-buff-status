@@ -426,6 +426,7 @@ async function runListener(
     const nearby: WorldGameObject[] = [];
     let selfPos: WorldPoint | null = null;
     let interacted = false;
+    let objectLogs = 0; // bounded diagnostics: what object packets arrive and how they parse
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
@@ -495,8 +496,20 @@ async function runListener(
                   const parsed = parseUpdateObject(raw);
                   for (const go of parsed.gameObjects) nearby.push(go);
                   if (parsed.self) selfPos = parsed.self;
-                } catch {
+                  if (objectLogs < 25) {
+                    objectLogs += 1;
+                    logger.info(
+                      `${listener.characterName}: obj pkt ${raw.length}b -> gos=${parsed.gameObjects.length} self=${parsed.self ? "y" : "n"} total=${nearby.length}`,
+                    );
+                  }
+                } catch (error) {
                   // A moving unit or a shape we don't decode — keep what parsed.
+                  if (objectLogs < 25) {
+                    objectLogs += 1;
+                    logger.info(
+                      `${listener.characterName}: obj pkt ${raw.length}b -> parse ERR (${describeError(error)}) [kept ${nearby.length}]`,
+                    );
+                  }
                 }
               }
             : undefined,
