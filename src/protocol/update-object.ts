@@ -50,6 +50,18 @@ const UPDATETYPE_CREATE2 = 3;
 const UPDATETYPE_OUT_OF_RANGE = 4;
 const UPDATETYPE_NEAR = 5;
 
+// Movement flags whose presence adds fields to a LIVING block (1.12, confirmed live).
+const MOVEFLAG_ONTRANSPORT = 0x00000200;
+const MOVEFLAG_FALLING = 0x00002000;
+const MOVEFLAG_SWIMMING = 0x00200000;
+const MOVEFLAG_SPLINE_ENABLED = 0x00400000;
+const MOVEFLAG_SPLINE_ELEVATION = 0x02000000;
+
+// Spline "final facing" bits — which single final field follows the spline flags.
+const SPLINE_FINAL_POINT = 0x00008000;
+const SPLINE_FINAL_TARGET = 0x00010000;
+const SPLINE_FINAL_ANGLE = 0x00020000;
+
 export function parseUpdateObject(body: Buffer): WorldObjects {
   const reader = new PacketReader(body);
   const count = reader.u32LE();
@@ -57,28 +69,34 @@ export function parseUpdateObject(body: Buffer): WorldObjects {
   const gameObjects: WorldGameObject[] = [];
   let self: WorldPoint | null = null;
 
-  for (let i = 0; i < count; i += 1) {
-    const updateType = reader.u8();
-    if (updateType === UPDATETYPE_OUT_OF_RANGE || updateType === UPDATETYPE_NEAR) {
-      const n = reader.u32LE();
-      for (let j = 0; j < n; j += 1) readPackedGuid(reader);
-      continue;
+  // If a block turns out to be a shape we don't decode (or the packet is truncated),
+  // keep the GameObjects read so far rather than losing the whole packet.
+  try {
+    for (let i = 0; i < count; i += 1) {
+      const updateType = reader.u8();
+      if (updateType === UPDATETYPE_OUT_OF_RANGE || updateType === UPDATETYPE_NEAR) {
+        const n = reader.u32LE();
+        for (let j = 0; j < n; j += 1) readPackedGuid(reader);
+        continue;
+      }
+      const guid = readPackedGuid(reader);
+      if (updateType === UPDATETYPE_CREATE || updateType === UPDATETYPE_CREATE2) {
+        const objType = reader.u8();
+        const flags = reader.u8();
+        const pos = readMovement(reader, flags);
+        const entry = readValuesEntry(reader);
+        if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
+        if (objType === OBJTYPE_PLAYER && pos) self = pos;
+      } else if (updateType === UPDATETYPE_VALUES) {
+        readValuesEntry(reader);
+      } else if (updateType === UPDATETYPE_MOVEMENT) {
+        readMovement(reader, reader.u8());
+      } else {
+        break; // unknown block type — stop, keep what we have
+      }
     }
-    const guid = readPackedGuid(reader);
-    if (updateType === UPDATETYPE_CREATE || updateType === UPDATETYPE_CREATE2) {
-      const objType = reader.u8();
-      const flags = reader.u8();
-      const pos = readMovement(reader, flags);
-      const entry = readValuesEntry(reader);
-      if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
-      if (objType === OBJTYPE_PLAYER && pos) self = pos;
-    } else if (updateType === UPDATETYPE_VALUES) {
-      readValuesEntry(reader);
-    } else if (updateType === UPDATETYPE_MOVEMENT) {
-      readMovement(reader, reader.u8());
-    } else {
-      throw new Error(`unknown updateType ${updateType}`);
-    }
+  } catch {
+    // reader ran off the end of a block we mis-sized — keep the objects read so far.
   }
   return { gameObjects, self };
 }
@@ -96,12 +114,22 @@ function readMovement(reader: PacketReader, flags: number): WorldPoint | null {
   let pos: WorldPoint | null = null;
   if (flags & UPDATEFLAG_LIVING) {
     const moveFlags = reader.u32LE();
-    if (moveFlags !== 0) throw new Error("moving unit (non-zero movement flags)");
     reader.u32LE(); // time
     pos = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
     reader.f32LE(); // orientation
+    if (moveFlags & MOVEFLAG_ONTRANSPORT) {
+      readPackedGuid(reader);
+      reader.f32LE(); reader.f32LE(); reader.f32LE(); reader.f32LE(); // transport x,y,z,o
+      reader.u32LE(); // transport time
+    }
+    if (moveFlags & MOVEFLAG_SWIMMING) reader.f32LE(); // pitch
     reader.u32LE(); // fall time
-    for (let i = 0; i < 6; i += 1) reader.f32LE(); // speeds
+    if (moveFlags & MOVEFLAG_FALLING) {
+      reader.f32LE(); reader.f32LE(); reader.f32LE(); reader.f32LE(); // jump velocity/angles/speed
+    }
+    if (moveFlags & MOVEFLAG_SPLINE_ELEVATION) reader.f32LE();
+    for (let i = 0; i < 6; i += 1) reader.f32LE(); // walk/run/... speeds
+    if (moveFlags & MOVEFLAG_SPLINE_ENABLED) readSpline(reader);
   } else if (flags & UPDATEFLAG_HAS_POSITION) {
     pos = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
     reader.f32LE(); // orientation
@@ -110,6 +138,22 @@ function readMovement(reader: PacketReader, flags: number): WorldPoint | null {
   if (flags & UPDATEFLAG_HIGHGUID) reader.u32LE();
   if (flags & UPDATEFLAG_TRANSPORT) reader.u32LE();
   return pos;
+}
+
+/** Skip a monster/spline movement block (a pathing NPC). Layout confirmed live. */
+function readSpline(reader: PacketReader): void {
+  const splineFlags = reader.u32LE();
+  if (splineFlags & SPLINE_FINAL_ANGLE) reader.f32LE();
+  else if (splineFlags & SPLINE_FINAL_TARGET) reader.u64LE();
+  else if (splineFlags & SPLINE_FINAL_POINT) {
+    reader.f32LE(); reader.f32LE(); reader.f32LE();
+  }
+  reader.u32LE(); // time passed
+  reader.u32LE(); // duration
+  reader.u32LE(); // spline id
+  const pointCount = reader.u32LE();
+  for (let i = 0; i < pointCount * 3; i += 1) reader.f32LE();
+  reader.f32LE(); reader.f32LE(); reader.f32LE(); // final destination
 }
 
 /** Read a values block, returning OBJECT_FIELD_ENTRY (field 3) if present, else 0. */
