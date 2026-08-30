@@ -1,5 +1,5 @@
 import type { DeliveryMode, SubscriberStore } from "../subscribers/store.js";
-import type { RaidTracker } from "../watcher/raid-tracker.js";
+import type { ActiveRaid } from "../watcher/raid-tracker.js";
 import type { DiscordLinker } from "./discord-linker.js";
 
 /**
@@ -19,7 +19,8 @@ import type { DiscordLinker } from "./discord-linker.js";
  */
 export interface CommandDeps {
   readonly store: SubscriberStore;
-  readonly tracker: RaidTracker;
+  /** Raids in progress across all factions — for the status command. */
+  readonly activeRaids: () => readonly ActiveRaid[];
   readonly areaName: string;
   /** Null when no bot token is configured — the discord commands then say so. */
   readonly linker?: DiscordLinker | null;
@@ -44,7 +45,7 @@ export class CommandRouter {
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
     const command = (parts[0] ?? "").toLowerCase();
     const arg = parts[1] ?? "";
-    const { store, tracker, areaName, linker } = this.#deps;
+    const { store, activeRaids, areaName, linker } = this.#deps;
 
     switch (command) {
       case "subscribe":
@@ -85,7 +86,7 @@ export class CommandRouter {
         return [`Subscribed to ${areaName} alerts — ${discord}.`];
       }
       case "status": {
-        const raids = tracker.activeRaids();
+        const raids = activeRaids();
         if (raids.length === 0) return [`No raid in ${areaName} right now.`];
         return [`${areaName} now: ${raids.map((raid) => `${raid.label} ${raid.count}`).join(", ")}.`];
       }

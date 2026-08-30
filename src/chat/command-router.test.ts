@@ -20,7 +20,12 @@ function deps(opts: { withLinker?: boolean; fetch?: DiscordFetch } = {}) {
     opts.withLinker === false
       ? null
       : new DiscordLinker({ store, pending, dm, serverInviteUrl: "https://discord.gg/x", areaName: "Onyxia's Lair" });
-  const router = new CommandRouter({ store, tracker, areaName: "Onyxia's Lair", linker });
+  const router = new CommandRouter({
+    store,
+    activeRaids: () => tracker.activeRaids(),
+    areaName: "Onyxia's Lair",
+    linker,
+  });
   return { store, tracker, pending, linker, router };
 }
 

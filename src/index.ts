@@ -8,14 +8,17 @@ import { resolveBuild } from "./net/client-resolver.js";
 import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
 import { DiscordDmSender } from "./notify/discord-dm.js";
 import { DiscordGateway } from "./notify/discord-gateway.js";
-import { formatRaidEvent, formatRaidWhisper } from "./notify/format.js";
-import { RaidTracker, type RaidEvent } from "./watcher/raid-tracker.js";
-import { PresenceTracker, summarizeDepartures } from "./watcher/presence.js";
-import { RaidSessions } from "./watcher/raid-sessions.js";
+import { formatBuffAlert, formatBuffWhisper } from "./notify/format.js";
+import type { RaidEvent } from "./watcher/raid-tracker.js";
+import { summarizeDepartures } from "./watcher/presence.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
+import type { WhoPlayer } from "./protocol/who.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
-import { InMemoryBuffStore, MongoBuffStore, type BuffStore, type Faction } from "./watcher/buff-store.js";
+import { FACTIONS, InMemoryBuffStore, MongoBuffStore, type BuffStore, type Faction } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
+import { FactionWatch, type FactionWatchOptions } from "./watcher/faction-watch.js";
+import { splitByFaction } from "./watcher/faction.js";
+import { shouldAlertForRaid, type AlertDecision } from "./watcher/buff-gate.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { DiscordLinker } from "./chat/discord-linker.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
@@ -97,9 +100,8 @@ function connectSocket(host: string, port: number, timeoutMs = 15_000): Promise<
 
 /** Everything a connection needs beyond config: shared state and the alert sinks. */
 interface ConnectionServices {
-  readonly tracker: RaidTracker;
-  readonly sessions: RaidSessions;
-  readonly presence: PresenceTracker;
+  readonly watches: Readonly<Record<Faction, FactionWatch>>;
+  readonly buffStore: BuffStore;
   readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
   readonly router: CommandRouter;
@@ -108,13 +110,30 @@ interface ConnectionServices {
   readonly client: ClientValues;
 }
 
+/**
+ * Should a raid earn a "get ready to park" alert? Only if its head could produce a
+ * FRESH buff — a forming raid is predicted to end a clear-time from now, an ending
+ * raid is finishing now — gated against that faction's current buff state.
+ */
+async function gateRaidAlert(
+  event: RaidEvent,
+  faction: Faction,
+  buffStore: BuffStore,
+  now: number,
+  raidDurationMs: number,
+): Promise<AlertDecision> {
+  const buff = await buffStore.current(faction, new Date(now));
+  const predictedEndMs = event.kind === "raid-forming" ? now + raidDurationMs : now;
+  return shouldAlertForRaid(buff, predictedEndMs, now);
+}
+
 /** One connection lifetime: log in, enter world, poll /who and serve whispers. */
 async function runConnection(
   config: BotConfig,
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { tracker, sessions, presence, snapshots, store, router, dm, push, client } = services;
+  const { watches, buffStore, snapshots, store, router, dm, push, client } = services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -163,11 +182,11 @@ async function runConnection(
       offlinePending.set(key, { discordId, message, timer });
     };
 
-    // A raid event: post to the Discord channel, whisper every subscriber in-game,
-    // DM "both"-mode subscribers, and arm the DM fallback for "offline"-mode ones.
-    const announce = async (event: RaidEvent): Promise<void> => {
-      const message = formatRaidEvent(event, config.watchAreaName);
-      logger.info(`raid ${event.kind}: ${message.body}`);
+    // A buff-parking alert: post to the Discord channel, whisper every subscriber
+    // in-game, DM "both"-mode subscribers, arm the DM fallback for "offline"-mode ones.
+    const announceBuff = async (event: RaidEvent, faction: Faction): Promise<void> => {
+      const message = formatBuffAlert(event, faction, config.watchAreaName);
+      logger.info(`ALERT ${faction} ${event.kind}: ${message.body}`);
       await push(message);
       if (!config.whispersEnabled) return;
 
@@ -180,7 +199,7 @@ async function runConnection(
       }
       if (subscribers.length === 0) return;
 
-      const line = formatRaidWhisper(event, config.watchAreaName);
+      const line = formatBuffWhisper(event, faction, config.watchAreaName);
       whisperQueue?.enqueueAll(subscribers.map((subscriber) => subscriber.name), line);
 
       for (const subscriber of subscribers) {
@@ -203,56 +222,74 @@ async function runConnection(
       void dm.send(pending.discordId, pending.message);
     };
 
-    const processRoster = (roster: Roster): void => {
-      const inZone = roster.players.filter((player) => player.areaId === config.watchAreaId);
-      logger.info(
-        `who ${config.watchAreaName}: ${inZone.length} in zone ` +
-          `(${roster.players.length} returned, ${roster.onlineCount} online)` +
-          (roster.sliced ? ` [class-sliced, complete=${roster.complete}]` : ""),
-      );
+    // One faction's slice of the lair: census, then gate each raid event against
+    // that faction's buff state before it becomes a park-in-the-city alert.
+    const processFaction = async (
+      faction: Faction,
+      players: readonly WhoPlayer[],
+      complete: boolean,
+      now: number,
+    ): Promise<void> => {
+      const obs = watches[faction].observe(players, now, complete);
 
-      // Presence census (no alerts): per-player timing with completeness/confidence,
-      // the data foundation for temporal detection and duration learning. The roster
-      // is complete unless even class-slicing was still truncated.
-      const complete = roster.complete;
-      const names = inZone.map((player) => player.name);
-      const change = presence.observe(names, Date.now(), complete);
-
-      // Persist the raw observation for offline replay/stats — best-effort, a DB
-      // hiccup must never break the poll loop.
-      void snapshots
-        .record({ ts: new Date(change.now), present: change.present, complete, names })
-        .catch((error) => logger.debug(`snapshot: ${describeError(error)}`));
-
-      // Followed a blind gap (long disconnect / server outage): re-baseline every
-      // detector and skip this read, so a crash-and-refill isn't a fake raid ending.
-      if (change.blackout) {
-        logger.warn(`recovered after a ~${mins(change.gapMs)}m blind gap — re-baselining, ignoring this read`);
-        tracker.rebaseline(inZone);
-        sessions.update(change); // clears its state too
+      // Followed a blind gap: FactionWatch already re-baselined; skip this read so a
+      // crash-and-refill isn't read as a raid starting or ending.
+      if (obs.change.blackout) {
+        logger.warn(`${faction}: recovered after a ~${mins(obs.change.gapMs)}m blind gap — re-baselined`);
         return;
       }
 
-      if (change.arrivals.length > 0 || change.departures.length > 0) {
-        const dep = summarizeDepartures(change.departures.filter((d) => d.confident));
+      if (obs.change.arrivals.length > 0 || obs.change.departures.length > 0) {
+        const dep = summarizeDepartures(obs.change.departures.filter((d) => d.confident));
         const depPart = dep
-          ? ` -${dep.count} left (stayed ~${mins(dep.medianStayMs)}m [${mins(dep.minStayMs)}-${mins(dep.maxStayMs)}], arrived within ${mins(dep.arrivalSpanMs)}m)`
+          ? ` -${dep.count} left (stayed ~${mins(dep.medianStayMs)}m, arrived within ${mins(dep.arrivalSpanMs)}m)`
           : "";
-        const arrPart = change.arrivals.length > 0 ? ` +${change.arrivals.length} arrived` : "";
+        const arrPart = obs.change.arrivals.length > 0 ? ` +${obs.change.arrivals.length} arrived` : "";
         const truncPart = complete ? "" : " [truncated: /who at cap]";
-        logger.info(`census: ${change.present} in zone${arrPart}${depPart}${truncPart}`);
+        logger.info(`census ${faction}: ${obs.change.present} in zone${arrPart}${depPart}${truncPart}`);
       }
 
-      // Two detectors run every poll; the configured one drives alerts, the other is
-      // shadow-logged so the temporal detector can be validated before it goes live.
-      const countEvents = tracker.update(inZone);
-      const temporalEvents = sessions.update(change);
+      // The configured detector drives alerts; the other is shadow-logged for validation.
       const useTemporal = config.raidDetector === "temporal";
-      for (const event of useTemporal ? temporalEvents : countEvents) void announce(event);
-      for (const event of useTemporal ? countEvents : temporalEvents) {
+      const events = useTemporal ? obs.temporalEvents : obs.countEvents;
+      const shadow = useTemporal ? obs.countEvents : obs.temporalEvents;
+      for (const event of events) {
+        const decision = await gateRaidAlert(event, faction, buffStore, now, config.raidDurationEstimateMs);
+        if (decision.alert) await announceBuff(event, faction);
+        else logger.info(`${faction} ${event.kind} suppressed — ${decision.reason}`);
+      }
+      for (const event of shadow) {
         logger.info(
-          `${useTemporal ? "count" : "temporal"}(shadow): would ${event.kind} — ${event.cohort.label} peak ${event.cohort.peak}`,
+          `${useTemporal ? "count" : "temporal"}(shadow) ${faction}: would ${event.kind} — ${event.cohort.label} peak ${event.cohort.peak}`,
         );
+      }
+    };
+
+    const processRoster = async (roster: Roster): Promise<void> => {
+      const now = Date.now();
+      const inZone = roster.players.filter((player) => player.areaId === config.watchAreaId);
+      const complete = roster.complete;
+      logger.info(
+        `who ${config.watchAreaName}: ${inZone.length} in zone ` +
+          `(${roster.players.length} returned, ${roster.onlineCount} online)` +
+          (roster.sliced ? ` [class-sliced, complete=${complete}]` : ""),
+      );
+
+      // Persist the raw observation (both factions) for offline replay/stats.
+      void snapshots
+        .record({ ts: new Date(now), present: inZone.length, complete, names: inZone.map((p) => p.name) })
+        .catch((error) => logger.debug(`snapshot: ${describeError(error)}`));
+
+      // OctoWoW /who is cross-faction; split by race and run detection per side, since
+      // a raid feeds only its own faction's city buff. Unmapped races are logged so a
+      // custom Turtle/Octo race id can be added to the map when one shows up.
+      const split = splitByFaction(inZone);
+      if (split.unknown.length > 0) {
+        const races = [...new Set(split.unknown.map((player) => player.raceId))].join(", ");
+        logger.info(`${split.unknown.length} in zone with unmapped race ids [${races}] — not attributed`);
+      }
+      for (const faction of FACTIONS) {
+        await processFaction(faction, split[faction], complete, now);
       }
     };
 
@@ -285,7 +322,7 @@ async function runConnection(
           const poll = async (): Promise<void> => {
             try {
               const roster = await fetchRoster((q) => world.whoOnce(q), config.watchAreaId);
-              if (!settled) processRoster(roster);
+              if (!settled) await processRoster(roster);
             } catch (error) {
               logger.warn(`who failed: ${describeError(error)}`);
             }
@@ -446,9 +483,15 @@ async function main(): Promise<void> {
   const notifier: Notifier = new DiscordWebhookNotifier(config.discordWebhookUrl, {
     mentionRoleId: config.discordMentionRoleId,
   });
-  const tracker = new RaidTracker(config.minRaidSize, config.raidGrouping, config.raidClearSize);
-  const sessions = new RaidSessions({ formAt: config.minRaidSize });
-  const presence = new PresenceTracker();
+  const watchOptions: FactionWatchOptions = {
+    minRaidSize: config.minRaidSize,
+    grouping: config.raidGrouping,
+    clearSize: config.raidClearSize,
+  };
+  const watches: Record<Faction, FactionWatch> = {
+    alliance: new FactionWatch("alliance", watchOptions),
+    horde: new FactionWatch("horde", watchOptions),
+  };
 
   // Client identity values; re-resolved from the CDN if the server rejects them.
   const client: ClientValues = {
@@ -481,10 +524,10 @@ async function main(): Promise<void> {
   }
 
   // Buff-drop times per faction, fed by the city listeners — Mongo when configured.
-  let buffStore: BuffStore = new InMemoryBuffStore();
+  let buffStore: BuffStore = new InMemoryBuffStore(config.buffDurationMs);
   if (config.mongodbUri) {
     try {
-      buffStore = await MongoBuffStore.connect(config.mongodbUri, config.mongodbDb);
+      buffStore = await MongoBuffStore.connect(config.mongodbUri, config.mongodbDb, config.buffDurationMs);
       logger.info("buffs: recording drop times to MongoDB");
     } catch (error) {
       logger.error(`buffs: MongoDB connect failed (${describeError(error)}); recording in memory`);
@@ -508,14 +551,13 @@ async function main(): Promise<void> {
   });
   const router = new CommandRouter({
     store,
-    tracker,
+    activeRaids: () => FACTIONS.flatMap((faction) => watches[faction].activeRaids()),
     areaName: config.watchAreaName,
     linker: dm.isConfigured ? linker : null,
   });
   const services: ConnectionServices = {
-    tracker,
-    sessions,
-    presence,
+    watches,
+    buffStore,
     snapshots,
     store,
     router,
