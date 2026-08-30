@@ -8,9 +8,10 @@ import { PacketReader, PacketWriter } from "../net/byte-buffer.js";
  * instance we send a single zone id (Onyxia's Lair = 2159) and an all-ones
  * race/class mask; the server returns up to 49 matching players.
  *
- * Note WoW's `/who` only ever returns players of your own faction, so a bot sees
- * same-faction raids only — which is exactly right for world-buff timing, where
- * the buff is faction-wide.
+ * Faction: stock 1.12 `/who` returns only your own faction, but OctoWoW returns
+ * ALL players in the zone regardless of faction (verified 2026-08-30). So the
+ * roster mixes both factions and a watcher must split it by race — see
+ * `watcher/faction.ts` — because the buff we time is faction-wide.
  */
 
 export const RACE_MASK_ALL = 0xffffffff;
