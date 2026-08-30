@@ -1,12 +1,42 @@
 import { describe, expect, it } from "vitest";
 import type { RaidCohortSnapshot } from "../watcher/raid-tracker.js";
-import { formatRaidEvent, formatRaidWhisper } from "./format.js";
+import {
+  formatBuffAlert,
+  formatBuffWhisper,
+  formatRaidEvent,
+  formatRaidWhisper,
+} from "./format.js";
 
 const AREA = "Onyxia's Lair";
 
 function cohort(over: Partial<RaidCohortSnapshot> = {}): RaidCohortSnapshot {
   return { key: "Nightfall", label: "<Nightfall>", count: 16, peak: 16, members: [], ...over };
 }
+
+describe("formatBuffAlert", () => {
+  it("names the Alliance side and Stormwind for a forming Alliance raid", () => {
+    const message = formatBuffAlert({ kind: "raid-forming", initial: false, cohort: cohort() }, "alliance", AREA);
+    expect(message.body).toContain("Alliance");
+    expect(message.body).toContain("Stormwind");
+    expect(message.body).toContain("park");
+  });
+
+  it("names the Horde side and Orgrimmar for a departed Horde raid", () => {
+    const message = formatBuffAlert({ kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) }, "horde", AREA);
+    expect(message.body).toContain("Horde");
+    expect(message.body).toContain("Orgrimmar");
+    expect(message.body).toContain("25");
+  });
+});
+
+describe("formatBuffWhisper", () => {
+  it("gives a terse park-in-the-city line per faction", () => {
+    const forming = formatBuffWhisper({ kind: "raid-forming", initial: false, cohort: cohort() }, "alliance", AREA);
+    expect(forming).toContain("Stormwind");
+    const left = formatBuffWhisper({ kind: "raid-left", cohort: cohort({ count: 0, peak: 20 }) }, "horde", AREA);
+    expect(left).toContain("Orgrimmar");
+  });
+});
 
 describe("formatRaidEvent", () => {
   it("announces a forming raid with its label and count", () => {
