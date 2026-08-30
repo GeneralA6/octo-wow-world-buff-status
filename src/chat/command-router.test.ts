@@ -203,7 +203,7 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "me"))[0]).toMatch(/not subscribed/);
     await router.handle("Raider", "subscribe");
     expect((await router.handle("Raider", "me"))[0]).toMatch(/no Discord linked/);
-    expect((await router.handle("Raider", "flibber"))[0]).toMatch(/Unknown command/);
+    expect((await router.handle("Raider", "flibber"))[0]).toMatch(/didn't get that/);
     expect((await router.handle("Raider", "help"))[0]).toMatch(/Commands:/);
   });
 });
