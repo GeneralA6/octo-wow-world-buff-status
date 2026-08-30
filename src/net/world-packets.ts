@@ -123,6 +123,11 @@ export function buildGameObjUseBody(guid: bigint): Buffer {
   return new PacketWriter().u64LE(guid).toBuffer();
 }
 
+/** CMSG_GUILD_INVITE body: the invitee's character name as a cstring. */
+export function buildGuildInviteBody(name: string): Buffer {
+  return new PacketWriter().cString(name).toBuffer();
+}
+
 export interface CharacterListEntry {
   readonly guid: bigint;
   readonly name: string;

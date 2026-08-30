@@ -31,6 +31,8 @@ export enum WorldOpcode {
   SMSG_NAME_QUERY_RESPONSE = 0x51,
   CMSG_WHO = 0x62,
   SMSG_WHO = 0x63,
+  /** Invite a player to the guild by name (cstring body). Needs the sender guilded. */
+  CMSG_GUILD_INVITE = 0x82,
   CMSG_MESSAGECHAT = 0x95,
   SMSG_MESSAGECHAT = 0x96,
   /** Nearby object create/update stream — where a GameObject's guid+entry arrive. */

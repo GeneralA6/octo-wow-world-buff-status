@@ -17,6 +17,7 @@ import type { NodeSocketLike } from "./socket.js";
 import {
   buildAuthSessionBody,
   buildGameObjUseBody,
+  buildGuildInviteBody,
   buildPingBody,
   buildPlayerLoginBody,
   buildStandStateBody,
@@ -170,6 +171,13 @@ export class WorldClient {
     if (!this.#ready) throw new Error("cannot use a game object before the character is in world");
     this.#logger.debug(`world: use gameobject 0x${guid.toString(16)}`);
     this.#send(WorldOpcode.CMSG_GAMEOBJ_USE, buildGameObjUseBody(guid));
+  }
+
+  /** Invite a player to the guild by character name (no-op server-side if not guilded). */
+  guildInvite(name: string): void {
+    if (!this.#ready) throw new Error("cannot guild-invite before the character is in world");
+    this.#logger.debug(`world: guild invite -> ${name}`);
+    this.#send(WorldOpcode.CMSG_GUILD_INVITE, buildGuildInviteBody(name));
   }
 
   close(): void {

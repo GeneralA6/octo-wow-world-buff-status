@@ -36,6 +36,7 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
   readonly sentWhispers: { target: string; message: string }[] = [];
   readonly standStates: number[] = [];
   readonly gameObjUses: bigint[] = [];
+  readonly guildInvites: string[] = [];
 
   constructor(characters: { guid: bigint; name: string }[]) {
     super();
@@ -127,6 +128,9 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     }
     if (opcode === WorldOpcode.CMSG_GAMEOBJ_USE) {
       this.gameObjUses.push(new PacketReader(body).u64LE());
+    }
+    if (opcode === WorldOpcode.CMSG_GUILD_INVITE) {
+      this.guildInvites.push(new PacketReader(body).cString());
     }
     this.#respond(opcode, body);
     return true;
@@ -328,6 +332,30 @@ describe("WorldClient (against a scripted mock server)", () => {
     client.sit();
     expect(socket.standStates).toContain(1); // STAND_STATE_SIT
 
+    client.close();
+  });
+
+  it("sends CMSG_GUILD_INVITE with the invitee name", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x88,
+      pingIntervalMs: 0,
+      handlers: { onReady: () => markReady() },
+    });
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    client.guildInvite("Raider");
+    expect(socket.guildInvites).toContain("Raider");
     client.close();
   });
 
