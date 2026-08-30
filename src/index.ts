@@ -13,6 +13,7 @@ import type { RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
 import type { WhoPlayer } from "./protocol/who.js";
+import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
 import { InMemoryBuffStore, MongoBuffStore, type BuffStore, type Faction } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
@@ -54,6 +55,9 @@ const OFFLINE_FALLBACK_TTL_MS = 60_000;
 
 /** Max time from connecting to reaching in-world before the handshake is deemed stalled. */
 const WORLD_READY_TIMEOUT_MS = 30_000;
+
+/** How long to let the login object burst arrive before picking the nearest object. */
+const OBJECT_SETTLE_MS = 4_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -411,12 +415,17 @@ async function runListener(
 
   await new Promise<void>((resolve, reject) => {
     let readyTimer: NodeJS.Timeout | null = null;
+    let interactTimer: NodeJS.Timeout | null = null;
     let settled = false;
-    let objectDumps = 0; // bounded object capture for "interact" (build the parser)
+    // "interact": accumulate the login object burst, then use the closest GameObject.
+    const nearby: WorldGameObject[] = [];
+    let selfPos: WorldPoint | null = null;
+    let interacted = false;
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
       if (readyTimer) clearTimeout(readyTimer);
+      if (interactTimer) clearTimeout(interactTimer);
       if (error) reject(error);
       else resolve();
     };
@@ -433,22 +442,46 @@ async function runListener(
           if (readyTimer) clearTimeout(readyTimer);
           readyTimer = null;
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
-          // Per-character on-login action. "interact" (nearest object, e.g. a bench)
-          // needs the object parser first — for now it captures the burst below.
           if (listener.onLogin === "sit") world.sit();
+          else if (listener.onLogin === "interact") {
+            // Let the object burst arrive, then sit on the nearest object (e.g. a bench).
+            interactTimer = setTimeout(() => {
+              interacted = true;
+              const target = selfPos ? nearestGameObject(nearby, selfPos) : null;
+              if (!target) {
+                logger.warn(
+                  `${listener.characterName}: no nearby object to interact with ` +
+                    `(self=${selfPos ? "yes" : "no"}, objects=${nearby.length})`,
+                );
+                return;
+              }
+              const p = target.pos;
+              const d = selfPos
+                ? Math.hypot(p.x - selfPos.x, p.y - selfPos.y, p.z - selfPos.z)
+                : 0;
+              logger.info(
+                `${listener.characterName}: using nearest object entry=${target.entry} (~${d.toFixed(1)} yd)`,
+              );
+              world.useGameObject(target.guid);
+            }, OBJECT_SETTLE_MS);
+            interactTimer.unref?.();
+          }
         },
         onMonsterYell: (senderName, text) => {
           const faction = matchBuffYell(text);
           if (faction) onBuffApplied(faction, senderName, text);
         },
-        // For "interact": dump the first object packets (bounded, so it can't flood)
-        // to capture the nearby GameObjects and build the nearest-object parser.
         onWorldObjects:
           listener.onLogin === "interact"
             ? (raw) => {
-                if (objectDumps >= 12) return;
-                objectDumps += 1;
-                logger.info(`objects#${objectDumps} (${raw.length}b): ${raw.toString("hex")}`);
+                if (interacted) return;
+                try {
+                  const parsed = parseUpdateObject(raw);
+                  for (const go of parsed.gameObjects) nearby.push(go);
+                  if (parsed.self) selfPos = parsed.self;
+                } catch {
+                  // A moving unit or a shape we don't decode — keep what parsed.
+                }
               }
             : undefined,
         onError: (error) => {
