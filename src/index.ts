@@ -426,8 +426,6 @@ async function runListener(
     const nearby: WorldGameObject[] = [];
     let selfPos: WorldPoint | null = null;
     let interacted = false;
-    let objectLogs = 0; // bounded diagnostics: what object packets arrive and how they parse
-    let bigCaptured = false; // one-shot capture of a big grid packet's head, to decode movement blocks
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
@@ -506,29 +504,11 @@ async function runListener(
           listener.onLogin === "interact"
             ? (raw) => {
                 if (interacted) return;
-                if (!bigCaptured && raw.length > 5000) {
-                  bigCaptured = true;
-                  logger.info(`${listener.characterName}: BIGPKT ${raw.length}b head: ${raw.subarray(0, 4000).toString("hex")}`);
-                }
-                try {
-                  const parsed = parseUpdateObject(raw);
-                  for (const go of parsed.gameObjects) nearby.push(go);
-                  if (parsed.self) selfPos = parsed.self;
-                  if (objectLogs < 25) {
-                    objectLogs += 1;
-                    logger.info(
-                      `${listener.characterName}: obj pkt ${raw.length}b -> gos=${parsed.gameObjects.length} self=${parsed.self ? "y" : "n"} total=${nearby.length}`,
-                    );
-                  }
-                } catch (error) {
-                  // A moving unit or a shape we don't decode — keep what parsed.
-                  if (objectLogs < 25) {
-                    objectLogs += 1;
-                    logger.info(
-                      `${listener.characterName}: obj pkt ${raw.length}b -> parse ERR (${describeError(error)}) [kept ${nearby.length}]`,
-                    );
-                  }
-                }
+                // parseUpdateObject returns partial results (never throws) on a shape
+                // it can't decode, so we keep whatever GameObjects it read.
+                const parsed = parseUpdateObject(raw);
+                for (const go of parsed.gameObjects) nearby.push(go);
+                if (parsed.self) selfPos = parsed.self;
               }
             : undefined,
         onError: (error) => {
