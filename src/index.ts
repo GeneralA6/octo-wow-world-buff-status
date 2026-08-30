@@ -59,10 +59,10 @@ const WORLD_READY_TIMEOUT_MS = 30_000;
 /** Re-check for a nearby object this often, and give up after this many tries. The
  *  object burst can arrive over several seconds, so we poll rather than wait once. */
 const OBJECT_POLL_MS = 2_500;
-const OBJECT_POLL_MAX = 8;
-/** Only interact with an object this close — the one a character is parked on is ~0.5yd,
- *  so a far transport (thousands of yd) is never the intended target. */
-const OBJECT_INTERACT_MAX_YD = 8;
+const OBJECT_POLL_MAX = 12;
+/** Only interact with an object we're basically standing ON. A character parked on a
+ *  bench sits ~0.5yd from it; anything further is a different object she isn't on. */
+const OBJECT_INTERACT_MAX_YD = 3;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -472,9 +472,21 @@ async function runListener(
               }
               if (attempts >= OBJECT_POLL_MAX) {
                 interacted = true;
+                const closest = selfPos
+                  ? [...nearby]
+                      .map((go) => ({
+                        entry: go.entry,
+                        d: Math.hypot(go.pos.x - selfPos.x, go.pos.y - selfPos.y, go.pos.z - selfPos.z),
+                      }))
+                      .sort((a, b) => a.d - b.d)
+                      .slice(0, 5)
+                      .map((c) => `${c.entry}@${c.d.toFixed(1)}`)
+                      .join(", ")
+                  : "n/a";
                 logger.warn(
                   `${listener.characterName}: no object within ${OBJECT_INTERACT_MAX_YD}yd after ${attempts} tries ` +
-                    `(self=${selfPos ? "yes" : "no"}, objects=${nearby.length}, nearest=${dist === Infinity ? "none" : dist.toFixed(0) + "yd"})`,
+                    `(self=${selfPos ? `(${selfPos.x.toFixed(0)},${selfPos.y.toFixed(0)},${selfPos.z.toFixed(0)})` : "no"}, ` +
+                    `objects=${nearby.length}, closest=[${closest}])`,
                 );
                 return;
               }
