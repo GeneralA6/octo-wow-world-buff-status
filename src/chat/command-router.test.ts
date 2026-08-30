@@ -153,6 +153,23 @@ describe("CommandRouter", () => {
     expect((await store.get("Raider"))?.delivery).toBe("offline");
   });
 
+  it("mode ingame sets whispers-only with no Discord warning", async () => {
+    const { store, router } = deps();
+    await router.handle("Raider", "subscribe");
+    const reply = (await router.handle("Raider", "mode ingame"))[0];
+    expect(reply).toMatch(/whispers only/);
+    expect(reply).not.toMatch(/link Discord/);
+    expect((await store.get("Raider"))?.delivery).toBe("ingame");
+  });
+
+  it("mode discord warns hard when no Discord is linked", async () => {
+    const { store, router } = deps();
+    await router.handle("Raider", "subscribe");
+    const reply = (await router.handle("Raider", "mode discord"))[0];
+    expect(reply).toMatch(/NO Discord linked/);
+    expect((await store.get("Raider"))?.delivery).toBe("discord");
+  });
+
   it("shows the caller their settings and rejects unknown commands", async () => {
     const { router } = deps();
     expect((await router.handle("Raider", "me"))[0]).toMatch(/not subscribed/);

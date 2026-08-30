@@ -221,15 +221,20 @@ async function runConnection(
       if (subscribers.length === 0) return;
 
       const line = formatBuffWhisper(event, cities, config.watchAreaName);
-      whisperQueue?.enqueueAll(subscribers.map((subscriber) => subscriber.name), line);
+      // "discord"-mode subscribers get no whisper; everyone else does.
+      const whisperNames = subscribers
+        .filter((subscriber) => subscriber.delivery !== "discord")
+        .map((subscriber) => subscriber.name);
+      whisperQueue?.enqueueAll(whisperNames, line);
 
       for (const subscriber of subscribers) {
         if (!subscriber.discordId) continue;
-        if (subscriber.delivery === "both") {
-          void dm.send(subscriber.discordId, line); // in-game AND Discord, every time
-        } else {
-          armOfflineFallback(subscriber.name, subscriber.discordId, line); // DM only if offline
+        if (subscriber.delivery === "both" || subscriber.delivery === "discord") {
+          void dm.send(subscriber.discordId, line); // Discord every time
+        } else if (subscriber.delivery === "offline") {
+          armOfflineFallback(subscriber.name, subscriber.discordId, line); // DM only if the whisper bounces
         }
+        // "ingame": no Discord DM
       }
     };
 

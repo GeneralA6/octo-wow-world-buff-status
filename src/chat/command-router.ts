@@ -34,10 +34,15 @@ export interface CommandDeps {
 
 const DISCORD_ID = /^\d{17,20}$/;
 const MODE_ALIASES: Record<string, DeliveryMode> = {
+  ingame: "ingame",
+  "in-game": "ingame",
+  whisper: "ingame",
   both: "both",
   all: "both",
   offline: "offline",
   "offline-only": "offline",
+  discord: "discord",
+  dm: "discord",
 };
 
 export class CommandRouter {
@@ -105,7 +110,7 @@ export class CommandRouter {
       case "?":
         return [
           `I watch ${areaName}. Commands: subscribe, unsubscribe, discord [<id>], ` +
-            `mode both|offline, notify <type> on|off, status, me. ` +
+            `mode ingame|both|offline|discord, notify <type> on|off, status, me. ` +
             `Alert types: ${ALL_ALERT_TYPES.join(", ")}.`,
         ];
       default: {
@@ -153,19 +158,30 @@ export class CommandRouter {
     const { store } = this.#deps;
     const delivery = MODE_ALIASES[arg.toLowerCase()];
     if (!delivery) {
-      return [`Whisper "mode both" (in-game + Discord) or "mode offline" (Discord only when you're offline).`];
+      return [
+        `Whisper "mode ingame" (whispers only), "mode both" (whispers + Discord), ` +
+          `"mode offline" (Discord only when you're offline), or "mode discord" (Discord DMs only).`,
+      ];
     }
     const sub = await store.get(sender);
     if (!sub) return [`You're not subscribed. Whisper "subscribe" first.`];
     await store.update(sender, { delivery });
-    if (delivery === "offline" && !sub.discordId) {
-      return [`Delivery set to "offline" — but link Discord with "discord" so I can reach you when you're offline.`];
+
+    // The Discord modes are useless without a linked id — "discord" would reach nobody.
+    if (delivery !== "ingame" && !sub.discordId) {
+      return [
+        delivery === "discord"
+          ? `Set to "discord", but you have NO Discord linked — you'll get nothing until you whisper "discord" to link it.`
+          : `Set to "${delivery}", but link Discord with "discord" so I can reach you there.`,
+      ];
     }
-    return [
-      delivery === "both"
-        ? `Delivery set to "both" — in-game and Discord.`
-        : `Delivery set to "offline" — Discord only when your character is offline.`,
-    ];
+    const CONFIRM: Record<DeliveryMode, string> = {
+      ingame: `Delivery set to "ingame" — in-game whispers only.`,
+      both: `Delivery set to "both" — in-game and Discord.`,
+      offline: `Delivery set to "offline" — Discord only when your character is offline.`,
+      discord: `Delivery set to "discord" — Discord DMs only, no in-game whispers.`,
+    };
+    return [CONFIRM[delivery]];
   }
 
   /** Choose which alert types you get. "notify" shows them; "notify <type> on|off",

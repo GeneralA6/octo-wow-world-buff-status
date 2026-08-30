@@ -6,12 +6,14 @@
  */
 
 /**
- * How a subscriber with a linked Discord id is reached on a raid event:
+ * Where a subscriber is reached on a raid event:
+ *   - "ingame"  — in-game whisper only, no Discord.
  *   - "both"    — in-game whisper AND a personal Discord ping, every time.
  *   - "offline" — in-game whisper; a Discord ping only when the character is offline.
- * With no linked Discord id, both modes behave the same (in-game only).
+ *   - "discord" — Discord DM only, no in-game whisper.
+ * The Discord modes need a linked Discord id; "discord" with none linked reaches nobody.
  */
-export type DeliveryMode = "both" | "offline";
+export type DeliveryMode = "ingame" | "both" | "offline" | "discord";
 
 /**
  * Which alerts a subscriber wants (default: all). These are the ones whispered/DM'd:
