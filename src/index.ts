@@ -355,6 +355,22 @@ async function main(): Promise<void> {
 
   const config = loadConfig(process.env);
   const logger = createLogger(config.logLevel);
+
+  // Dev toggle: stay logged out so the character is free to play. Nothing
+  // game-related starts — we just idle so Railway holds the container rather than
+  // restart-looping. Flip WOW_LOGIN_ENABLED back to true (or remove it) to reconnect.
+  if (!config.loginEnabled) {
+    logger.warn(
+      `login disabled (WOW_LOGIN_ENABLED=false): not connecting ${config.characterName} — ` +
+        "the character is free for you to play. Set WOW_LOGIN_ENABLED=true and redeploy to bring the bot back.",
+    );
+    setInterval(
+      () => logger.info(`idle — login disabled; ${config.characterName} is free to play`),
+      10 * 60 * 1000,
+    );
+    return;
+  }
+
   const notifier: Notifier = new DiscordWebhookNotifier(config.discordWebhookUrl, {
     mentionRoleId: config.discordMentionRoleId,
   });

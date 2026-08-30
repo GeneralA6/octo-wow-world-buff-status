@@ -153,6 +153,14 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_ANNOUNCE_STARTUP: "false" }).announceStartup).toBe(false);
   });
 
+  it("enables login by default and disables it on false/0/none", () => {
+    expect(loadConfig({ ...minimalEnv }).loginEnabled).toBe(true);
+    for (const value of ["false", "0", "none"]) {
+      expect(loadConfig({ ...minimalEnv, WOW_LOGIN_ENABLED: value }).loginEnabled).toBe(false);
+    }
+    expect(loadConfig({ ...minimalEnv, WOW_LOGIN_ENABLED: "true" }).loginEnabled).toBe(true);
+  });
+
   it("enables in-game whispers by default and disables them on false/0/none", () => {
     expect(loadConfig({ ...minimalEnv }).whispersEnabled).toBe(true);
     for (const value of ["false", "0", "none"]) {

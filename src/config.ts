@@ -17,6 +17,8 @@ export interface BotConfig {
   readonly authPort: number;
   readonly realm: string;
   readonly characterName: string;
+  /** Dev toggle: when false the bot never logs the character in, freeing it for manual play. */
+  readonly loginEnabled: boolean;
   /** Optional world-server override; when unset the realm list is used. */
   readonly worldHost: string | null;
   readonly worldPort: number | null;
@@ -95,6 +97,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const authPort = intWithDefault("WOW_AUTH_PORT", 3724, 1);
   const realm = env.WOW_REALM?.trim() || "N'Zoth";
   const characterName = required("WOW_CHARACTER");
+
+  // Dev toggle: WOW_LOGIN_ENABLED=false/0/none keeps the bot logged out so you can
+  // play the character yourself without it fighting you for the one allowed session.
+  const loginRaw = env.WOW_LOGIN_ENABLED?.trim().toLowerCase();
+  const loginEnabled = loginRaw !== "false" && loginRaw !== "0" && loginRaw !== "none";
 
   const worldHost = env.WOW_WORLD_HOST?.trim() || null;
   const worldPortRaw = env.WOW_WORLD_PORT?.trim();
@@ -183,6 +190,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     authPort,
     realm,
     characterName,
+    loginEnabled,
     worldHost,
     worldPort,
     integrityChecksum,
