@@ -169,26 +169,28 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv }).listeners).toEqual([]);
   });
 
-  it("reads listener sessions named by WOW_LISTENERS", () => {
+  it("discovers listener sessions from their dedicated vars", () => {
     const config = loadConfig({
       ...minimalEnv,
-      WOW_LISTENERS: "sw, og",
-      WOW_LISTENER_SW_ACCOUNT: "ONYXIABUFFSW",
-      WOW_LISTENER_SW_PASSWORD: "pw1",
-      WOW_LISTENER_SW_CHARACTER: "Onyxiabuffsw",
-      WOW_LISTENER_OG_ACCOUNT: "ONYXIABUFFOG",
-      WOW_LISTENER_OG_PASSWORD: "pw2",
-      WOW_LISTENER_OG_CHARACTER: "Onyxiabuffog",
+      WOW_LISTENER_ONYXIABUFFSW_ACCOUNT: "ONYXIABUFFSW",
+      WOW_LISTENER_ONYXIABUFFSW_PASSWORD: "pw1",
+      WOW_LISTENER_ONYXIABUFFSW_CHARACTER: "Onyxiabuffsw",
+      WOW_LISTENER_ONYXIABUFFOG_ACCOUNT: "ONYXIABUFFOG",
+      WOW_LISTENER_ONYXIABUFFOG_PASSWORD: "pw2",
+      WOW_LISTENER_ONYXIABUFFOG_CHARACTER: "Onyxiabuffog",
     });
+    // Sorted by label: ONYXIABUFFOG before ONYXIABUFFSW.
     expect(config.listeners).toEqual([
-      { key: "sw", account: "ONYXIABUFFSW", password: "pw1", characterName: "Onyxiabuffsw" },
-      { key: "og", account: "ONYXIABUFFOG", password: "pw2", characterName: "Onyxiabuffog" },
+      { account: "ONYXIABUFFOG", password: "pw2", characterName: "Onyxiabuffog" },
+      { account: "ONYXIABUFFSW", password: "pw1", characterName: "Onyxiabuffsw" },
     ]);
   });
 
-  it("errors when a named listener is missing its credentials", () => {
-    expect(() => loadConfig({ ...minimalEnv, WOW_LISTENERS: "sw" })).toThrow(
-      /WOW_LISTENER_SW_ACCOUNT is required[\s\S]*WOW_LISTENER_SW_PASSWORD is required[\s\S]*WOW_LISTENER_SW_CHARACTER is required/,
+  it("errors when a discovered listener is missing its password or character", () => {
+    expect(() =>
+      loadConfig({ ...minimalEnv, WOW_LISTENER_ONYXIABUFFSW_ACCOUNT: "ONYXIABUFFSW" }),
+    ).toThrow(
+      /WOW_LISTENER_ONYXIABUFFSW_PASSWORD is required[\s\S]*WOW_LISTENER_ONYXIABUFFSW_CHARACTER is required/,
     );
   });
 

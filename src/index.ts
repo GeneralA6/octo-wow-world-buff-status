@@ -643,7 +643,7 @@ async function main(): Promise<void> {
   };
 
   const runListenerLoop = async (listener: ListenerConfig): Promise<void> => {
-    const log = prefixed(logger, listener.key);
+    const log = prefixed(logger, listener.characterName);
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
@@ -665,7 +665,7 @@ async function main(): Promise<void> {
   };
 
   if (config.listeners.length > 0) {
-    logger.info(`listeners: ${config.listeners.map((l) => `${l.key}=${l.characterName}`).join(", ")}`);
+    logger.info(`listeners: ${config.listeners.map((listener) => listener.characterName).join(", ")}`);
   }
   await Promise.all([runWatcher(), ...config.listeners.map(runListenerLoop)]);
 }

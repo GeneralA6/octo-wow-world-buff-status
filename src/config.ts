@@ -12,11 +12,9 @@ function isGroupingMode(value: string): value is GroupingMode {
 
 /**
  * A city-parked yell listener: a second account whose only job is to hear its
- * capital's buff yell. Each has its own credentials so they stay separate secrets.
+ * capital's buff yell. Each has its own dedicated credentials as separate secrets.
  */
 export interface ListenerConfig {
-  /** Short key from WOW_LISTENERS (e.g. "sw"), used in var names and logs. */
-  readonly key: string;
   readonly account: string;
   readonly password: string;
   readonly characterName: string;
@@ -121,17 +119,18 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const loginRaw = env.WOW_LOGIN_ENABLED?.trim().toLowerCase();
   const loginEnabled = loginRaw !== "false" && loginRaw !== "0" && loginRaw !== "none";
 
-  // Yell listeners: WOW_LISTENERS=sw,og names them, and each key K needs
-  // WOW_LISTENER_K_ACCOUNT / _PASSWORD / _CHARACTER.
+  // Yell listeners: one per city character, each with its own dedicated
+  // WOW_LISTENER_<NAME>_ACCOUNT / _PASSWORD / _CHARACTER. Discovered by scanning for
+  // the _ACCOUNT vars, so there is no separate list to keep in sync — just add a set.
   const listeners: ListenerConfig[] = [];
-  const listenerKeys = (env.WOW_LISTENERS ?? "")
-    .split(",")
-    .map((key) => key.trim())
-    .filter((key) => key.length > 0);
-  for (const key of listenerKeys) {
-    const prefix = `WOW_LISTENER_${key.toUpperCase()}`;
+  const listenerLabels = new Set<string>();
+  for (const key of Object.keys(env)) {
+    const match = /^WOW_LISTENER_(.+)_ACCOUNT$/.exec(key);
+    if (match?.[1]) listenerLabels.add(match[1]);
+  }
+  for (const label of [...listenerLabels].sort()) {
+    const prefix = `WOW_LISTENER_${label}`;
     listeners.push({
-      key,
       account: required(`${prefix}_ACCOUNT`),
       password: required(`${prefix}_PASSWORD`),
       characterName: required(`${prefix}_CHARACTER`),
