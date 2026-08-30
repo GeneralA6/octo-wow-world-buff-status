@@ -15,8 +15,15 @@ import { fetchRoster, type Roster } from "./watcher/roster.js";
 import type { WhoPlayer } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
-import { InMemoryBuffStore, MongoBuffStore, type BuffStore, type Faction } from "./watcher/buff-store.js";
+import {
+  FACTIONS,
+  InMemoryBuffStore,
+  MongoBuffStore,
+  type BuffStore,
+  type Faction,
+} from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
+import { formatHeartbeat } from "./watcher/heartbeat.js";
 import { InMemoryDurationStore, MongoDurationStore, type DurationStore } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
 import { splitByFaction, type FactionSplit } from "./watcher/faction.js";
@@ -57,6 +64,9 @@ const OFFLINE_FALLBACK_TTL_MS = 60_000;
 
 /** Max time from connecting to reaching in-world before the handshake is deemed stalled. */
 const WORLD_READY_TIMEOUT_MS = 30_000;
+
+/** How often the watcher logs its monitoring heartbeat (subs, learned timer, buffs). */
+const HEARTBEAT_MS = 15 * 60_000;
 
 /** Re-check for a nearby object this often, and give up after this many tries. The
  *  object burst can arrive over several seconds, so we poll rather than wait once. */
@@ -182,6 +192,8 @@ async function runConnection(
     // The world server can accept the TCP connection but stall the handshake, and
     // there's no other timeout past connect — so bound the time to reach in-world.
     let readyTimer: NodeJS.Timeout | null = null;
+    // Throttles the monitoring heartbeat; 0 so the first poll after connect logs one.
+    let lastHeartbeatAt = 0;
     // Offline-mode subscribers whose in-game whisper may bounce → DM them instead.
     const offlinePending = new Map<string, { discordId: string; message: string; timer: NodeJS.Timeout }>();
     const clearOfflinePending = (): void => {
@@ -327,6 +339,31 @@ async function runConnection(
       }
     };
 
+    const logHeartbeat = async (now: number): Promise<void> => {
+      const [samples, learnedMedianMs, subscribers, buffs] = await Promise.all([
+        durationStore.count(),
+        durationStore.median(config.raidLearnMinSamples),
+        store.all().then((all) => all.length),
+        Promise.all(
+          FACTIONS.map(async (faction) => {
+            const state = await buffStore.current(faction, new Date(now));
+            const leftMs = state?.active ? state.expiresAt.getTime() - now : null;
+            return { faction, leftMs };
+          }),
+        ),
+      ]);
+      logger.info(
+        formatHeartbeat({
+          subscribers,
+          samples,
+          learnedMedianMs,
+          estimateMs: config.raidDurationEstimateMs,
+          minSamples: config.raidLearnMinSamples,
+          buffs,
+        }),
+      );
+    };
+
     const processRoster = async (roster: Roster): Promise<void> => {
       const now = Date.now();
       const inZone = roster.players.filter((player) => player.areaId === config.watchAreaId);
@@ -341,6 +378,13 @@ async function runConnection(
       void snapshots
         .record({ ts: new Date(now), present: inZone.length, complete, names: inZone.map((p) => p.name) })
         .catch((error) => logger.debug(`snapshot: ${describeError(error)}`));
+
+      // Surface the MongoDB-only stats into the logs on a slow cadence, so the
+      // self-improving timer's progress and the buff state are observable at a glance.
+      if (now - lastHeartbeatAt >= HEARTBEAT_MS) {
+        lastHeartbeatAt = now;
+        void logHeartbeat(now).catch((error) => logger.debug(`monitor: ${describeError(error)}`));
+      }
 
       // The forming heads-up predicts a raid's end from the LEARNED median clear time
       // once enough raids are on record, else the config estimate.
