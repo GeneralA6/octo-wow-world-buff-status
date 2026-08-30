@@ -14,11 +14,11 @@ import { summarizeDepartures } from "./watcher/presence.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
 import type { WhoPlayer } from "./protocol/who.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
-import { FACTIONS, InMemoryBuffStore, MongoBuffStore, type BuffStore, type Faction } from "./watcher/buff-store.js";
+import { InMemoryBuffStore, MongoBuffStore, type BuffStore, type Faction } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
-import { FactionWatch, type FactionWatchOptions } from "./watcher/faction-watch.js";
-import { splitByFaction } from "./watcher/faction.js";
-import { shouldAlertForRaid, type AlertDecision } from "./watcher/buff-gate.js";
+import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
+import { splitByFaction, type FactionSplit } from "./watcher/faction.js";
+import { shouldAlertForRaid } from "./watcher/buff-gate.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { DiscordLinker } from "./chat/discord-linker.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
@@ -98,9 +98,21 @@ function connectSocket(host: string, port: number, timeoutMs = 15_000): Promise<
   });
 }
 
+/**
+ * One detection lane: a raid watch over some slice of the lair, and the city buffs it
+ * gates against. Crossfaction is one lane over the whole lair gating both cities;
+ * faction realm is one lane per side, each gating its own city.
+ */
+interface DetectionLane {
+  readonly label: string;
+  readonly watch: RaidWatch;
+  readonly cities: readonly Faction[];
+  players(split: FactionSplit): readonly WhoPlayer[];
+}
+
 /** Everything a connection needs beyond config: shared state and the alert sinks. */
 interface ConnectionServices {
-  readonly watches: Readonly<Record<Faction, FactionWatch>>;
+  readonly lanes: readonly DetectionLane[];
   readonly buffStore: BuffStore;
   readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
@@ -111,20 +123,25 @@ interface ConnectionServices {
 }
 
 /**
- * Should a raid earn a "get ready to park" alert? Only if its head could produce a
- * FRESH buff — a forming raid is predicted to end a clear-time from now, an ending
- * raid is finishing now — gated against that faction's current buff state.
+ * The capitals where this raid could produce a FRESH buff — those whose buff has, or
+ * will have by the time the raid finishes, expired. A forming raid is predicted to end
+ * a clear-time from now; an ending raid is finishing now. Empty means stay silent
+ * (every candidate city still has an active buff, so the head would be banked).
  */
-async function gateRaidAlert(
+async function openCitiesFor(
   event: RaidEvent,
-  faction: Faction,
+  cities: readonly Faction[],
   buffStore: BuffStore,
   now: number,
   raidDurationMs: number,
-): Promise<AlertDecision> {
-  const buff = await buffStore.current(faction, new Date(now));
+): Promise<Faction[]> {
   const predictedEndMs = event.kind === "raid-forming" ? now + raidDurationMs : now;
-  return shouldAlertForRaid(buff, predictedEndMs, now);
+  const open: Faction[] = [];
+  for (const city of cities) {
+    const buff = await buffStore.current(city, new Date(now));
+    if (shouldAlertForRaid(buff, predictedEndMs, now).alert) open.push(city);
+  }
+  return open;
 }
 
 /** One connection lifetime: log in, enter world, poll /who and serve whispers. */
@@ -133,7 +150,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { watches, buffStore, snapshots, store, router, dm, push, client } = services;
+  const { lanes, buffStore, snapshots, store, router, dm, push, client } = services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -184,9 +201,9 @@ async function runConnection(
 
     // A buff-parking alert: post to the Discord channel, whisper every subscriber
     // in-game, DM "both"-mode subscribers, arm the DM fallback for "offline"-mode ones.
-    const announceBuff = async (event: RaidEvent, faction: Faction): Promise<void> => {
-      const message = formatBuffAlert(event, faction, config.watchAreaName);
-      logger.info(`ALERT ${faction} ${event.kind}: ${message.body}`);
+    const announceBuff = async (event: RaidEvent, cities: readonly Faction[]): Promise<void> => {
+      const message = formatBuffAlert(event, cities, config.watchAreaName);
+      logger.info(`ALERT ${event.kind} (${cities.join("/")}): ${message.body}`);
       await push(message);
       if (!config.whispersEnabled) return;
 
@@ -199,7 +216,7 @@ async function runConnection(
       }
       if (subscribers.length === 0) return;
 
-      const line = formatBuffWhisper(event, faction, config.watchAreaName);
+      const line = formatBuffWhisper(event, cities, config.watchAreaName);
       whisperQueue?.enqueueAll(subscribers.map((subscriber) => subscriber.name), line);
 
       for (const subscriber of subscribers) {
@@ -222,20 +239,20 @@ async function runConnection(
       void dm.send(pending.discordId, pending.message);
     };
 
-    // One faction's slice of the lair: census, then gate each raid event against
-    // that faction's buff state before it becomes a park-in-the-city alert.
-    const processFaction = async (
-      faction: Faction,
-      players: readonly WhoPlayer[],
+    // One detection lane: census, then gate each raid event against its candidate
+    // city buffs before it becomes a park-in-the-city alert.
+    const processLane = async (
+      lane: DetectionLane,
+      split: FactionSplit,
       complete: boolean,
       now: number,
     ): Promise<void> => {
-      const obs = watches[faction].observe(players, now, complete);
+      const obs = lane.watch.observe(lane.players(split), now, complete);
 
-      // Followed a blind gap: FactionWatch already re-baselined; skip this read so a
+      // Followed a blind gap: RaidWatch already re-baselined; skip this read so a
       // crash-and-refill isn't read as a raid starting or ending.
       if (obs.change.blackout) {
-        logger.warn(`${faction}: recovered after a ~${mins(obs.change.gapMs)}m blind gap — re-baselined`);
+        logger.warn(`${lane.label}: recovered after a ~${mins(obs.change.gapMs)}m blind gap — re-baselined`);
         return;
       }
 
@@ -246,7 +263,7 @@ async function runConnection(
           : "";
         const arrPart = obs.change.arrivals.length > 0 ? ` +${obs.change.arrivals.length} arrived` : "";
         const truncPart = complete ? "" : " [truncated: /who at cap]";
-        logger.info(`census ${faction}: ${obs.change.present} in zone${arrPart}${depPart}${truncPart}`);
+        logger.info(`census ${lane.label}: ${obs.change.present} in zone${arrPart}${depPart}${truncPart}`);
       }
 
       // The configured detector drives alerts; the other is shadow-logged for validation.
@@ -254,13 +271,13 @@ async function runConnection(
       const events = useTemporal ? obs.temporalEvents : obs.countEvents;
       const shadow = useTemporal ? obs.countEvents : obs.temporalEvents;
       for (const event of events) {
-        const decision = await gateRaidAlert(event, faction, buffStore, now, config.raidDurationEstimateMs);
-        if (decision.alert) await announceBuff(event, faction);
-        else logger.info(`${faction} ${event.kind} suppressed — ${decision.reason}`);
+        const open = await openCitiesFor(event, lane.cities, buffStore, now, config.raidDurationEstimateMs);
+        if (open.length > 0) await announceBuff(event, open);
+        else logger.info(`${lane.label} ${event.kind} suppressed — every candidate city still has an active buff`);
       }
       for (const event of shadow) {
         logger.info(
-          `${useTemporal ? "count" : "temporal"}(shadow) ${faction}: would ${event.kind} — ${event.cohort.label} peak ${event.cohort.peak}`,
+          `${useTemporal ? "count" : "temporal"}(shadow) ${lane.label}: would ${event.kind} — ${event.cohort.label} peak ${event.cohort.peak}`,
         );
       }
     };
@@ -275,21 +292,20 @@ async function runConnection(
           (roster.sliced ? ` [class-sliced, complete=${complete}]` : ""),
       );
 
-      // Persist the raw observation (both factions) for offline replay/stats.
+      // Persist the raw observation for offline replay/stats.
       void snapshots
         .record({ ts: new Date(now), present: inZone.length, complete, names: inZone.map((p) => p.name) })
         .catch((error) => logger.debug(`snapshot: ${describeError(error)}`));
 
-      // OctoWoW /who is cross-faction; split by race and run detection per side, since
-      // a raid feeds only its own faction's city buff. Unmapped races are logged so a
-      // custom Turtle/Octo race id can be added to the map when one shows up.
       const split = splitByFaction(inZone);
-      if (split.unknown.length > 0) {
+      // In faction mode unmapped races belong to no lane; log them so a custom Turtle/
+      // Octo race id can be added to the map. (Crossfaction's lair lane includes them.)
+      if (config.realmType === "faction" && split.unknown.length > 0) {
         const races = [...new Set(split.unknown.map((player) => player.raceId))].join(", ");
         logger.info(`${split.unknown.length} in zone with unmapped race ids [${races}] — not attributed`);
       }
-      for (const faction of FACTIONS) {
-        await processFaction(faction, split[faction], complete, now);
+      for (const lane of lanes) {
+        await processLane(lane, split, complete, now);
       }
     };
 
@@ -487,15 +503,25 @@ async function main(): Promise<void> {
   const notifier: Notifier = new DiscordWebhookNotifier(config.discordWebhookUrl, {
     mentionRoleId: config.discordMentionRoleId,
   });
-  const watchOptions: FactionWatchOptions = {
+  const watchOptions: RaidWatchOptions = {
     minRaidSize: config.minRaidSize,
     grouping: config.raidGrouping,
     clearSize: config.raidClearSize,
   };
-  const watches: Record<Faction, FactionWatch> = {
-    alliance: new FactionWatch("alliance", watchOptions),
-    horde: new FactionWatch("horde", watchOptions),
-  };
+  const lanes: DetectionLane[] =
+    config.realmType === "faction"
+      ? [
+          { label: "alliance", watch: new RaidWatch(watchOptions), cities: ["alliance"], players: (s) => s.alliance },
+          { label: "horde", watch: new RaidWatch(watchOptions), cities: ["horde"], players: (s) => s.horde },
+        ]
+      : [
+          {
+            label: "lair",
+            watch: new RaidWatch(watchOptions),
+            cities: ["alliance", "horde"],
+            players: (s) => [...s.alliance, ...s.horde, ...s.unknown],
+          },
+        ];
 
   // Client identity values; re-resolved from the CDN if the server rejects them.
   const client: ClientValues = {
@@ -555,12 +581,12 @@ async function main(): Promise<void> {
   });
   const router = new CommandRouter({
     store,
-    activeRaids: () => FACTIONS.flatMap((faction) => watches[faction].activeRaids()),
+    activeRaids: () => lanes.flatMap((lane) => lane.watch.activeRaids()),
     areaName: config.watchAreaName,
     linker: dm.isConfigured ? linker : null,
   });
   const services: ConnectionServices = {
-    watches,
+    lanes,
     buffStore,
     snapshots,
     store,

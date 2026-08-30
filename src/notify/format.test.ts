@@ -14,27 +14,34 @@ function cohort(over: Partial<RaidCohortSnapshot> = {}): RaidCohortSnapshot {
 }
 
 describe("formatBuffAlert", () => {
-  it("names the Alliance side and Stormwind for a forming Alliance raid", () => {
-    const message = formatBuffAlert({ kind: "raid-forming", initial: false, cohort: cohort() }, "alliance", AREA);
-    expect(message.body).toContain("Alliance");
+  it("names the single open capital for a forming raid", () => {
+    const message = formatBuffAlert({ kind: "raid-forming", initial: false, cohort: cohort() }, ["alliance"], AREA);
     expect(message.body).toContain("Stormwind");
+    expect(message.body).not.toContain("Orgrimmar");
     expect(message.body).toContain("park");
   });
 
-  it("names the Horde side and Orgrimmar for a departed Horde raid", () => {
-    const message = formatBuffAlert({ kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) }, "horde", AREA);
-    expect(message.body).toContain("Horde");
-    expect(message.body).toContain("Orgrimmar");
+  it("names both capitals when a fresh buff is possible in either", () => {
+    const message = formatBuffAlert(
+      { kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) },
+      ["alliance", "horde"],
+      AREA,
+    );
+    expect(message.body).toContain("Stormwind or Orgrimmar");
     expect(message.body).toContain("25");
   });
 });
 
 describe("formatBuffWhisper", () => {
-  it("gives a terse park-in-the-city line per faction", () => {
-    const forming = formatBuffWhisper({ kind: "raid-forming", initial: false, cohort: cohort() }, "alliance", AREA);
-    expect(forming).toContain("Stormwind");
-    const left = formatBuffWhisper({ kind: "raid-left", cohort: cohort({ count: 0, peak: 20 }) }, "horde", AREA);
-    expect(left).toContain("Orgrimmar");
+  it("gives a terse park-in-the-city line naming the open capital", () => {
+    const forming = formatBuffWhisper({ kind: "raid-forming", initial: false, cohort: cohort() }, ["horde"], AREA);
+    expect(forming).toContain("Orgrimmar");
+    const left = formatBuffWhisper(
+      { kind: "raid-left", cohort: cohort({ count: 0, peak: 20 }) },
+      ["alliance", "horde"],
+      AREA,
+    );
+    expect(left).toContain("Stormwind or Orgrimmar");
   });
 });
 

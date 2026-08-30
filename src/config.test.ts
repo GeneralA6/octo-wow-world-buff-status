@@ -139,6 +139,13 @@ describe("loadConfig", () => {
     );
   });
 
+  it("defaults the realm type to crossfaction and accepts faction", () => {
+    expect(loadConfig({ ...minimalEnv }).realmType).toBe("crossfaction");
+    expect(loadConfig({ ...minimalEnv, WOW_REALM_TYPE: "faction" }).realmType).toBe("faction");
+    expect(loadConfig({ ...minimalEnv, WOW_REALM_TYPE: "CROSSFACTION" }).realmType).toBe("crossfaction");
+    expect(() => loadConfig({ ...minimalEnv, WOW_REALM_TYPE: "pvp" })).toThrow(/WOW_REALM_TYPE/);
+  });
+
   it("defaults the raid detector to count and accepts temporal", () => {
     expect(loadConfig({ ...minimalEnv }).raidDetector).toBe("count");
     expect(loadConfig({ ...minimalEnv, WOW_RAID_DETECTOR: "temporal" }).raidDetector).toBe("temporal");

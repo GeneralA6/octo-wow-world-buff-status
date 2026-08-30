@@ -6,6 +6,9 @@ import type { GroupingMode } from "./watcher/raid-tracker.js";
 
 const GROUPING_MODES: readonly GroupingMode[] = ["auto", "guild", "lair"];
 
+/** How /who and the buff relate to faction on this realm. */
+export type RealmType = "crossfaction" | "faction";
+
 function isGroupingMode(value: string): value is GroupingMode {
   return GROUPING_MODES.some((mode) => mode === value);
 }
@@ -54,6 +57,8 @@ export interface BotConfig {
   readonly buffDurationMs: number;
   /** Estimated Onyxia clear time, used to predict a forming raid's end until learned. */
   readonly raidDurationEstimateMs: number;
+  /** crossfaction (Octo: /who is mixed, gate both cities) or faction (split per side). */
+  readonly realmType: RealmType;
   /** How to tell concurrent raids apart: auto (guild raids + a pickup pool), guild, or lair. */
   readonly raidGrouping: GroupingMode;
   /** Which detector drives alerts: "count" (hysteresis) or "temporal" (arrival/departure). */
@@ -176,6 +181,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const buffDurationMs = intWithDefault("WOW_BUFF_DURATION_MINUTES", 120, 1) * 60_000;
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
 
+  const realmRaw = env.WOW_REALM_TYPE?.trim().toLowerCase();
+  const realmType: RealmType = realmRaw === "faction" ? "faction" : "crossfaction";
+  if (realmRaw && realmRaw !== "faction" && realmRaw !== "crossfaction") {
+    errors.push('WOW_REALM_TYPE must be "crossfaction" or "faction"');
+  }
+
   const groupingRaw = env.WOW_RAID_GROUPING?.trim().toLowerCase();
   const raidGrouping: GroupingMode = groupingRaw && isGroupingMode(groupingRaw) ? groupingRaw : "auto";
   if (groupingRaw && !isGroupingMode(groupingRaw)) {
@@ -242,6 +253,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidClearSize,
     buffDurationMs,
     raidDurationEstimateMs,
+    realmType,
     raidGrouping,
     raidDetector,
     announceStartup,

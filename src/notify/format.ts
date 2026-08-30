@@ -4,7 +4,13 @@ import type { NotifyMessage } from "./notifier.js";
 
 /** The capital whose buff a faction's turn-in drops. */
 const CITY_FOR: Record<Faction, string> = { alliance: "Stormwind", horde: "Orgrimmar" };
-const SIDE_FOR: Record<Faction, string> = { alliance: "Alliance", horde: "Horde" };
+
+/** Human list of the capitals where a fresh buff is possible ("Stormwind or Orgrimmar"). */
+function cityList(cities: readonly Faction[]): string {
+  const names = cities.map((faction) => CITY_FOR[faction]);
+  if (names.length >= 2) return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
+  return names[0] ?? "a capital";
+}
 
 /** Turn a raid event into a human-readable notification for the given zone. */
 export function formatRaidEvent(event: RaidEvent, areaName: string): NotifyMessage {
@@ -51,40 +57,39 @@ function plural(count: number, word: string): string {
 }
 
 /**
- * A buff-parking alert: a raid could soon produce a fresh Rallying Cry for a faction,
- * so its members should head to that faction's capital. Only ever produced once the
- * gate has decided a fresh buff is actually possible, hence the confident "get ready".
+ * A buff-parking alert: a raid could soon produce a fresh Rallying Cry, so head to a
+ * capital where the buff can actually drop. `cities` are the capitals whose buff has
+ * (or will have, by the time the raid clears) expired — the ones worth parking in.
+ * Only produced once the gate has decided a fresh buff is possible somewhere.
  */
-export function formatBuffAlert(event: RaidEvent, faction: Faction, areaName: string): NotifyMessage {
-  const city = CITY_FOR[faction];
-  const side = SIDE_FOR[faction];
+export function formatBuffAlert(event: RaidEvent, cities: readonly Faction[], areaName: string): NotifyMessage {
+  const where = cityList(cities);
   if (event.kind === "raid-forming") {
     const verb = event.initial ? "is underway" : "is forming";
     return {
       kind: "entered",
-      title: `🐉 ${side} buff may be coming`,
+      title: "🐉 Rallying Cry may be coming",
       body:
-        `A ${side} raid ${verb} in ${areaName} (${event.cohort.count}). ` +
-        `If they down Onyxia and turn in the head, the ${city} Rallying Cry buff drops — ` +
-        `get ready to park in ${city}.`,
+        `A raid ${verb} in ${areaName} (${event.cohort.count}). ` +
+        `A Rallying Cry buff may drop in ${where} when they clear it and turn in the head — ` +
+        `get ready to park.`,
     };
   }
   return {
     kind: "left",
-    title: `⏳ ${side} buff may drop soon`,
+    title: "⏳ Rallying Cry may drop soon",
     body:
-      `A ${side} raid just cleared ${areaName} (peaked ${event.cohort.peak}). ` +
-      `Head to ${city} now to catch the Rallying Cry when the head is turned in.`,
+      `A raid just cleared ${areaName} (peaked ${event.cohort.peak}). ` +
+      `Park in ${where} now to catch the Rallying Cry when the head is turned in.`,
   };
 }
 
 /** A single terse in-game whisper line for a buff-parking alert. */
-export function formatBuffWhisper(event: RaidEvent, faction: Faction, areaName: string): string {
-  const city = CITY_FOR[faction];
-  const side = SIDE_FOR[faction];
+export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], areaName: string): string {
+  const where = cityList(cities);
   if (event.kind === "raid-left") {
-    return `A ${side} raid just cleared ${areaName} — park in ${city} for a possible Rallying Cry buff.`;
+    return `A raid just cleared ${areaName} — park in ${where} for a possible Rallying Cry buff.`;
   }
   const verb = event.initial ? "underway" : "forming";
-  return `A ${side} raid is ${verb} in ${areaName} (${event.cohort.count}) — get ready to park in ${city} for the buff.`;
+  return `A raid is ${verb} in ${areaName} (${event.cohort.count}) — get ready to park in ${where} for the buff.`;
 }
