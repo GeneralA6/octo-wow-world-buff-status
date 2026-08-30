@@ -109,6 +109,15 @@ export function buildPingBody(sequence: number, latencyMs: number): Buffer {
   return new PacketWriter().u32LE(sequence).u32LE(latencyMs).toBuffer();
 }
 
+/** Unit stand states — SIT is the /sit emote, STAND undoes it. */
+export const STAND_STATE_STAND = 0;
+export const STAND_STATE_SIT = 1;
+
+/** CMSG_STANDSTATECHANGE body: a single u32 stand state. */
+export function buildStandStateBody(state: number): Buffer {
+  return new PacketWriter().u32LE(state).toBuffer();
+}
+
 export interface CharacterListEntry {
   readonly guid: bigint;
   readonly name: string;

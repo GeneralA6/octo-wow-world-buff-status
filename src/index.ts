@@ -407,6 +407,7 @@ async function runListener(
           if (readyTimer) clearTimeout(readyTimer);
           readyTimer = null;
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
+          world.sit(); // look like a parked player rather than a bot standing to attention
         },
         onMonsterYell: (senderName, text) => {
           const faction = matchBuffYell(text);

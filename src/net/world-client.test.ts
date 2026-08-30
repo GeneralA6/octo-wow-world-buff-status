@@ -33,6 +33,7 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
   readonly #characters: { guid: bigint; name: string }[];
   readonly #names = new Map<bigint, string>();
   readonly sentWhispers: { target: string; message: string }[] = [];
+  readonly standStates: number[] = [];
 
   constructor(characters: { guid: bigint; name: string }[]) {
     super();
@@ -111,6 +112,9 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
       reader.u32LE(); // type
       reader.u32LE(); // language
       this.sentWhispers.push({ target: reader.cString(), message: reader.cString() });
+    }
+    if (opcode === WorldOpcode.CMSG_STANDSTATECHANGE) {
+      this.standStates.push(new PacketReader(body).u32LE());
     }
     this.#respond(opcode, body);
     return true;
@@ -283,6 +287,34 @@ describe("WorldClient (against a scripted mock server)", () => {
 
     client.whisper("Raider", "Subscribed!");
     expect(socket.sentWhispers).toContainEqual({ target: "Raider", message: "Subscribed!" });
+
+    client.close();
+  });
+
+  it("sends a stand-state change (sit) once in world", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x55,
+      pingIntervalMs: 0,
+      handlers: { onReady: () => markReady() },
+    });
+
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    client.sit();
+    expect(socket.standStates).toContain(1); // STAND_STATE_SIT
 
     client.close();
   });

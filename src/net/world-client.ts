@@ -17,11 +17,13 @@ import {
   buildAuthSessionBody,
   buildPingBody,
   buildPlayerLoginBody,
+  buildStandStateBody,
   buildWorldClientFrame,
   parseAuthChallenge,
   parseAuthResponse,
   parseCharEnum,
   readServerHeader,
+  STAND_STATE_SIT,
   WORLD_CLIENT_HEADER_SIZE,
   WORLD_SERVER_HEADER_SIZE,
 } from "./world-packets.js";
@@ -150,6 +152,13 @@ export class WorldClient {
     if (!this.#ready) throw new Error("cannot whisper before the character is in world");
     this.#logger.debug(`world: whisper -> ${target}: ${JSON.stringify(message)}`);
     this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildWhisper(target, message));
+  }
+
+  /** Sit the character down (the /sit stand-state) — used to look parked in a city. */
+  sit(): void {
+    if (!this.#ready) throw new Error("cannot sit before the character is in world");
+    this.#logger.debug("world: /sit");
+    this.#send(WorldOpcode.CMSG_STANDSTATECHANGE, buildStandStateBody(STAND_STATE_SIT));
   }
 
   close(): void {

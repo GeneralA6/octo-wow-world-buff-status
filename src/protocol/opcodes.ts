@@ -33,6 +33,8 @@ export enum WorldOpcode {
   SMSG_WHO = 0x63,
   CMSG_MESSAGECHAT = 0x95,
   SMSG_MESSAGECHAT = 0x96,
+  /** Change stand state (the /sit, /stand emotes); body is a u32 state. */
+  CMSG_STANDSTATECHANGE = 0x101,
   CMSG_PING = 0x1dc,
   SMSG_PONG = 0x1dd,
   SMSG_AUTH_CHALLENGE = 0x1ec,
