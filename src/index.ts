@@ -8,7 +8,7 @@ import { resolveBuild } from "./net/client-resolver.js";
 import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
 import { DiscordDmSender } from "./notify/discord-dm.js";
 import { DiscordGateway } from "./notify/discord-gateway.js";
-import { formatBuffAlert, formatBuffWhisper } from "./notify/format.js";
+import { formatBuffAlert, formatBuffDropped, formatBuffWhisper } from "./notify/format.js";
 import type { RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
@@ -564,10 +564,13 @@ async function main(): Promise<void> {
     }
   }
   const recordBuff = (faction: Faction, sourceName: string, text: string): void => {
+    const appliedAt = new Date();
     logger.info(`buff drop: ${faction} buff is up (heard "${text}" from ${sourceName})`);
     void buffStore
-      .record({ faction, appliedAt: new Date() })
+      .record({ faction, appliedAt })
       .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
+    // Announce it: the buff is up, and when the next one becomes possible (expiry).
+    void push(formatBuffDropped(faction, appliedAt, config.buffDurationMs));
   };
 
   // Discord DM delivery + linking (only when a bot token is configured).

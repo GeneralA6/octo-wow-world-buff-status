@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RaidCohortSnapshot } from "../watcher/raid-tracker.js";
 import {
   formatBuffAlert,
+  formatBuffDropped,
   formatBuffWhisper,
   formatRaidEvent,
   formatRaidWhisper,
@@ -29,6 +30,27 @@ describe("formatBuffAlert", () => {
     );
     expect(message.body).toContain("Stormwind or Orgrimmar");
     expect(message.body).toContain("25");
+  });
+});
+
+describe("formatBuffDropped", () => {
+  it("names the city and the exact earliest-next time (drop + duration)", () => {
+    const appliedAt = new Date("2026-08-30T20:00:00Z");
+    const twoHours = 120 * 60_000;
+    const message = formatBuffDropped("alliance", appliedAt, twoHours);
+    expect(message.title).toContain("Stormwind");
+    expect(message.body).toContain("just dropped in Stormwind");
+    expect(message.body).toContain("~2h");
+    // expiry = 22:00Z that day -> unix 1788472800
+    const expiresUnix = Math.floor((appliedAt.getTime() + twoHours) / 1000);
+    expect(message.body).toContain(`<t:${expiresUnix}:t>`);
+    expect(message.body).toContain(`<t:${expiresUnix}:R>`);
+  });
+
+  it("renders a non-round window as minutes", () => {
+    const message = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), 90 * 60_000);
+    expect(message.title).toContain("Orgrimmar");
+    expect(message.body).toContain("~90 min");
   });
 });
 

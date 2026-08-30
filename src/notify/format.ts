@@ -5,6 +5,31 @@ import type { NotifyMessage } from "./notifier.js";
 /** The capital whose buff a faction's turn-in drops. */
 const CITY_FOR: Record<Faction, string> = { alliance: "Stormwind", horde: "Orgrimmar" };
 
+/** "2h" for whole hours, else "90 min". */
+function humanDuration(ms: number): string {
+  const m = Math.round(ms / 60_000);
+  return m % 60 === 0 ? `${m / 60}h` : `${m} min`;
+}
+
+/**
+ * A buff just dropped (a listener heard the yell). Says which city it's up in and,
+ * crucially, the earliest a fresh one can drop again — which is when this one wears
+ * off, since a hanging head blocks the next turn-in. Discord dynamic timestamps
+ * (`<t:unix:t>` / `<t:unix:R>`) render in each viewer's own timezone and stay live.
+ */
+export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs: number): NotifyMessage {
+  const city = CITY_FOR[faction];
+  const expiresUnix = Math.floor((appliedAt.getTime() + durationMs) / 1000);
+  return {
+    kind: "info",
+    title: `🎉 Rallying Cry is up in ${city}`,
+    body:
+      `The Rallying Cry of the Dragonslayer just dropped in ${city} — good for ~${humanDuration(durationMs)}, ` +
+      `until <t:${expiresUnix}:t> (<t:${expiresUnix}:R>). ` +
+      `That's also the earliest a fresh one can drop, so start watching again then.`,
+  };
+}
+
 /** Human list of the capitals where a fresh buff is possible ("Stormwind or Orgrimmar"). */
 function cityList(cities: readonly Faction[]): string {
   const names = cities.map((faction) => CITY_FOR[faction]);
