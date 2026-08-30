@@ -188,9 +188,22 @@ describe("loadConfig", () => {
     });
     // Sorted by label: ONYXIABUFFOG before ONYXIABUFFSW.
     expect(config.listeners).toEqual([
-      { account: "ONYXIABUFFOG", password: "pw2", characterName: "Onyxiabuffog" },
-      { account: "ONYXIABUFFSW", password: "pw1", characterName: "Onyxiabuffsw" },
+      { account: "ONYXIABUFFOG", password: "pw2", characterName: "Onyxiabuffog", onLogin: "none" },
+      { account: "ONYXIABUFFSW", password: "pw1", characterName: "Onyxiabuffsw", onLogin: "none" },
     ]);
+  });
+
+  it("reads a per-listener on-login action and rejects a bad one", () => {
+    const base = {
+      ...minimalEnv,
+      WOW_LISTENER_SW_ACCOUNT: "A",
+      WOW_LISTENER_SW_PASSWORD: "p",
+      WOW_LISTENER_SW_CHARACTER: "Sw",
+    };
+    expect(loadConfig({ ...base, WOW_LISTENER_SW_ONLOGIN: "interact" }).listeners[0]?.onLogin).toBe("interact");
+    expect(loadConfig({ ...base, WOW_LISTENER_SW_ONLOGIN: "SIT" }).listeners[0]?.onLogin).toBe("sit");
+    expect(loadConfig({ ...base }).listeners[0]?.onLogin).toBe("none");
+    expect(() => loadConfig({ ...base, WOW_LISTENER_SW_ONLOGIN: "dance" })).toThrow(/must be "sit", "interact", or "none"/);
   });
 
   it("errors when a discovered listener is missing its password or character", () => {

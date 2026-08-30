@@ -13,14 +13,19 @@ function isGroupingMode(value: string): value is GroupingMode {
   return GROUPING_MODES.some((mode) => mode === value);
 }
 
+/** What a listener does once it reaches the world (per-character). */
+export type OnLoginAction = "sit" | "interact" | "none";
+
 /**
  * A city-parked yell listener: a second account whose only job is to hear its
- * capital's buff yell. Each has its own dedicated credentials as separate secrets.
+ * capital's buff yell. Each has its own dedicated credentials as separate secrets,
+ * and an optional on-login action (e.g. /sit, or interact with the nearest object).
  */
 export interface ListenerConfig {
   readonly account: string;
   readonly password: string;
   readonly characterName: string;
+  readonly onLogin: OnLoginAction;
 }
 
 export interface BotConfig {
@@ -135,10 +140,18 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   }
   for (const label of [...listenerLabels].sort()) {
     const prefix = `WOW_LISTENER_${label}`;
+    const onLoginRaw = env[`${prefix}_ONLOGIN`]?.trim().toLowerCase();
+    let onLogin: OnLoginAction = "none";
+    if (onLoginRaw === "sit" || onLoginRaw === "interact" || onLoginRaw === "none") {
+      onLogin = onLoginRaw;
+    } else if (onLoginRaw) {
+      errors.push(`${prefix}_ONLOGIN must be "sit", "interact", or "none"`);
+    }
     listeners.push({
       account: required(`${prefix}_ACCOUNT`),
       password: required(`${prefix}_PASSWORD`),
       characterName: required(`${prefix}_CHARACTER`),
+      onLogin,
     });
   }
 

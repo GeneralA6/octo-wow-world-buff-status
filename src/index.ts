@@ -412,6 +412,7 @@ async function runListener(
   await new Promise<void>((resolve, reject) => {
     let readyTimer: NodeJS.Timeout | null = null;
     let settled = false;
+    let objectDumps = 0; // bounded object capture for "interact" (build the parser)
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
@@ -432,15 +433,24 @@ async function runListener(
           if (readyTimer) clearTimeout(readyTimer);
           readyTimer = null;
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
-          world.sit(); // look like a parked player rather than a bot standing to attention
+          // Per-character on-login action. "interact" (nearest object, e.g. a bench)
+          // needs the object parser first — for now it captures the burst below.
+          if (listener.onLogin === "sit") world.sit();
         },
         onMonsterYell: (senderName, text) => {
           const faction = matchBuffYell(text);
           if (faction) onBuffApplied(faction, senderName, text);
         },
-        // Transitional: dump object updates (LOG_LEVEL=debug) so the Stone Bench's
-        // GameObject block can be captured live and a parser built from real bytes.
-        onWorldObjects: (raw) => logger.debug(`objects (${raw.length}b): ${raw.toString("hex")}`),
+        // For "interact": dump the first object packets (bounded, so it can't flood)
+        // to capture the nearby GameObjects and build the nearest-object parser.
+        onWorldObjects:
+          listener.onLogin === "interact"
+            ? (raw) => {
+                if (objectDumps >= 12) return;
+                objectDumps += 1;
+                logger.info(`objects#${objectDumps} (${raw.length}b): ${raw.toString("hex")}`);
+              }
+            : undefined,
         onError: (error) => {
           world.close();
           settle(error);
