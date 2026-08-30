@@ -472,11 +472,12 @@ async function runListener(
               }
               if (attempts >= OBJECT_POLL_MAX) {
                 interacted = true;
-                const closest = selfPos
+                const sp = selfPos;
+                const closest = sp
                   ? [...nearby]
                       .map((go) => ({
                         entry: go.entry,
-                        d: Math.hypot(go.pos.x - selfPos.x, go.pos.y - selfPos.y, go.pos.z - selfPos.z),
+                        d: Math.hypot(go.pos.x - sp.x, go.pos.y - sp.y, go.pos.z - sp.z),
                       }))
                       .sort((a, b) => a.d - b.d)
                       .slice(0, 5)
@@ -485,7 +486,7 @@ async function runListener(
                   : "n/a";
                 logger.warn(
                   `${listener.characterName}: no object within ${OBJECT_INTERACT_MAX_YD}yd after ${attempts} tries ` +
-                    `(self=${selfPos ? `(${selfPos.x.toFixed(0)},${selfPos.y.toFixed(0)},${selfPos.z.toFixed(0)})` : "no"}, ` +
+                    `(self=${sp ? `(${sp.x.toFixed(0)},${sp.y.toFixed(0)},${sp.z.toFixed(0)})` : "no"}, ` +
                     `objects=${nearby.length}, closest=[${closest}])`,
                 );
                 return;
