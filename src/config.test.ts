@@ -250,6 +250,22 @@ describe("loadConfig", () => {
     expect(configured.discordGateway).toBe(false);
   });
 
+  it("defaults the guild/community settings and reads overrides", () => {
+    const bare = loadConfig({ ...minimalEnv });
+    expect(bare.guildName).toBe("Rage Quit");
+    expect(bare.community).toBe("OctoWoW");
+    expect(bare.guildInviteEnabled).toBe(false);
+    const configured = loadConfig({
+      ...minimalEnv,
+      WOW_GUILD_NAME: "Late Night",
+      WOW_COMMUNITY: "Turtle",
+      WOW_GUILD_INVITE: "true",
+    });
+    expect(configured.guildName).toBe("Late Night");
+    expect(configured.community).toBe("Turtle");
+    expect(configured.guildInviteEnabled).toBe(true);
+  });
+
   it("defaults the Mongo settings and reads overrides", () => {
     const bare = loadConfig({ ...minimalEnv });
     expect(bare.mongodbUri).toBeNull();

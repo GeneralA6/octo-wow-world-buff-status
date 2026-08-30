@@ -88,6 +88,12 @@ export interface BotConfig {
   readonly discordWebhookUrl: string;
   /** Role to ping on raid enter/leave so only opted-in members are notified. */
   readonly discordMentionRoleId: string | null;
+  /** Guild the bot represents — used in the intro whisper and for auto-invites. */
+  readonly guildName: string;
+  /** Community name used in the intro whisper. */
+  readonly community: string;
+  /** Auto guild-invite players who contact a listener. Needs the watcher to be guilded. */
+  readonly guildInviteEnabled: boolean;
   readonly logLevel: LogLevel;
 }
 
@@ -229,6 +235,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const discordWebhookUrl = required("DISCORD_WEBHOOK_URL");
 
+  const guildName = env.WOW_GUILD_NAME?.trim() || "Rage Quit";
+  const community = env.WOW_COMMUNITY?.trim() || "OctoWoW";
+  const inviteRaw = env.WOW_GUILD_INVITE?.trim().toLowerCase();
+  const guildInviteEnabled = inviteRaw === "true" || inviteRaw === "1";
+
   const discordMentionRoleId = env.DISCORD_MENTION_ROLE_ID?.trim() || null;
   if (discordMentionRoleId && !/^\d+$/.test(discordMentionRoleId)) {
     errors.push("DISCORD_MENTION_ROLE_ID must be a numeric Discord role id");
@@ -280,6 +291,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     pollIntervalMs,
     discordWebhookUrl,
     discordMentionRoleId,
+    guildName,
+    community,
+    guildInviteEnabled,
     logLevel,
   };
 }
