@@ -427,6 +427,7 @@ async function runListener(
     let selfPos: WorldPoint | null = null;
     let interacted = false;
     let objectLogs = 0; // bounded diagnostics: what object packets arrive and how they parse
+    let bigCaptured = false; // one-shot capture of a big grid packet's head, to decode movement blocks
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
@@ -492,6 +493,10 @@ async function runListener(
           listener.onLogin === "interact"
             ? (raw) => {
                 if (interacted) return;
+                if (!bigCaptured && raw.length > 5000) {
+                  bigCaptured = true;
+                  logger.info(`${listener.characterName}: BIGPKT ${raw.length}b head: ${raw.subarray(0, 4000).toString("hex")}`);
+                }
                 try {
                   const parsed = parseUpdateObject(raw);
                   for (const go of parsed.gameObjects) nearby.push(go);
