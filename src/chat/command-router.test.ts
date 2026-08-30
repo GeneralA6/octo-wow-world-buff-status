@@ -24,6 +24,8 @@ function deps(opts: { withLinker?: boolean; fetch?: DiscordFetch } = {}) {
     store,
     activeRaids: () => tracker.activeRaids(),
     areaName: "Onyxia's Lair",
+    guildName: "Rage Quit",
+    community: "OctoWoW",
     linker,
   });
   return { store, tracker, pending, linker, router };
@@ -56,6 +58,32 @@ describe("CommandRouter", () => {
     const reply = (await router.handle("Raider", "status"))[0];
     expect(reply).toContain("<Nightfall>");
     expect(reply).toContain("20");
+  });
+
+  it("understands natural phrasing: 'sign me up' subscribes", async () => {
+    const { store, router } = deps();
+    const reply = (await router.handle("Raider", "hey can you sign me up"))[0];
+    expect(reply).toMatch(/subscribed/i);
+    expect(await store.has("Raider")).toBe(true);
+  });
+
+  it("understands a guild question and pitches recruiting", async () => {
+    const { router } = deps();
+    const reply = (await router.handle("Raider", "how do I join?"))[0];
+    expect(reply).toContain("Rage Quit");
+    expect(reply).toMatch(/recruit/i);
+  });
+
+  it("answers a buff question with a subscribe nudge", async () => {
+    const { router } = deps();
+    const reply = (await router.handle("Raider", "when's the buff coming?"))[0];
+    expect(reply).toMatch(/Rallying Cry/i);
+    expect(reply).toMatch(/subscribe/i);
+  });
+
+  it("falls back gracefully on true gibberish", async () => {
+    const { router } = deps();
+    expect((await router.handle("Raider", "qwzx blorp"))[0]).toMatch(/didn't get that/i);
   });
 
   it("notify: shows all alert types by default", async () => {

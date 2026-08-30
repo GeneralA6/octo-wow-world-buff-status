@@ -718,6 +718,8 @@ async function main(): Promise<void> {
     store,
     activeRaids: () => lanes.flatMap((lane) => lane.watch.activeRaids()),
     areaName: config.watchAreaName,
+    guildName: config.guildName,
+    community: config.community,
     linker: dm.isConfigured ? linker : null,
   });
   const outreach = new Outreach(

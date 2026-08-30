@@ -7,6 +7,7 @@ import {
 } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
 import type { DiscordLinker } from "./discord-linker.js";
+import { parseIntent, type Intent } from "./intent.js";
 
 /**
  * Routes a whisper from a player to a command and produces the reply line(s) to
@@ -28,6 +29,9 @@ export interface CommandDeps {
   /** Raids in progress across all factions — for the status command. */
   readonly activeRaids: () => readonly ActiveRaid[];
   readonly areaName: string;
+  /** Guild + community named in recruiting/intent replies. */
+  readonly guildName: string;
+  readonly community: string;
   /** Null when no bot token is configured — the discord commands then say so. */
   readonly linker?: DiscordLinker | null;
 }
@@ -116,7 +120,10 @@ export class CommandRouter {
       default: {
         // A bare confirmation code from a flow-B link.
         if (linker && (await linker.confirmFromWhisper(sender, command))) return [this.#linkedLine()];
-        return [`Unknown command. Whisper "help" for what I can do.`];
+        // Fall back to natural-language intent detection over the whole message.
+        const intent = parseIntent(text);
+        if (intent) return this.#handleIntent(intent, sender);
+        return [`Sorry, I didn't get that. Whisper "help" for what I can do.`];
       }
     }
   }
@@ -220,5 +227,27 @@ export class CommandRouter {
     const alerts = ALL_ALERT_TYPES.filter((type) => set.has(type));
     await store.update(sender, { alerts });
     return [`"${t}" ${wantOn ? "ON" : "OFF"}. You now get: ${alerts.length ? alerts.join(", ") : "nothing"}.`];
+  }
+
+  /** Act on a natural-language intent — re-dispatching to the canonical command where one exists. */
+  async #handleIntent(intent: Intent, sender: string): Promise<string[]> {
+    const { areaName, guildName, community } = this.#deps;
+    switch (intent) {
+      case "subscribe":
+      case "unsubscribe":
+      case "status":
+      case "help":
+        return this.handle(sender, intent);
+      case "guild":
+        return [
+          `We're <${guildName}>, a ${community} community guild, and we're recruiting! ` +
+            `Whisper "subscribe" for buff alerts — an officer will get you an invite.`,
+        ];
+      case "buff":
+        return [
+          `I call out Rallying Cry buff drops from ${areaName} raids. ` +
+            `Whisper "subscribe" and I'll ping you when one's about to drop.`,
+        ];
+    }
   }
 }
