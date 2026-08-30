@@ -1,6 +1,6 @@
 import { connect, type Socket } from "node:net";
-import { loadConfig, parseAddress, type BotConfig } from "./config.js";
-import { createLogger, type Logger } from "./logger.js";
+import { loadConfig, parseAddress, type BotConfig, type ListenerConfig } from "./config.js";
+import { createLogger, prefixed, type Logger } from "./logger.js";
 import { describeError, FatalError, VersionMismatchError } from "./errors.js";
 import { AuthClient } from "./net/auth-client.js";
 import { WorldClient } from "./net/world-client.js";
@@ -14,6 +14,8 @@ import { PresenceTracker, summarizeDepartures } from "./watcher/presence.js";
 import { RaidSessions } from "./watcher/raid-sessions.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
+import { InMemoryBuffStore, MongoBuffStore, type BuffStore, type Faction } from "./watcher/buff-store.js";
+import { matchBuffYell } from "./watcher/buff-yell.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { DiscordLinker } from "./chat/discord-linker.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
@@ -321,6 +323,76 @@ async function runConnection(
   });
 }
 
+/**
+ * A listener session: log in a city-parked character, reach the world, and forward
+ * buff yells. No /who, no whispers — its only job is to hear its capital's yell so
+ * the buff-drop time is known. Shares the client identity so a patch heals once.
+ */
+async function runListener(
+  config: BotConfig,
+  listener: ListenerConfig,
+  logger: Logger,
+  client: ClientValues,
+  onBuffApplied: (faction: Faction, sourceName: string, text: string) => void,
+): Promise<void> {
+  const { sessionKey, realms } = await new AuthClient(logger).login({
+    host: config.authHost,
+    port: config.authPort,
+    username: listener.account,
+    password: listener.password,
+    integrityChecksum: client.integrityChecksum,
+    build: client.build,
+  });
+
+  const target = resolveWorldTarget(config, realms, logger);
+  const socket = await connectSocket(target.host, target.port);
+
+  await new Promise<void>((resolve, reject) => {
+    let readyTimer: NodeJS.Timeout | null = null;
+    let settled = false;
+    const settle = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      if (readyTimer) clearTimeout(readyTimer);
+      if (error) reject(error);
+      else resolve();
+    };
+
+    const world = new WorldClient({
+      socket,
+      account: listener.account,
+      sessionKey,
+      characterName: listener.characterName,
+      build: client.worldBuild,
+      logger,
+      handlers: {
+        onReady: () => {
+          if (readyTimer) clearTimeout(readyTimer);
+          readyTimer = null;
+          logger.info(`in world as ${listener.characterName}; listening for buff yells`);
+        },
+        onMonsterYell: (senderName, text) => {
+          const faction = matchBuffYell(text);
+          if (faction) onBuffApplied(faction, senderName, text);
+        },
+        onError: (error) => {
+          world.close();
+          settle(error);
+        },
+        onClose: () => settle(new Error("listener connection closed")),
+      },
+    });
+
+    world.start();
+    // Same handshake-stall guard as the watcher: bound the time to reach in-world.
+    readyTimer = setTimeout(() => {
+      world.close();
+      settle(new Error("timed out reaching world (handshake stalled)"));
+    }, WORLD_READY_TIMEOUT_MS);
+    readyTimer.unref?.();
+  });
+}
+
 /** Open the subscriber store — Mongo when configured, else in-memory. */
 async function openStore(
   config: BotConfig,
@@ -408,6 +480,23 @@ async function main(): Promise<void> {
     }
   }
 
+  // Buff-drop times per faction, fed by the city listeners — Mongo when configured.
+  let buffStore: BuffStore = new InMemoryBuffStore();
+  if (config.mongodbUri) {
+    try {
+      buffStore = await MongoBuffStore.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("buffs: recording drop times to MongoDB");
+    } catch (error) {
+      logger.error(`buffs: MongoDB connect failed (${describeError(error)}); recording in memory`);
+    }
+  }
+  const recordBuff = (faction: Faction, sourceName: string, text: string): void => {
+    logger.info(`buff drop: ${faction} buff is up (heard "${text}" from ${sourceName})`);
+    void buffStore
+      .record({ faction, appliedAt: new Date() })
+      .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
+  };
+
   // Discord DM delivery + linking (only when a bot token is configured).
   const dm = new DiscordDmSender(config.discordBotToken);
   const linker = new DiscordLinker({
@@ -471,39 +560,72 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info("shutting down");
     gateway?.stop();
-    void Promise.allSettled([store.close(), snapshots.close()]).finally(() => process.exit(0));
+    void Promise.allSettled([store.close(), snapshots.close(), buffStore.close()]).finally(() =>
+      process.exit(0),
+    );
   });
 
-  const heal: HealState = { lastCheckMs: 0, alertedStuck: false };
-  let backoffMs = 5_000;
-  while (!shuttingDown) {
-    try {
-      await runConnection(config, logger, services);
-      logger.warn("connection closed; reconnecting shortly");
-      backoffMs = 5_000;
-      heal.alertedStuck = false; // a clean run clears the "stuck" latch
-    } catch (error) {
-      if (error instanceof VersionMismatchError) {
-        if (await selfHeal(error, config, logger, client, push, heal)) {
-          backoffMs = 5_000; // resolved — retry promptly with the new build
-        } else if (!config.autoResolve) {
-          process.exit(1); // can't self-heal and it's disabled: stop
+  // The watcher does /who + alerts + whispers; each listener only forwards buff yells.
+  // They run concurrently, each with its own self-reconnecting supervisor.
+  const runWatcher = async (): Promise<void> => {
+    const heal: HealState = { lastCheckMs: 0, alertedStuck: false };
+    let backoffMs = 5_000;
+    while (!shuttingDown) {
+      try {
+        await runConnection(config, logger, services);
+        logger.warn("connection closed; reconnecting shortly");
+        backoffMs = 5_000;
+        heal.alertedStuck = false; // a clean run clears the "stuck" latch
+      } catch (error) {
+        if (error instanceof VersionMismatchError) {
+          if (await selfHeal(error, config, logger, client, push, heal)) {
+            backoffMs = 5_000; // resolved — retry promptly with the new build
+          } else if (!config.autoResolve) {
+            process.exit(1); // can't self-heal and it's disabled: stop
+          } else {
+            await delay(backoffMs); // can't heal right now; back off and retry quietly
+            backoffMs = Math.min(backoffMs * 2, 60_000);
+          }
+        } else if (error instanceof FatalError) {
+          logger.error(error.message);
+          await push({ kind: "error", title: "Bot stopped", body: error.message });
+          process.exit(1);
         } else {
-          await delay(backoffMs); // can't heal right now; back off and retry quietly
+          logger.warn(`connection error: ${describeError(error)}; retrying in ${backoffMs / 1000}s`);
+          await delay(backoffMs);
           backoffMs = Math.min(backoffMs * 2, 60_000);
         }
-      } else if (error instanceof FatalError) {
-        logger.error(error.message);
-        await push({ kind: "error", title: "Bot stopped", body: error.message });
-        process.exit(1);
-      } else {
-        logger.warn(`connection error: ${describeError(error)}; retrying in ${backoffMs / 1000}s`);
+      }
+      if (!shuttingDown) await delay(1_000);
+    }
+  };
+
+  const runListenerLoop = async (listener: ListenerConfig): Promise<void> => {
+    const log = prefixed(logger, listener.key);
+    let backoffMs = 5_000;
+    while (!shuttingDown) {
+      try {
+        await runListener(config, listener, log, client, recordBuff);
+        log.warn("connection closed; reconnecting shortly");
+        backoffMs = 5_000;
+      } catch (error) {
+        if (error instanceof VersionMismatchError) {
+          // The watcher's self-heal fixes the shared client build; wait and retry.
+          log.warn(`${error.message}; waiting for the watcher to resolve the build`);
+        } else {
+          log.warn(`${describeError(error)}; retrying in ${backoffMs / 1000}s`);
+        }
         await delay(backoffMs);
         backoffMs = Math.min(backoffMs * 2, 60_000);
       }
+      if (!shuttingDown) await delay(1_000);
     }
-    if (!shuttingDown) await delay(1_000);
+  };
+
+  if (config.listeners.length > 0) {
+    logger.info(`listeners: ${config.listeners.map((l) => `${l.key}=${l.characterName}`).join(", ")}`);
   }
+  await Promise.all([runWatcher(), ...config.listeners.map(runListenerLoop)]);
 }
 
 /**

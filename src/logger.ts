@@ -27,6 +27,17 @@ export function createLogger(minLevel: LogLevel = "info"): Logger {
   };
 }
 
+/** Wrap a logger so every line is tagged with a prefix (e.g. a session name). */
+export function prefixed(logger: Logger, prefix: string): Logger {
+  const tag = `[${prefix}] `;
+  return {
+    debug: (m) => logger.debug(tag + m),
+    info: (m) => logger.info(tag + m),
+    warn: (m) => logger.warn(tag + m),
+    error: (m) => logger.error(tag + m),
+  };
+}
+
 /** A logger that discards everything — the default for tests. */
 export const silentLogger: Logger = {
   debug: () => {},
