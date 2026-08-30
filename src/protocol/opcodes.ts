@@ -57,6 +57,12 @@ export enum ChatType {
   WhisperInform = 0x07,
   Emote = 0x08,
   System = 0x0a,
+  // Monster/NPC chat — the city buff yell arrives as MonsterYell. These carry the
+  // sender's name inline, a different wire layout than player messages (see chat.ts).
+  MonsterSay = 0x0b,
+  MonsterYell = 0x0c,
+  MonsterWhisper = 0x0d,
+  MonsterEmote = 0x0e,
   Channel = 0x11,
 }
 

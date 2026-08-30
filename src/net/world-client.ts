@@ -3,7 +3,13 @@ import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { FatalError } from "../errors.js";
 import { AUTH_OK, ChatType, CLIENT_BUILD, WorldOpcode } from "../protocol/opcodes.js";
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
-import { buildWhisper, parsePlayerNotFound, parseServerChat } from "../protocol/chat.js";
+import {
+  buildWhisper,
+  isMonsterChatType,
+  parseMonsterChat,
+  parsePlayerNotFound,
+  parseServerChat,
+} from "../protocol/chat.js";
 import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
@@ -28,6 +34,8 @@ export interface WorldClientHandlers {
   onWhisper?: (sender: string, text: string) => void;
   /** A whisper we sent could not be delivered — the target is offline. */
   onWhisperUndelivered?: (target: string) => void;
+  /** An NPC yelled to the zone (raw). The wiring layer decides if it is a buff yell. */
+  onMonsterYell?: (senderName: string, text: string) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
   /** Server sent warden data — anticheat is active and unhandled. */
@@ -293,6 +301,10 @@ export class WorldClient {
   #handleChat(body: Buffer): void {
     this.#logger.debug(`world: chat recv [${body.subarray(0, 80).toString("hex")}]`);
     try {
+      if (body.length > 0 && isMonsterChatType(body.readUInt8(0))) {
+        this.#handleMonsterChat(body);
+        return;
+      }
       const chat = parseServerChat(body);
       this.#logger.debug(
         `world: chat type=0x${chat.type.toString(16)} guid=0x${chat.senderGuid.toString(16)} text=${JSON.stringify(chat.text)}`,
@@ -316,6 +328,21 @@ export class WorldClient {
     } catch (error) {
       this.#logger.debug(
         `world: could not read chat [${body.subarray(0, 64).toString("hex")}]: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  #handleMonsterChat(body: Buffer): void {
+    try {
+      const chat = parseMonsterChat(body);
+      // Log every monster yell so the live buff-yell text can be captured/confirmed.
+      this.#logger.debug(
+        `world: monster chat from ${JSON.stringify(chat.senderName)}: ${JSON.stringify(chat.text)}`,
+      );
+      if (chat.type === ChatType.MonsterYell) this.#handlers.onMonsterYell?.(chat.senderName, chat.text);
+    } catch (error) {
+      this.#logger.debug(
+        `world: could not read monster chat [${body.subarray(0, 64).toString("hex")}]: ${(error as Error).message}`,
       );
     }
   }
