@@ -413,6 +413,9 @@ async function runListener(
           const faction = matchBuffYell(text);
           if (faction) onBuffApplied(faction, senderName, text);
         },
+        // Transitional: dump object updates (LOG_LEVEL=debug) so the Stone Bench's
+        // GameObject block can be captured live and a parser built from real bytes.
+        onWorldObjects: (raw) => logger.debug(`objects (${raw.length}b): ${raw.toString("hex")}`),
         onError: (error) => {
           world.close();
           settle(error);

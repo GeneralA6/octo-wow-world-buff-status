@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { inflateSync } from "node:zlib";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { FatalError } from "../errors.js";
 import { AUTH_OK, ChatType, CLIENT_BUILD, WorldOpcode } from "../protocol/opcodes.js";
@@ -15,6 +16,7 @@ import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
 import {
   buildAuthSessionBody,
+  buildGameObjUseBody,
   buildPingBody,
   buildPlayerLoginBody,
   buildStandStateBody,
@@ -38,6 +40,8 @@ export interface WorldClientHandlers {
   onWhisperUndelivered?: (target: string) => void;
   /** An NPC yelled to the zone (raw). The wiring layer decides if it is a buff yell. */
   onMonsterYell?: (senderName: string, text: string) => void;
+  /** A decompressed nearby-object update block, for parsing GameObjects (e.g. a bench). */
+  onWorldObjects?: (body: Buffer) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
   /** Server sent warden data — anticheat is active and unhandled. */
@@ -161,6 +165,13 @@ export class WorldClient {
     this.#send(WorldOpcode.CMSG_STANDSTATECHANGE, buildStandStateBody(STAND_STATE_SIT));
   }
 
+  /** Use/interact with a GameObject by guid (e.g. sit on a bench). */
+  useGameObject(guid: bigint): void {
+    if (!this.#ready) throw new Error("cannot use a game object before the character is in world");
+    this.#logger.debug(`world: use gameobject 0x${guid.toString(16)}`);
+    this.#send(WorldOpcode.CMSG_GAMEOBJ_USE, buildGameObjUseBody(guid));
+  }
+
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
@@ -235,6 +246,12 @@ export class WorldClient {
         }
         case WorldOpcode.SMSG_MESSAGECHAT:
           this.#handleChat(body);
+          break;
+        case WorldOpcode.SMSG_UPDATE_OBJECT:
+          this.#handleWorldObjects(body, false);
+          break;
+        case WorldOpcode.SMSG_COMPRESSED_UPDATE_OBJECT:
+          this.#handleWorldObjects(body, true);
           break;
         case WorldOpcode.SMSG_NAME_QUERY_RESPONSE:
           this.#handleNameQueryResponse(body);
@@ -353,6 +370,17 @@ export class WorldClient {
       this.#logger.debug(
         `world: could not read monster chat [${body.subarray(0, 64).toString("hex")}]: ${(error as Error).message}`,
       );
+    }
+  }
+
+  #handleWorldObjects(body: Buffer, compressed: boolean): void {
+    try {
+      // Compressed form: a u32 uncompressed size then a zlib stream.
+      const raw = compressed ? inflateSync(body.subarray(4)) : body;
+      this.#logger.debug(`world: object update (${raw.length}b${compressed ? ", was compressed" : ""})`);
+      this.#handlers.onWorldObjects?.(raw);
+    } catch (error) {
+      this.#logger.debug(`world: could not read object update: ${(error as Error).message}`);
     }
   }
 

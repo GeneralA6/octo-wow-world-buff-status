@@ -118,6 +118,11 @@ export function buildStandStateBody(state: number): Buffer {
   return new PacketWriter().u32LE(state).toBuffer();
 }
 
+/** CMSG_GAMEOBJ_USE body: the target GameObject's u64 guid. */
+export function buildGameObjUseBody(guid: bigint): Buffer {
+  return new PacketWriter().u64LE(guid).toBuffer();
+}
+
 export interface CharacterListEntry {
   readonly guid: bigint;
   readonly name: string;

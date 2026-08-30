@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { AUTH_OK, ChatType, WorldOpcode } from "../protocol/opcodes.js";
@@ -34,6 +35,7 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
   readonly #names = new Map<bigint, string>();
   readonly sentWhispers: { target: string; message: string }[] = [];
   readonly standStates: number[] = [];
+  readonly gameObjUses: bigint[] = [];
 
   constructor(characters: { guid: bigint; name: string }[]) {
     super();
@@ -80,6 +82,13 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
   }
 
+  /** Deliver a zlib-compressed object update (the login form) to the client. */
+  pushCompressedObjects(raw: Buffer): void {
+    const deflated = deflateSync(raw);
+    const body = new PacketWriter().u32LE(raw.length).bytes(deflated).toBuffer();
+    this.#sendServer(WorldOpcode.SMSG_COMPRESSED_UPDATE_OBJECT, body);
+  }
+
   /** Tell the client a whisper target is offline. */
   pushPlayerNotFound(name: string): void {
     this.#sendServer(
@@ -115,6 +124,9 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     }
     if (opcode === WorldOpcode.CMSG_STANDSTATECHANGE) {
       this.standStates.push(new PacketReader(body).u32LE());
+    }
+    if (opcode === WorldOpcode.CMSG_GAMEOBJ_USE) {
+      this.gameObjUses.push(new PacketReader(body).u64LE());
     }
     this.#respond(opcode, body);
     return true;
@@ -316,6 +328,59 @@ describe("WorldClient (against a scripted mock server)", () => {
     client.sit();
     expect(socket.standStates).toContain(1); // STAND_STATE_SIT
 
+    client.close();
+  });
+
+  it("sends CMSG_GAMEOBJ_USE with the target guid", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x66,
+      pingIntervalMs: 0,
+      handlers: { onReady: () => markReady() },
+    });
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    client.useGameObject(0x123456789an);
+    expect(socket.gameObjUses).toContain(0x123456789an);
+    client.close();
+  });
+
+  it("decompresses a compressed object update and hands over the raw block", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    let deliverObjects: (body: Buffer) => void = () => {};
+    const objects = new Promise<Buffer>((resolve) => {
+      deliverObjects = resolve;
+    });
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x77,
+      pingIntervalMs: 0,
+      handlers: { onReady: () => markReady(), onWorldObjects: (body) => deliverObjects(body) },
+    });
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    const payload = Buffer.from([1, 0, 0, 0, 5, 0xaa, 0xbb]); // arbitrary block bytes
+    socket.pushCompressedObjects(payload);
+    expect(await withTimeout(objects)).toEqual(payload);
     client.close();
   });
 

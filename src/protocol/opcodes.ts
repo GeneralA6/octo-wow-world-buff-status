@@ -33,6 +33,12 @@ export enum WorldOpcode {
   SMSG_WHO = 0x63,
   CMSG_MESSAGECHAT = 0x95,
   SMSG_MESSAGECHAT = 0x96,
+  /** Nearby object create/update stream — where a GameObject's guid+entry arrive. */
+  SMSG_UPDATE_OBJECT = 0xa9,
+  /** Same, zlib-compressed (u32 uncompressed length + deflate); common on login. */
+  SMSG_COMPRESSED_UPDATE_OBJECT = 0x1f6,
+  /** Use/interact with a GameObject (e.g. sit on a bench); body is the u64 guid. */
+  CMSG_GAMEOBJ_USE = 0xb1,
   /** Change stand state (the /sit, /stand emotes); body is a u32 state. */
   CMSG_STANDSTATECHANGE = 0x101,
   CMSG_PING = 0x1dc,
