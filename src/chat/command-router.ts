@@ -1,4 +1,10 @@
-import type { DeliveryMode, SubscriberStore } from "../subscribers/store.js";
+import {
+  ALL_ALERT_TYPES,
+  isAlertType,
+  type AlertType,
+  type DeliveryMode,
+  type SubscriberStore,
+} from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
 import type { DiscordLinker } from "./discord-linker.js";
 
@@ -77,13 +83,17 @@ export class CommandRouter {
       }
       case "mode":
         return this.#mode(sender, arg);
+      case "notify":
+      case "alerts":
+        return this.#notify(sender, arg, (parts[2] ?? "").toLowerCase());
       case "me": {
         const sub = await store.get(sender);
         if (!sub) return [`You're not subscribed. Whisper "subscribe" to start.`];
         const discord = sub.discordId
           ? `Discord linked, delivery "${sub.delivery}"`
           : `no Discord linked`;
-        return [`Subscribed to ${areaName} alerts — ${discord}.`];
+        const alerts = sub.alerts.length ? sub.alerts.join(", ") : "none";
+        return [`Subscribed to ${areaName} alerts — ${discord}. Alerts: ${alerts}.`];
       }
       case "status": {
         const raids = activeRaids();
@@ -95,7 +105,8 @@ export class CommandRouter {
       case "?":
         return [
           `I watch ${areaName}. Commands: subscribe, unsubscribe, discord [<id>], ` +
-            `mode both|offline, status, me. "discord" links Discord for DM alerts.`,
+            `mode both|offline, notify <type> on|off, status, me. ` +
+            `Alert types: ${ALL_ALERT_TYPES.join(", ")}.`,
         ];
       default: {
         // A bare confirmation code from a flow-B link.
@@ -155,5 +166,43 @@ export class CommandRouter {
         ? `Delivery set to "both" — in-game and Discord.`
         : `Delivery set to "offline" — Discord only when your character is offline.`,
     ];
+  }
+
+  /** Choose which alert types you get. "notify" shows them; "notify <type> on|off",
+   *  "notify all", "notify none". A bare "notify <type>" flips it. */
+  async #notify(sender: string, target: string, onOff: string): Promise<string[]> {
+    const { store } = this.#deps;
+    const sub = await store.get(sender);
+    if (!sub) return [`You're not subscribed. Whisper "subscribe" first.`];
+
+    const listing = sub.alerts.length ? sub.alerts.join(", ") : "none";
+    const t = target.toLowerCase();
+
+    if (t === "") {
+      return [
+        `You get: ${listing} (of: ${ALL_ALERT_TYPES.join(", ")}). ` +
+          `Change with "notify <type> on|off", "notify all", or "notify none".`,
+      ];
+    }
+    if (t === "all") {
+      await store.update(sender, { alerts: [...ALL_ALERT_TYPES] });
+      return [`All alerts ON: ${ALL_ALERT_TYPES.join(", ")}.`];
+    }
+    if (t === "none") {
+      await store.update(sender, { alerts: [] });
+      return [`All alerts OFF — still subscribed, but I won't whisper you. "notify all" to undo.`];
+    }
+    if (!isAlertType(t)) {
+      return [`Unknown alert "${target}". Types: ${ALL_ALERT_TYPES.join(", ")}. Try "notify ${ALL_ALERT_TYPES[0]} off".`];
+    }
+
+    const has = sub.alerts.includes(t);
+    const wantOn = onOff === "" ? !has : onOff !== "off" && onOff !== "0" && onOff !== "no";
+    const set = new Set<AlertType>(sub.alerts);
+    if (wantOn) set.add(t);
+    else set.delete(t);
+    const alerts = ALL_ALERT_TYPES.filter((type) => set.has(type));
+    await store.update(sender, { alerts });
+    return [`"${t}" ${wantOn ? "ON" : "OFF"}. You now get: ${alerts.length ? alerts.join(", ") : "nothing"}.`];
   }
 }

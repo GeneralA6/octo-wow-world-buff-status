@@ -13,10 +13,25 @@
  */
 export type DeliveryMode = "both" | "offline";
 
+/**
+ * Which alerts a subscriber wants (default: all). These are the ones whispered/DM'd:
+ *   - "forming" — the early "a raid is forming" heads-up.
+ *   - "cleared" — the "a raid just cleared, buff imminent" alert.
+ * (The "buff is up" post always goes to the Discord channel, not per-subscriber.)
+ */
+export type AlertType = "forming" | "cleared";
+export const ALL_ALERT_TYPES: readonly AlertType[] = ["forming", "cleared"];
+export const DEFAULT_ALERTS: readonly AlertType[] = ALL_ALERT_TYPES;
+
+export function isAlertType(value: string): value is AlertType {
+  return ALL_ALERT_TYPES.some((type) => type === value);
+}
+
 export interface Subscriber {
   readonly name: string;
   readonly discordId: string | null;
   readonly delivery: DeliveryMode;
+  readonly alerts: readonly AlertType[];
   readonly subscribedAt: Date;
 }
 
@@ -24,6 +39,7 @@ export interface Subscriber {
 export interface SubscriberUpdate {
   readonly discordId?: string | null;
   readonly delivery?: DeliveryMode;
+  readonly alerts?: readonly AlertType[];
 }
 
 export interface SubscriberStore {

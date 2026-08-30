@@ -58,6 +58,45 @@ describe("CommandRouter", () => {
     expect(reply).toContain("20");
   });
 
+  it("notify: shows all alert types by default", async () => {
+    const { store, router } = deps();
+    await store.add("Raider");
+    const reply = (await router.handle("Raider", "notify"))[0];
+    expect(reply).toContain("forming, cleared");
+  });
+
+  it("notify <type> off/on toggles that alert", async () => {
+    const { store, router } = deps();
+    await store.add("Raider");
+    await router.handle("Raider", "notify forming off");
+    expect((await store.get("Raider"))?.alerts).toEqual(["cleared"]);
+    await router.handle("Raider", "notify forming on");
+    expect((await store.get("Raider"))?.alerts).toEqual(["forming", "cleared"]);
+  });
+
+  it("notify <type> with no on/off flips it", async () => {
+    const { store, router } = deps();
+    await store.add("Raider");
+    await router.handle("Raider", "notify cleared");
+    expect((await store.get("Raider"))?.alerts).toEqual(["forming"]);
+  });
+
+  it("notify all / none set every alert", async () => {
+    const { store, router } = deps();
+    await store.add("Raider");
+    await router.handle("Raider", "notify none");
+    expect((await store.get("Raider"))?.alerts).toEqual([]);
+    await router.handle("Raider", "notify all");
+    expect((await store.get("Raider"))?.alerts).toEqual(["forming", "cleared"]);
+  });
+
+  it("notify rejects an unknown type and nudges an unsubscribed player", async () => {
+    const { store, router } = deps();
+    await store.add("Raider");
+    expect((await router.handle("Raider", "notify bogus"))[0]).toMatch(/Unknown alert/);
+    expect((await router.handle("Ghost", "notify"))[0]).toMatch(/not subscribed/);
+  });
+
   it("flow A: 'discord' mints a code to DM and subscribes the caller", async () => {
     const { store, router } = deps();
     const reply = (await router.handle("Raider", "discord"))[0];

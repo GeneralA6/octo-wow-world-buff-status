@@ -48,6 +48,22 @@ describe("InMemorySubscriberStore", () => {
     expect((await store.get("raider"))?.delivery).toBe("offline"); // untouched
   });
 
+  it("defaults a new subscriber to all alert types", async () => {
+    const store = new InMemorySubscriberStore();
+    await store.add("Raider");
+    expect((await store.get("raider"))?.alerts).toEqual(["forming", "cleared"]);
+  });
+
+  it("updates alert preferences, including turning them all off", async () => {
+    const store = new InMemorySubscriberStore();
+    await store.add("Raider");
+    await store.update("raider", { alerts: ["cleared"] });
+    expect((await store.get("raider"))?.alerts).toEqual(["cleared"]);
+    await store.update("raider", { alerts: [] });
+    expect((await store.get("raider"))?.alerts).toEqual([]);
+    expect((await store.get("raider"))?.delivery).toBe("both"); // untouched
+  });
+
   it("does not update a name that isn't subscribed", async () => {
     const store = new InMemorySubscriberStore();
     expect(await store.update("Ghost", { delivery: "offline" })).toBe(false);

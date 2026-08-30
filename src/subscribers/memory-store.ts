@@ -1,4 +1,5 @@
 import {
+  DEFAULT_ALERTS,
   DEFAULT_DELIVERY,
   type Subscriber,
   type SubscriberStore,
@@ -17,6 +18,7 @@ export class InMemorySubscriberStore implements SubscriberStore {
       name: name.trim(),
       discordId: null,
       delivery: DEFAULT_DELIVERY,
+      alerts: [...DEFAULT_ALERTS],
       subscribedAt: new Date(),
     });
     return true;
@@ -41,6 +43,7 @@ export class InMemorySubscriberStore implements SubscriberStore {
       ...existing,
       ...(changes.discordId !== undefined ? { discordId: changes.discordId } : {}),
       ...(changes.delivery !== undefined ? { delivery: changes.delivery } : {}),
+      ...(changes.alerts !== undefined ? { alerts: [...changes.alerts] } : {}),
     });
     return true;
   }

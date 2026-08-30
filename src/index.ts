@@ -25,7 +25,7 @@ import { WhisperQueue } from "./chat/whisper-queue.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
 import { PendingLinks } from "./subscribers/pending-links.js";
-import type { Subscriber, SubscriberStore } from "./subscribers/store.js";
+import type { AlertType, Subscriber, SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 
 /** Client identity values that self-heal from the CDN across OctoWoW patches. */
@@ -207,6 +207,9 @@ async function runConnection(
       await push(message);
       if (!config.whispersEnabled) return;
 
+      // Only whisper/DM subscribers who want this alert type (the Discord channel
+      // post above went to everyone regardless).
+      const alertType: AlertType = event.kind === "raid-forming" ? "forming" : "cleared";
       let subscribers: Subscriber[] = [];
       try {
         subscribers = await store.all();
@@ -214,6 +217,7 @@ async function runConnection(
         logger.error(`subscribers: ${describeError(error)}`);
         return;
       }
+      subscribers = subscribers.filter((subscriber) => subscriber.alerts.includes(alertType));
       if (subscribers.length === 0) return;
 
       const line = formatBuffWhisper(event, cities, config.watchAreaName);

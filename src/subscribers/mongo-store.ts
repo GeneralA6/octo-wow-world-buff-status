@@ -1,6 +1,8 @@
 import { MongoClient } from "mongodb";
 import {
+  DEFAULT_ALERTS,
   DEFAULT_DELIVERY,
+  type AlertType,
   type DeliveryMode,
   type Subscriber,
   type SubscriberStore,
@@ -14,6 +16,8 @@ export interface SubscriberDoc {
   readonly name: string;
   readonly discordId: string | null;
   readonly delivery: DeliveryMode;
+  /** Optional: docs predating alert prefs have none, and default to all. */
+  readonly alerts?: readonly AlertType[];
   readonly subscribedAt: Date;
 }
 
@@ -37,7 +41,7 @@ export interface SubscriberDb {
   deleteByKey(key: string): Promise<DeleteOutcome>;
   countByKey(key: string): Promise<number>;
   getByKey(key: string): Promise<SubscriberDoc | null>;
-  setFields(key: string, fields: Partial<Pick<SubscriberDoc, "discordId" | "delivery">>): Promise<UpdateOutcome>;
+  setFields(key: string, fields: Partial<Pick<SubscriberDoc, "discordId" | "delivery" | "alerts">>): Promise<UpdateOutcome>;
   list(): Promise<SubscriberDoc[]>;
   close(): Promise<void>;
 }
@@ -46,7 +50,13 @@ const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "subscribers";
 
 function toSubscriber(doc: SubscriberDoc): Subscriber {
-  return { name: doc.name, discordId: doc.discordId, delivery: doc.delivery, subscribedAt: doc.subscribedAt };
+  return {
+    name: doc.name,
+    discordId: doc.discordId,
+    delivery: doc.delivery,
+    alerts: doc.alerts ? [...doc.alerts] : [...DEFAULT_ALERTS],
+    subscribedAt: doc.subscribedAt,
+  };
 }
 
 /** Subscriber store backed by MongoDB, via the {@link SubscriberDb} port. */
@@ -83,6 +93,7 @@ export class MongoSubscriberStore implements SubscriberStore {
       name: name.trim(),
       discordId: null,
       delivery: DEFAULT_DELIVERY,
+      alerts: [...DEFAULT_ALERTS],
       subscribedAt: new Date(),
     });
     return result.upsertedCount === 1;
@@ -110,9 +121,10 @@ export class MongoSubscriberStore implements SubscriberStore {
   async update(name: string, changes: SubscriberUpdate): Promise<boolean> {
     const key = subscriberKey(name);
     if (!key) return false;
-    const fields: { discordId?: string | null; delivery?: DeliveryMode } = {};
+    const fields: { discordId?: string | null; delivery?: DeliveryMode; alerts?: readonly AlertType[] } = {};
     if (changes.discordId !== undefined) fields.discordId = changes.discordId;
     if (changes.delivery !== undefined) fields.delivery = changes.delivery;
+    if (changes.alerts !== undefined) fields.alerts = changes.alerts;
     if (Object.keys(fields).length === 0) return this.has(name);
     return (await this.#db.setFields(key, fields)).matchedCount === 1;
   }
