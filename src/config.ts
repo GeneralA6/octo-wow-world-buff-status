@@ -10,6 +10,18 @@ function isGroupingMode(value: string): value is GroupingMode {
   return GROUPING_MODES.some((mode) => mode === value);
 }
 
+/**
+ * A city-parked yell listener: a second account whose only job is to hear its
+ * capital's buff yell. Each has its own credentials so they stay separate secrets.
+ */
+export interface ListenerConfig {
+  /** Short key from WOW_LISTENERS (e.g. "sw"), used in var names and logs. */
+  readonly key: string;
+  readonly account: string;
+  readonly password: string;
+  readonly characterName: string;
+}
+
 export interface BotConfig {
   readonly account: string;
   readonly password: string;
@@ -19,6 +31,8 @@ export interface BotConfig {
   readonly characterName: string;
   /** Dev toggle: when false the bot never logs the character in, freeing it for manual play. */
   readonly loginEnabled: boolean;
+  /** Extra accounts parked in capitals to hear each faction's buff yell. */
+  readonly listeners: readonly ListenerConfig[];
   /** Optional world-server override; when unset the realm list is used. */
   readonly worldHost: string | null;
   readonly worldPort: number | null;
@@ -102,6 +116,23 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   // play the character yourself without it fighting you for the one allowed session.
   const loginRaw = env.WOW_LOGIN_ENABLED?.trim().toLowerCase();
   const loginEnabled = loginRaw !== "false" && loginRaw !== "0" && loginRaw !== "none";
+
+  // Yell listeners: WOW_LISTENERS=sw,og names them, and each key K needs
+  // WOW_LISTENER_K_ACCOUNT / _PASSWORD / _CHARACTER.
+  const listeners: ListenerConfig[] = [];
+  const listenerKeys = (env.WOW_LISTENERS ?? "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter((key) => key.length > 0);
+  for (const key of listenerKeys) {
+    const prefix = `WOW_LISTENER_${key.toUpperCase()}`;
+    listeners.push({
+      key,
+      account: required(`${prefix}_ACCOUNT`),
+      password: required(`${prefix}_PASSWORD`),
+      characterName: required(`${prefix}_CHARACTER`),
+    });
+  }
 
   const worldHost = env.WOW_WORLD_HOST?.trim() || null;
   const worldPortRaw = env.WOW_WORLD_PORT?.trim();
@@ -191,6 +222,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     realm,
     characterName,
     loginEnabled,
+    listeners,
     worldHost,
     worldPort,
     integrityChecksum,

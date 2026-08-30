@@ -153,6 +153,33 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_ANNOUNCE_STARTUP: "false" }).announceStartup).toBe(false);
   });
 
+  it("defaults to no listeners", () => {
+    expect(loadConfig({ ...minimalEnv }).listeners).toEqual([]);
+  });
+
+  it("reads listener sessions named by WOW_LISTENERS", () => {
+    const config = loadConfig({
+      ...minimalEnv,
+      WOW_LISTENERS: "sw, og",
+      WOW_LISTENER_SW_ACCOUNT: "ONYXIABUFFSW",
+      WOW_LISTENER_SW_PASSWORD: "pw1",
+      WOW_LISTENER_SW_CHARACTER: "Onyxiabuffsw",
+      WOW_LISTENER_OG_ACCOUNT: "ONYXIABUFFOG",
+      WOW_LISTENER_OG_PASSWORD: "pw2",
+      WOW_LISTENER_OG_CHARACTER: "Onyxiabuffog",
+    });
+    expect(config.listeners).toEqual([
+      { key: "sw", account: "ONYXIABUFFSW", password: "pw1", characterName: "Onyxiabuffsw" },
+      { key: "og", account: "ONYXIABUFFOG", password: "pw2", characterName: "Onyxiabuffog" },
+    ]);
+  });
+
+  it("errors when a named listener is missing its credentials", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_LISTENERS: "sw" })).toThrow(
+      /WOW_LISTENER_SW_ACCOUNT is required[\s\S]*WOW_LISTENER_SW_PASSWORD is required[\s\S]*WOW_LISTENER_SW_CHARACTER is required/,
+    );
+  });
+
   it("enables login by default and disables it on false/0/none", () => {
     expect(loadConfig({ ...minimalEnv }).loginEnabled).toBe(true);
     for (const value of ["false", "0", "none"]) {
