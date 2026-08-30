@@ -127,6 +127,18 @@ describe("loadConfig", () => {
     );
   });
 
+  it("defaults the buff duration to 2h and accepts an override in minutes", () => {
+    expect(loadConfig({ ...minimalEnv }).buffDurationMs).toBe(120 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_BUFF_DURATION_MINUTES: "90" }).buffDurationMs).toBe(90 * 60_000);
+  });
+
+  it("defaults the raid-duration estimate to 45m and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidDurationEstimateMs).toBe(45 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_DURATION_MINUTES: "30" }).raidDurationEstimateMs).toBe(
+      30 * 60_000,
+    );
+  });
+
   it("defaults the raid detector to count and accepts temporal", () => {
     expect(loadConfig({ ...minimalEnv }).raidDetector).toBe("count");
     expect(loadConfig({ ...minimalEnv, WOW_RAID_DETECTOR: "temporal" }).raidDetector).toBe("temporal");

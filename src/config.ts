@@ -52,6 +52,10 @@ export interface BotConfig {
   readonly minRaidSize: number;
   /** Hysteresis floor: an active raid clears (and re-arms) when it drops below this. */
   readonly raidClearSize: number;
+  /** How long the Rallying Cry buff lasts, and blocks the next drop (the head window). */
+  readonly buffDurationMs: number;
+  /** Estimated Onyxia clear time, used to predict a forming raid's end until learned. */
+  readonly raidDurationEstimateMs: number;
   /** How to tell concurrent raids apart: auto (guild raids + a pickup pool), guild, or lair. */
   readonly raidGrouping: GroupingMode;
   /** Which detector drives alerts: "count" (hysteresis) or "temporal" (arrival/departure). */
@@ -170,6 +174,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     errors.push("WOW_RAID_CLEAR_SIZE must be less than WOW_MIN_RAID_SIZE");
   }
 
+  const buffDurationMs = intWithDefault("WOW_BUFF_DURATION_MINUTES", 120, 1) * 60_000;
+  const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
+
   const groupingRaw = env.WOW_RAID_GROUPING?.trim().toLowerCase();
   const raidGrouping: GroupingMode = groupingRaw && isGroupingMode(groupingRaw) ? groupingRaw : "auto";
   if (groupingRaw && !isGroupingMode(groupingRaw)) {
@@ -234,6 +241,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     watchAreaName,
     minRaidSize,
     raidClearSize,
+    buffDurationMs,
+    raidDurationEstimateMs,
     raidGrouping,
     raidDetector,
     announceStartup,
