@@ -78,10 +78,13 @@ describe("InMemorySubscriberStore", () => {
     await store.update("main", { discordId: "42" });
     await store.update("alt", { discordId: "42" });
     await store.update("other", { discordId: "99" });
+    expect((await store.findByDiscordId("42")).map((s) => s.name).sort()).toEqual(["Alt", "Main"]);
     const removed = await store.removeByDiscordId("42");
     expect(removed.sort()).toEqual(["Alt", "Main"]);
     expect(await store.has("Main")).toBe(false);
     expect(await store.has("Other")).toBe(true); // different id, untouched
     expect(await store.removeByDiscordId("nobody")).toEqual([]);
+    expect(await store.findByDiscordId("42")).toEqual([]); // all gone now
+    expect(await store.findByDiscordId("")).toEqual([]);
   });
 });

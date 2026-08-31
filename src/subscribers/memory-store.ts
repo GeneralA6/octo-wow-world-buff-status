@@ -41,6 +41,11 @@ export class InMemorySubscriberStore implements SubscriberStore {
     return removed;
   }
 
+  async findByDiscordId(discordId: string): Promise<Subscriber[]> {
+    if (!discordId) return [];
+    return [...this.#byKey.values()].filter((sub) => sub.discordId === discordId);
+  }
+
   async has(name: string): Promise<boolean> {
     return this.#byKey.has(subscriberKey(name));
   }

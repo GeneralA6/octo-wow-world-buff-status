@@ -124,6 +124,11 @@ export class MongoSubscriberStore implements SubscriberStore {
     return removed;
   }
 
+  async findByDiscordId(discordId: string): Promise<Subscriber[]> {
+    if (!discordId) return [];
+    return (await this.#db.list()).filter((doc) => doc.discordId === discordId).map(toSubscriber);
+  }
+
   async has(name: string): Promise<boolean> {
     const key = subscriberKey(name);
     if (!key) return false;

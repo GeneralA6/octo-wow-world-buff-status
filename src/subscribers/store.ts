@@ -70,6 +70,9 @@ export interface SubscriberStore {
   /** Remove every subscriber linked to a Discord id (unsubscribe from the Discord side).
    *  Returns the character names removed. */
   removeByDiscordId(discordId: string): Promise<string[]>;
+  /** Every subscriber linked to a Discord id — for routing Discord DM commands to their
+   *  character(s). Usually one; empty when the account has linked nothing. */
+  findByDiscordId(discordId: string): Promise<Subscriber[]>;
   has(name: string): Promise<boolean>;
   get(name: string): Promise<Subscriber | null>;
   /** Apply changes to an existing subscriber. False if they aren't subscribed. */
