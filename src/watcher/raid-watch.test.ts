@@ -48,4 +48,12 @@ describe("RaidWatch", () => {
     expect(after.clear).not.toBeNull();
     expect(after.clear?.peak).toBe(20);
   });
+
+  it("reports how long the raid in progress has been in", () => {
+    const watch = new RaidWatch({ minRaidSize: 15, grouping: "auto", clearSize: 5, clearSustainedMs: 5 * 60_000 });
+    const t = 1_000;
+    expect(watch.raidElapsedMs(t)).toBeNull();
+    watch.observe(raid(20, "Nightfall", 1), t, true);
+    expect(watch.raidElapsedMs(t + 5 * 60_000)).toBe(5 * 60_000);
+  });
 });

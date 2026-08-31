@@ -61,4 +61,10 @@ export class RaidWatch {
   activeRaids(): ActiveRaid[] {
     return this.#tracker.activeRaids();
   }
+
+  /** How long the raid in progress has been in the lair (form → now, spanning wipes), or
+   *  null if none is being tracked — for the status query. */
+  raidElapsedMs(now: number): number | null {
+    return this.#clears.elapsedMs(now);
+  }
 }

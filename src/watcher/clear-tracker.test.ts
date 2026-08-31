@@ -81,6 +81,16 @@ describe("ClearTracker", () => {
     expect(clear?.peak).toBe(34);
   });
 
+  it("reports elapsed time from form, and null when not tracking", () => {
+    const t = tracker();
+    expect(t.elapsedMs(5 * MIN)).toBeNull();
+    t.observe(R(20), 1 * MIN, false);
+    expect(t.elapsedMs(10 * MIN)).toBe(9 * MIN); // form at 1m → 9m elapsed at 10m
+    t.observe(R(0), 20 * MIN, false);
+    t.observe(R(0), 26 * MIN, false); // clears
+    expect(t.elapsedMs(30 * MIN)).toBeNull(); // reset
+  });
+
   it("forms a fresh raid after a clear, timed from the NEW formation", () => {
     const t = tracker();
     t.observe(R(30), 0, false);

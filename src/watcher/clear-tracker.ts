@@ -57,6 +57,11 @@ export class ClearTracker {
     return this.#formedAt !== null;
   }
 
+  /** How long the tracked raid has been in (form → now, spanning wipes), or null if none. */
+  elapsedMs(now: number): number | null {
+    return this.#formedAt === null ? null : now - this.#formedAt;
+  }
+
   /**
    * Feed one poll's players (names in the watched zone). Returns a ConfirmedClear the moment
    * a sustained departure of the roster is confirmed, else null. `blackout` discards whatever
