@@ -62,6 +62,7 @@ import {
 } from "./watcher/broadcast-ledger.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
+import { InMemoryGreetLedger, MongoGreetLedger, type GreetLedger } from "./chat/greet-ledger.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
@@ -792,7 +793,7 @@ async function runListener(
         // not answer commands — that's Bufftracker — so this is a greet-only surface.
         onWhisper: (sender, text) => {
           logger.info(`whisper from ${sender}: ${JSON.stringify(text)} (greet-only; commands go to ${config.characterName})`);
-          outreach.onListenerContact(sender);
+          void outreach.onListenerContact(sender).catch((error) => logger.error(`outreach: ${describeError(error)}`));
         },
         onWorldObjects:
           listener.onLogin === "interact"
@@ -1019,6 +1020,18 @@ async function main(): Promise<void> {
     }
   }
 
+  // Who Bufftracker has already greeted after a listener contact — persisted so a nightly
+  // redeploy doesn't re-introduce itself to a regular of the capital.
+  let greetLedger: GreetLedger = new InMemoryGreetLedger();
+  if (config.mongodbUri) {
+    try {
+      greetLedger = await MongoGreetLedger.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("greetings: remembering greeted players in MongoDB");
+    } catch (error) {
+      logger.error(`greetings: MongoDB connect failed (${describeError(error)}); remembering in memory`);
+    }
+  }
+
   // The watcher fills this once in world, so a listener-heard buff drop can be whispered.
   const buffDropSink: BuffDropSink = { notify: null };
   // Each city listener registers its /yell here on login (and clears it on disconnect), so
@@ -1088,6 +1101,7 @@ async function main(): Promise<void> {
       guildInviteEnabled: config.guildInviteEnabled,
       author: config.author,
     },
+    greetLedger,
     logger,
   );
   const services: ConnectionServices = {
@@ -1139,6 +1153,7 @@ async function main(): Promise<void> {
       feedbackStore.close(),
       raidCounterStore.close(),
       raidStateStore.close(),
+      greetLedger.close(),
     ]).finally(() => process.exit(0));
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
