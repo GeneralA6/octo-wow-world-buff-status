@@ -173,11 +173,12 @@ describe("CommandRouter", () => {
     expect((await store.get("Raider"))?.discordId).toBe("123456789012345678");
   });
 
-  it("'discord <not-an-id>' explains it needs the numeric id", async () => {
+  it("'discord <not-an-id>' explains how to get the numeric id", async () => {
     const { router } = deps();
     const reply = (await router.handle("Raider", "discord General_A6#6266")).join(" ");
-    expect(reply).toMatch(/18-digit/i);
-    expect(reply).toContain("General_A6#6266");
+    expect(reply).toContain("General_A6#6266"); // echoes what they sent
+    expect(reply).toMatch(/not your username/i); // it's an id, not the username
+    expect(reply).toMatch(/copy user id/i); // ...and how to get it
   });
 
   it("'discord off' unlinks", async () => {
