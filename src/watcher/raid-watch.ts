@@ -1,5 +1,5 @@
 import type { WhoPlayer } from "../protocol/who.js";
-import { ClearTracker, type ConfirmedClear } from "./clear-tracker.js";
+import { ClearTracker, type ClearTrackerState, type ConfirmedClear } from "./clear-tracker.js";
 import { PresenceTracker, type PresenceChange } from "./presence.js";
 import { RaidSessions } from "./raid-sessions.js";
 import { RaidTracker, type ActiveRaid, type GroupingMode, type RaidEvent } from "./raid-tracker.js";
@@ -77,5 +77,15 @@ export class RaidWatch {
   /** The reference number of the raid in progress, or null if none — for the status query. */
   raidNumber(): number | null {
     return this.#clears.number;
+  }
+
+  /** The raid in progress as a persistable snapshot, or null — to survive a restart. */
+  raidStateSnapshot(): ClearTrackerState | null {
+    return this.#clears.snapshot();
+  }
+
+  /** Resume a persisted raid on startup, so a mid-raid restart still catches its exit. */
+  restoreRaidState(state: ClearTrackerState): void {
+    this.#clears.restore(state);
   }
 }

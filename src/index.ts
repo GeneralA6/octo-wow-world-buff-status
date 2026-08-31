@@ -51,6 +51,11 @@ import {
   MongoRaidCounterStore,
   type RaidCounterStore,
 } from "./watcher/raid-counter-store.js";
+import {
+  InMemoryRaidStateStore,
+  MongoRaidStateStore,
+  type RaidStateStore,
+} from "./watcher/raid-state-store.js";
 import { factionOfRace, splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { shouldAlertForRaid } from "./watcher/buff-gate.js";
 import {
@@ -174,6 +179,7 @@ interface ConnectionServices {
   readonly lanes: readonly DetectionLane[];
   readonly buffStore: BuffStore;
   readonly broadcasts: BroadcastLedger;
+  readonly raidStateStore: RaidStateStore;
   readonly durationStore: DurationStore;
   readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
@@ -214,7 +220,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, buffStore, broadcasts, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, client } =
+  const { lanes, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, client } =
     services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
@@ -445,6 +451,11 @@ async function runConnection(
       raidDurationMs: number,
     ): Promise<void> => {
       const obs = lane.watch.observe(lane.players(split), now, complete);
+
+      // Persist the raid in progress (or clear it) so a restart resumes exactly here.
+      void raidStateStore
+        .save(lane.label, lane.watch.raidStateSnapshot())
+        .catch((error) => logger.debug(`raid state save: ${describeError(error)}`));
 
       // Followed a blind gap: RaidWatch already re-baselined; skip this read so a
       // crash-and-refill isn't read as a raid starting or ending.
@@ -960,6 +971,17 @@ async function main(): Promise<void> {
     return raidCounter;
   };
 
+  // The raid in progress per lane — persisted so a restart RESUMES it (keeps its number,
+  // form time and roster) instead of orphaning it and missing the exit alert/recap.
+  let raidStateStore: RaidStateStore = new InMemoryRaidStateStore();
+  if (config.mongodbUri) {
+    try {
+      raidStateStore = await MongoRaidStateStore.connect(config.mongodbUri, config.mongodbDb);
+    } catch (error) {
+      logger.error(`raid state: MongoDB connect failed (${describeError(error)}); not resuming across restarts`);
+    }
+  }
+
   const watchOptions: RaidWatchOptions = {
     minRaidSize: config.minRaidSize,
     grouping: config.raidGrouping,
@@ -981,6 +1003,15 @@ async function main(): Promise<void> {
             players: (s) => [...s.alliance, ...s.horde, ...s.unknown],
           },
         ];
+
+  // Resume any raid that was in progress when we last stopped, so its exit is still caught.
+  for (const lane of lanes) {
+    const state = await raidStateStore.load(lane.label);
+    if (state) {
+      lane.watch.restoreRaidState(state);
+      logger.info(`resumed raid #${state.number ?? "?"} on lane ${lane.label} (${state.roster.length} members, from before restart)`);
+    }
+  }
 
   // Client identity values; re-resolved from the CDN if the server rejects them.
   const client: ClientValues = {
@@ -1163,6 +1194,7 @@ async function main(): Promise<void> {
     lanes,
     buffStore,
     broadcasts,
+    raidStateStore,
     durationStore,
     snapshots,
     store,
@@ -1284,6 +1316,7 @@ async function main(): Promise<void> {
       durationStore.close(),
       feedbackStore.close(),
       raidCounterStore.close(),
+      raidStateStore.close(),
     ]).finally(() => process.exit(0));
   };
   process.on("SIGINT", () => shutdown("SIGINT"));

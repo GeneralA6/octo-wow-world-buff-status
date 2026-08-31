@@ -103,6 +103,41 @@ describe("ClearTracker", () => {
     expect(t.observe(R(0), 16 * MIN, false)?.number).toBeNull();
   });
 
+  it("snapshots a raid and RESUMES it after a restart, still catching the clear", () => {
+    const a = tracker();
+    a.observe(R(30), 0, false); // forms
+    a.observe(R(30), 20 * MIN, false); // running
+    const snap = a.snapshot();
+    expect(snap).not.toBeNull();
+
+    // A fresh tracker (simulating a restart) resumes from the snapshot.
+    const b = tracker();
+    expect(b.tracking).toBe(false);
+    b.restore(snap!);
+    expect(b.tracking).toBe(true);
+    expect(b.elapsedMs(20 * MIN)).toBe(20 * MIN); // same form time
+
+    // The raid leaves and stays gone — the resumed tracker confirms the clear.
+    b.observe(R(0), 40 * MIN, false);
+    const clear = b.observe(R(0), 46 * MIN, false);
+    expect(clear?.durationMs).toBe(40 * MIN); // 0 → 40m, spanning the restart
+  });
+
+  it("snapshot is null when no raid is tracked, and restore is ignored mid-raid", () => {
+    const t = tracker();
+    expect(t.snapshot()).toBeNull();
+    t.observe(R(30), 0, false);
+    const other: import("./clear-tracker.js").ClearTrackerState = {
+      formedAt: 999,
+      number: 5,
+      roster: ["x"],
+      peak: 99,
+      belowSince: null,
+    };
+    t.restore(other); // ignored — already tracking
+    expect(t.elapsedMs(10 * MIN)).toBe(10 * MIN); // kept its own form time (0), not 999
+  });
+
   it("reports elapsed time from form, and null when not tracking", () => {
     const t = tracker();
     expect(t.elapsedMs(5 * MIN)).toBeNull();

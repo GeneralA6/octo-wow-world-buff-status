@@ -40,6 +40,16 @@ export interface ConfirmedClear {
   readonly number: number | null;
 }
 
+/** A tracked raid's full state, so it survives a restart (persisted to the DB). Only ever
+ *  produced while a raid is in progress; the tracker resumes exactly where it left off. */
+export interface ClearTrackerState {
+  readonly formedAt: number;
+  readonly number: number | null;
+  readonly roster: readonly string[];
+  readonly peak: number;
+  readonly belowSince: number | null;
+}
+
 export class ClearTracker {
   readonly #formAt: number;
   readonly #clearFloor: number;
@@ -67,6 +77,29 @@ export class ClearTracker {
   /** The current raid's reference number, or null if none is tracked / numbering is off. */
   get number(): number | null {
     return this.#number;
+  }
+
+  /** A snapshot of the raid in progress for persistence, or null if none is being tracked. */
+  snapshot(): ClearTrackerState | null {
+    if (this.#formedAt === null) return null;
+    return {
+      formedAt: this.#formedAt,
+      number: this.#number,
+      roster: [...this.#roster],
+      peak: this.#peak,
+      belowSince: this.#belowSince,
+    };
+  }
+
+  /** Resume a persisted raid (after a restart), so its exit is still detected and it keeps
+   *  its number/form-time. Ignored if a raid is already being tracked. */
+  restore(state: ClearTrackerState): void {
+    if (this.#formedAt !== null) return;
+    this.#formedAt = state.formedAt;
+    this.#number = state.number;
+    this.#roster = new Set(state.roster);
+    this.#peak = state.peak;
+    this.#belowSince = state.belowSince;
   }
 
   /** How long the tracked raid has been in (form → now, spanning wipes), or null if none. */
