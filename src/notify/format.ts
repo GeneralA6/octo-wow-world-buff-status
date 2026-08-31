@@ -128,6 +128,13 @@ export function formatCapitalStatusYell(
   buffPossible: boolean,
 ): string {
   const city = CITY_FOR[faction];
+  // Idle (no buff, no raid): one concise line — the composable pieces double up on "raid".
+  if (cooldownActiveMsLeft === null && !raid) {
+    return (
+      `[Onyxia] All quiet in ${city} - no Rallying Cry up, no raid in the lair. ` +
+      `Whisper Bufftracker "subscribe" (or "discord") and I'll ping you when one's coming.`
+    );
+  }
   const cooldown =
     cooldownActiveMsLeft !== null
       ? `Rallying Cry cooldown in ${city}: ~${humanClock(cooldownActiveMsLeft)} until a fresh one can drop`

@@ -152,10 +152,12 @@ describe("formatCapitalStatusYell", () => {
     expect(y).toMatch(/one may drop when they clear, park here!/);
   });
 
-  it("ready + no raid: says a fresh one waits on a raid clearing", () => {
+  it("ready + no raid: one concise 'all quiet' line, no doubled-up raid mention", () => {
     const y = formatCapitalStatusYell("alliance", null, null, false);
-    expect(y).toMatch(/a fresh Rallying Cry can drop in Stormwind as soon as a raid clears/i);
-    expect(y).toContain("No raid in the lair");
+    expect(y).toMatch(/all quiet in Stormwind/i);
+    expect(y).toMatch(/no raid in the lair/i);
+    expect(y).toMatch(/subscribe.*discord/);
+    expect(y).not.toMatch(/as soon as a raid clears/i); // the verbose overlap is gone
   });
 
   it("ready + raid: a fresh one can drop now, with the park nudge", () => {
