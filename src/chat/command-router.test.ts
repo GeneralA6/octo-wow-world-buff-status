@@ -74,6 +74,18 @@ describe("CommandRouter", () => {
     expect(reply).toMatch(/recruit/i);
   });
 
+  it("sends a guild invite on 'invite' when the capability is wired, else says it can't", async () => {
+    const { router } = deps();
+    expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
+    const invited: string[] = [];
+    router.setGuildInvite((name) => invited.push(name));
+    const reply = (await router.handle("Raider", "invite"))[0];
+    expect(invited).toEqual(["Raider"]);
+    expect(reply).toContain("Rage Quit");
+    router.setGuildInvite(null);
+    expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
+  });
+
   it("answers a buff question with a subscribe nudge", async () => {
     const { router } = deps();
     const reply = (await router.handle("Raider", "when's the buff coming?"))[0];

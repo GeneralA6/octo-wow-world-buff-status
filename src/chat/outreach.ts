@@ -13,7 +13,7 @@ export type GuildInviteFn = (target: string) => void;
 export function introLines(config: OutreachConfig): string[] {
   return [
     `Hi! I'm Bufftracker — I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me "subscribe" and I'll ping you in-game when it's time.`,
-    `Want it even when you're offline? Whisper me "discord" to link your Discord, and I'll DM you the buff so you never miss one. Made by <${config.guildName}> for the ${config.community} community, and we're recruiting! Whisper "help" for more.`,
+    `Want it even when you're offline? Whisper me "discord" to link Discord — I'll DM you so you never miss a buff. <${config.guildName}> is recruiting for the ${config.community} community — whisper "invite" to join! "help" for more.`,
   ];
 }
 

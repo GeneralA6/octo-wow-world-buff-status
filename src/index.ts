@@ -214,6 +214,7 @@ async function runConnection(
       if (readyTimer) clearTimeout(readyTimer);
       whisperQueue?.stop();
       outreach.setChannel(null, null); // watcher going away — stop greeting through it
+      router.setGuildInvite(null); // and stop offering guild invites until reconnected
       clearOfflinePending();
       if (error) reject(error);
       else resolve();
@@ -443,12 +444,14 @@ async function runConnection(
           logger.info(
             `in world; watching ${config.watchAreaName} about every ${config.pollIntervalMs / 1000}s`,
           );
-          // Offer Bufftracker's outbound channel so listeners can greet players through it.
+          // Offer Bufftracker's outbound channel so listeners can greet players through it,
+          // and give the command router the guild-invite capability for the "invite" command.
           if (config.whispersEnabled) {
             outreach.setChannel(
               (nameTo, msg) => whisperQueue?.enqueue(nameTo, msg),
               (nameTo) => world.guildInvite(nameTo),
             );
+            router.setGuildInvite((nameTo) => world.guildInvite(nameTo));
           }
           const poll = async (): Promise<void> => {
             try {

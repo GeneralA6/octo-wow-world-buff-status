@@ -51,9 +51,17 @@ const MODE_ALIASES: Record<string, DeliveryMode> = {
 
 export class CommandRouter {
   readonly #deps: CommandDeps;
+  // Guild invites can only be sent by the connected watcher, which registers this
+  // when it reaches world and clears it on disconnect. Null = can't invite right now.
+  #guildInvite: ((name: string) => void) | null = null;
 
   constructor(deps: CommandDeps) {
     this.#deps = deps;
+  }
+
+  /** The watcher offers/withdraws its guild-invite capability as it connects/drops. */
+  setGuildInvite(fn: ((name: string) => void) | null): void {
+    this.#guildInvite = fn;
   }
 
   async handle(sender: string, text: string): Promise<string[]> {
@@ -90,6 +98,9 @@ export class CommandRouter {
         const ok = await linker.confirmFromWhisper(sender, arg);
         return [ok ? this.#linkedLine() : `That code didn't match. Whisper "discord" to start again.`];
       }
+      case "invite":
+      case "join":
+        return this.#invite(sender);
       case "mode":
         return this.#mode(sender, arg);
       case "notify":
@@ -116,6 +127,7 @@ export class CommandRouter {
           `I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me:`,
           `subscribe — start getting alerts (unsubscribe anytime to stop)`,
           `discord — link Discord for DMs. Best combo: link it, then "mode offline" and I'll DM you ONLY when you're logged out — so you never miss a buff, even away from the game.`,
+          `invite — join <${this.#deps.guildName}>, the guild that runs me (we're recruiting!)`,
           `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), me (your settings).`,
         ];
       default: {
@@ -230,6 +242,17 @@ export class CommandRouter {
     return [`"${t}" ${wantOn ? "ON" : "OFF"}. You now get: ${alerts.length ? alerts.join(", ") : "nothing"}.`];
   }
 
+  /** Send the caller a guild invite. Only works while the watcher is in world; if it
+   *  is offline, or Bufftracker lacks invite rights in the guild, nothing is sent. */
+  #invite(sender: string): string[] {
+    const { guildName } = this.#deps;
+    if (!this.#guildInvite) {
+      return [`I can't send a guild invite right now — try again in a moment.`];
+    }
+    this.#guildInvite(sender);
+    return [`Invite to <${guildName}> sent — accept the popup and you're in. Welcome aboard!`];
+  }
+
   /** Act on a natural-language intent — re-dispatching to the canonical command where one exists. */
   async #handleIntent(intent: Intent, sender: string): Promise<string[]> {
     const { areaName, guildName, community } = this.#deps;
@@ -242,7 +265,7 @@ export class CommandRouter {
       case "guild":
         return [
           `We're <${guildName}>, a ${community} community guild, and we're recruiting! ` +
-            `Whisper "subscribe" for buff alerts — an officer will get you an invite.`,
+            `Whisper "invite" and I'll send you an invite right now — and "subscribe" for buff alerts.`,
         ];
       case "buff":
         return [
