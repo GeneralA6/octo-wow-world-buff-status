@@ -18,6 +18,8 @@ export interface RaidWatchOptions {
   readonly clearSize: number;
   /** How long the roster must stay gone for a departure to count as a real clear (not a wipe). */
   readonly clearSustainedMs: number;
+  /** Assigns the next raid reference number when a raid forms. Omit to leave raids unnumbered. */
+  readonly nextRaidNumber?: () => number;
 }
 
 export interface RaidObservation {
@@ -37,7 +39,11 @@ export class RaidWatch {
   constructor(options: RaidWatchOptions) {
     this.#tracker = new RaidTracker(options.minRaidSize, options.grouping, options.clearSize);
     this.#sessions = new RaidSessions({ formAt: options.minRaidSize });
-    this.#clears = new ClearTracker({ formAt: options.minRaidSize, sustainedMs: options.clearSustainedMs });
+    this.#clears = new ClearTracker({
+      formAt: options.minRaidSize,
+      sustainedMs: options.clearSustainedMs,
+      nextNumber: options.nextRaidNumber,
+    });
   }
 
   observe(players: readonly WhoPlayer[], now: number, complete: boolean): RaidObservation {
@@ -66,5 +72,10 @@ export class RaidWatch {
    *  null if none is being tracked — for the status query. */
   raidElapsedMs(now: number): number | null {
     return this.#clears.elapsedMs(now);
+  }
+
+  /** The reference number of the raid in progress, or null if none — for the status query. */
+  raidNumber(): number | null {
+    return this.#clears.number;
   }
 }

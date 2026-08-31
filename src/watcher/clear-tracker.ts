@@ -27,6 +27,8 @@ export interface ClearTrackerOptions {
   readonly clearFloor?: number;
   /** Roster members must stay below `clearFloor` this long to confirm a clear (not a wipe). */
   readonly sustainedMs: number;
+  /** Assigns the next monotonic raid number when a raid forms. Omit to leave raids unnumbered. */
+  readonly nextNumber?: () => number;
 }
 
 export interface ConfirmedClear {
@@ -34,14 +36,18 @@ export interface ConfirmedClear {
   readonly durationMs: number;
   /** The plateau peak — the true raid size, not a wipe trough. */
   readonly peak: number;
+  /** The raid's reference number, or null if numbering isn't configured. */
+  readonly number: number | null;
 }
 
 export class ClearTracker {
   readonly #formAt: number;
   readonly #clearFloor: number;
   readonly #sustainedMs: number;
+  readonly #nextNumber?: () => number;
 
   #formedAt: number | null = null;
+  #number: number | null = null;
   #roster = new Set<string>(); // everyone seen as part of this raid (grows; survives flicker)
   #peak = 0;
   #belowSince: number | null = null; // when the roster's presence first fell below strength
@@ -50,11 +56,17 @@ export class ClearTracker {
     this.#formAt = options.formAt;
     this.#clearFloor = options.clearFloor ?? options.formAt;
     this.#sustainedMs = options.sustainedMs;
+    this.#nextNumber = options.nextNumber;
   }
 
   /** True while a raid is being tracked (formed, not yet cleared). */
   get tracking(): boolean {
     return this.#formedAt !== null;
+  }
+
+  /** The current raid's reference number, or null if none is tracked / numbering is off. */
+  get number(): number | null {
+    return this.#number;
   }
 
   /** How long the tracked raid has been in (form → now, spanning wipes), or null if none. */
@@ -77,6 +89,7 @@ export class ClearTracker {
     if (this.#formedAt === null) {
       if (names.length >= this.#formAt) {
         this.#formedAt = now;
+        this.#number = this.#nextNumber?.() ?? null;
         this.#roster = new Set(names);
         this.#peak = names.length;
         this.#belowSince = null;
@@ -103,7 +116,11 @@ export class ClearTracker {
       return null;
     }
     if (now - this.#belowSince >= this.#sustainedMs) {
-      const clear: ConfirmedClear = { durationMs: this.#belowSince - this.#formedAt, peak: this.#peak };
+      const clear: ConfirmedClear = {
+        durationMs: this.#belowSince - this.#formedAt,
+        peak: this.#peak,
+        number: this.#number,
+      };
       this.#reset();
       return clear;
     }
@@ -112,6 +129,7 @@ export class ClearTracker {
 
   #reset(): void {
     this.#formedAt = null;
+    this.#number = null;
     this.#roster = new Set();
     this.#peak = 0;
     this.#belowSince = null;

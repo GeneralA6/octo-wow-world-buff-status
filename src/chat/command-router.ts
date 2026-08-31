@@ -71,6 +71,8 @@ export interface CommandDeps {
   readonly onFeedback?: (from: string, text: string) => void;
   /** How long the raid in progress has been in the lair (form → now), or null if none — for status. */
   readonly raidElapsed?: () => number | null;
+  /** The reference number of the raid in progress, or null if none — for status. */
+  readonly raidNumber?: () => number | null;
   /** Per-faction buff cooldown for status — how long until a fresh Rallying Cry can drop. */
   readonly buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
 }
@@ -233,15 +235,16 @@ export class CommandRouter {
   /** Live-state query: what's raiding the lair now (and how long they've been in), and how
    *  long until a fresh Rallying Cry can drop in each capital. */
   async #status(): Promise<string[]> {
-    const { activeRaids, areaName, raidElapsed, buffCooldowns } = this.#deps;
+    const { activeRaids, areaName, raidElapsed, raidNumber, buffCooldowns } = this.#deps;
     const raids = activeRaids();
     const elapsed = raidElapsed?.() ?? null;
+    const number = raidNumber?.() ?? null;
     const lines: string[] = [];
-    if (raids.length === 0) {
+    if (raids.length === 0 && number === null) {
       lines.push(`No raid in ${areaName} right now.`);
     } else {
-      const roster = raids.map((raid) => raid.label).join(", ");
-      lines.push(`${areaName} now: ${roster}${elapsed !== null ? ` (in for ~${humanMins(elapsed)})` : ""}.`);
+      const id = number !== null ? `raid #${number}` : raids.map((raid) => raid.label).join(", ");
+      lines.push(`${areaName} now: ${id}${elapsed !== null ? ` (in for ~${humanMins(elapsed)})` : ""}.`);
     }
     if (buffCooldowns) {
       const part = (await buffCooldowns())

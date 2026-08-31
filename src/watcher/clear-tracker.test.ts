@@ -81,6 +81,28 @@ describe("ClearTracker", () => {
     expect(clear?.peak).toBe(34);
   });
 
+  it("assigns a reference number at form, exposes it, and carries it on the clear", () => {
+    let n = 40;
+    const t = new ClearTracker({ formAt: 15, sustainedMs: 5 * MIN, nextNumber: () => ++n });
+    expect(t.number).toBeNull();
+    t.observe(R(20), 0, false); // forms → #41
+    expect(t.number).toBe(41);
+    t.observe(R(0), 10 * MIN, false);
+    const clear = t.observe(R(0), 16 * MIN, false);
+    expect(clear?.number).toBe(41);
+    expect(t.number).toBeNull(); // reset
+    t.observe(C(20), 30 * MIN, false); // next raid → #42
+    expect(t.number).toBe(42);
+  });
+
+  it("leaves raids unnumbered when no counter is configured", () => {
+    const t = tracker();
+    t.observe(R(20), 0, false);
+    expect(t.number).toBeNull();
+    t.observe(R(0), 10 * MIN, false);
+    expect(t.observe(R(0), 16 * MIN, false)?.number).toBeNull();
+  });
+
   it("reports elapsed time from form, and null when not tracking", () => {
     const t = tracker();
     expect(t.elapsedMs(5 * MIN)).toBeNull();

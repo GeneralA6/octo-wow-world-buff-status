@@ -56,4 +56,18 @@ describe("RaidWatch", () => {
     watch.observe(raid(20, "Nightfall", 1), t, true);
     expect(watch.raidElapsedMs(t + 5 * 60_000)).toBe(5 * 60_000);
   });
+
+  it("numbers the raid in progress from the injected counter", () => {
+    let n = 833;
+    const watch = new RaidWatch({
+      minRaidSize: 15,
+      grouping: "auto",
+      clearSize: 5,
+      clearSustainedMs: 5 * 60_000,
+      nextRaidNumber: () => ++n,
+    });
+    expect(watch.raidNumber()).toBeNull();
+    watch.observe(raid(20, "Nightfall", 1), 1_000, true);
+    expect(watch.raidNumber()).toBe(834);
+  });
 });

@@ -44,6 +44,11 @@ import {
   type DurationStore,
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
+import {
+  InMemoryRaidCounterStore,
+  MongoRaidCounterStore,
+  type RaidCounterStore,
+} from "./watcher/raid-counter-store.js";
 import { factionOfRace, splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { shouldAlertForRaid } from "./watcher/buff-gate.js";
 import {
@@ -885,11 +890,30 @@ async function main(): Promise<void> {
   const notifier: Notifier = new DiscordWebhookNotifier(config.discordWebhookUrl, {
     mentionRoleId: config.discordMentionRoleId,
   });
+
+  // Monotonic raid reference number (#834) — persisted so it climbs across restarts. Seeded
+  // once, bumped in memory when a raid forms, saved as it goes.
+  let raidCounterStore: RaidCounterStore = new InMemoryRaidCounterStore();
+  if (config.mongodbUri) {
+    try {
+      raidCounterStore = await MongoRaidCounterStore.connect(config.mongodbUri, config.mongodbDb);
+    } catch (error) {
+      logger.error(`raid counter: MongoDB connect failed (${describeError(error)}); numbering in memory`);
+    }
+  }
+  let raidCounter = await raidCounterStore.load();
+  const nextRaidNumber = (): number => {
+    raidCounter += 1;
+    void raidCounterStore.save(raidCounter).catch((error) => logger.debug(`raid counter save: ${describeError(error)}`));
+    return raidCounter;
+  };
+
   const watchOptions: RaidWatchOptions = {
     minRaidSize: config.minRaidSize,
     grouping: config.raidGrouping,
     clearSize: config.raidClearSize,
     clearSustainedMs: config.raidClearSustainedMs,
+    nextRaidNumber,
   };
   const lanes: DetectionLane[] =
     config.realmType === "faction"
@@ -1051,6 +1075,13 @@ async function main(): Promise<void> {
         .filter((ms): ms is number => ms !== null);
       return elapsed.length > 0 ? Math.max(...elapsed) : null;
     },
+    raidNumber: () => {
+      for (const lane of lanes) {
+        const n = lane.watch.raidNumber();
+        if (n !== null) return n;
+      }
+      return null;
+    },
     buffCooldowns: async () => {
       const now = new Date();
       return Promise.all(
@@ -1200,6 +1231,7 @@ async function main(): Promise<void> {
       broadcasts.close(),
       durationStore.close(),
       feedbackStore.close(),
+      raidCounterStore.close(),
     ]).finally(() => process.exit(0));
   };
   process.on("SIGINT", () => shutdown("SIGINT"));

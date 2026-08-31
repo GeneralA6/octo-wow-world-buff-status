@@ -18,6 +18,7 @@ function deps(
     mintInvite?: (character: string) => Promise<string | null>;
     withFeedback?: boolean;
     raidElapsed?: () => number | null;
+    raidNumber?: () => number | null;
     buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
   } = {},
 ) {
@@ -34,6 +35,7 @@ function deps(
     store,
     activeRaids: () => tracker.activeRaids(),
     raidElapsed: opts.raidElapsed,
+    raidNumber: opts.raidNumber,
     buffCooldowns: opts.buffCooldowns,
     areaName: "Onyxia's Lair",
     guildName: "Rage Quit",
@@ -147,9 +149,10 @@ describe("CommandRouter", () => {
     });
   });
 
-  it("reports the active raid, how long it's been in, and the buff cooldown on status", async () => {
+  it("reports the raid #, how long it's been in, and the buff cooldown on status", async () => {
     const { tracker, router } = deps({
       raidElapsed: () => 42 * 60_000,
+      raidNumber: () => 834,
       buffCooldowns: async () => [
         { faction: "alliance", activeMsLeft: null }, // ready now
         { faction: "horde", activeMsLeft: 72 * 60_000 }, // up, 1h12m left
@@ -157,7 +160,7 @@ describe("CommandRouter", () => {
     });
     tracker.update(crowd("Nightfall", 20));
     const reply = await router.handle("Raider", "status");
-    expect(reply[0]).toMatch(/<Nightfall>.*in for ~42m/);
+    expect(reply[0]).toMatch(/raid #834.*in for ~42m/);
     expect(reply[0]).not.toMatch(/\b20\b/); // player count is redundant to a user — omitted
     expect(reply[1]).toContain("Stormwind: a fresh buff can drop now");
     expect(reply[1]).toMatch(/Orgrimmar: buff up, ~1h12m/);
