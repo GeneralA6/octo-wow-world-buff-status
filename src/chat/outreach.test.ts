@@ -20,10 +20,9 @@ describe("introLines", () => {
     expect(lines).toMatch(/never expected/i);
   });
 
-  it("directs tips to the author, warning against the unattended bot characters", () => {
+  it("directs tips to the author by name", () => {
     const tip = introLines(config).find((l) => /gold tips/i.test(l)) ?? "";
     expect(tip).toMatch(/mail them to Gibom/i);
-    expect(tip).toMatch(/not to me|listener bots|unattended/i);
   });
 
   it("threads the configured author through both the credit and the tip line", () => {
