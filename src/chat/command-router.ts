@@ -162,7 +162,7 @@ export class CommandRouter {
       if (!DISCORD_ID.test(arg)) {
         return [
           `"${arg}" isn't your Discord ID — that's a NUMBER, not your username.`,
-          `Get it in Discord: Settings → Advanced → turn on Developer Mode, then right-click your name → Copy User ID. Then whisper "discord <that number>".`,
+          `Get it in Discord: Settings → Developer → turn on Developer Mode, then right-click your name → Copy User ID. Then whisper "discord <that number>".`,
         ];
       }
       switch (await linker.startIdLink(sender, arg)) {
@@ -186,7 +186,7 @@ export class CommandRouter {
     const lines = [
       `Get buff alerts on Discord — easiest: in our server, type "/link ${sender}" and you're done.${server ? ` (Not in the server? Join ${server} first.)` : ""}`,
       `Or from WoW: whisper me "discord <your Discord ID>" and I'll DM you a code to whisper back. Your ID is a NUMBER, not your username —`,
-      `get it in Discord: Settings → Advanced → turn on Developer Mode, then right-click your name → Copy User ID.`,
+      `get it in Discord: Settings → Developer → turn on Developer Mode, then right-click your name → Copy User ID.`,
     ];
     if (mintInvite) {
       const url = await mintInvite(sender);
