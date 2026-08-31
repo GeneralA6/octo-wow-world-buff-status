@@ -11,6 +11,26 @@ function humanDuration(ms: number): string {
   return m % 60 === 0 ? `${m / 60}h` : `${m} min`;
 }
 
+/** Compact clock duration: "42m", "1h22m", "2h" — for status/yells/recaps. */
+export function humanClock(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem === 0 ? `${h}h` : `${h}h${rem}m`;
+}
+
+/** A raid the ClearTracker confirmed as really finished — informational recap with the
+ *  reference number and how long it took (spanning any wipes). Discord channel post. */
+export function formatRaidFinished(raidNumber: number | null, durationMs: number, areaName: string): NotifyMessage {
+  const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
+  return {
+    kind: "info",
+    title: `🏁 ${id} cleared ${areaName}`,
+    body: `${id} cleared ${areaName} after ~${humanClock(durationMs)}. A Rallying Cry may drop soon once the head is turned in.`,
+  };
+}
+
 /**
  * A buff just dropped (a listener heard the yell). Says which city it's up in and,
  * crucially, the earliest a fresh one can drop again — which is when this one wears

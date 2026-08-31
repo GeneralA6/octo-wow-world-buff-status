@@ -9,7 +9,9 @@ import {
   formatBuffWhisper,
   formatFeedbackPost,
   formatRaidEvent,
+  formatRaidFinished,
   formatRaidWhisper,
+  humanClock,
 } from "./format.js";
 
 const AREA = "Onyxia's Lair";
@@ -99,6 +101,28 @@ describe("formatBuffCooldownRefreshed", () => {
     const body = formatBuffCooldownRefreshed("horde", false).body;
     expect(body).not.toContain('"alliance"');
     expect(body).toContain("Onyxia"); // the substance is still there
+  });
+});
+
+describe("humanClock", () => {
+  it("renders minutes, hours, and hours+minutes compactly", () => {
+    expect(humanClock(42 * 60_000)).toBe("42m");
+    expect(humanClock(120 * 60_000)).toBe("2h");
+    expect(humanClock(82 * 60_000)).toBe("1h22m");
+    expect(humanClock(-5)).toBe("0m"); // never negative
+  });
+});
+
+describe("formatRaidFinished", () => {
+  it("names the raid #, the area, and how long it took", () => {
+    const msg = formatRaidFinished(834, 82 * 60_000, "Onyxia's Lair");
+    expect(msg.title).toContain("Raid #834");
+    expect(msg.body).toContain("Onyxia's Lair");
+    expect(msg.body).toContain("~1h22m");
+  });
+
+  it("falls back to 'A raid' when unnumbered", () => {
+    expect(formatRaidFinished(null, 60 * 60_000, "Onyxia's Lair").title).toContain("A raid");
   });
 });
 

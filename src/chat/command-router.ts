@@ -9,7 +9,7 @@ import {
   type SubscriberStore,
 } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
-import { CITY_FOR, FACTION_FILTER_HINT } from "../notify/format.js";
+import { CITY_FOR, FACTION_FILTER_HINT, humanClock } from "../notify/format.js";
 import type { DiscordLinker } from "./discord-linker.js";
 import { parseIntent, type Intent } from "./intent.js";
 
@@ -18,15 +18,6 @@ export interface BuffCooldown {
   readonly faction: Faction;
   /** ms until the active buff wears off and a fresh one can drop, or null if one can drop now. */
   readonly activeMsLeft: number | null;
-}
-
-/** Compact duration for a whisper: "42m", "1h12m", "2h". */
-function humanMins(ms: number): string {
-  const m = Math.max(0, Math.round(ms / 60_000));
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const rem = m % 60;
-  return rem === 0 ? `${h}h` : `${h}h${rem}m`;
 }
 
 /** A reader-friendly name for a set of subscribed sides. */
@@ -244,14 +235,14 @@ export class CommandRouter {
       lines.push(`No raid in ${areaName} right now.`);
     } else {
       const id = number !== null ? `raid #${number}` : raids.map((raid) => raid.label).join(", ");
-      lines.push(`${areaName} now: ${id}${elapsed !== null ? ` (in for ~${humanMins(elapsed)})` : ""}.`);
+      lines.push(`${areaName} now: ${id}${elapsed !== null ? ` (in for ~${humanClock(elapsed)})` : ""}.`);
     }
     if (buffCooldowns) {
       const part = (await buffCooldowns())
         .map((cd) =>
           cd.activeMsLeft === null
             ? `${CITY_FOR[cd.faction]}: a fresh buff can drop now`
-            : `${CITY_FOR[cd.faction]}: buff up, ~${humanMins(cd.activeMsLeft)} until the next can drop`,
+            : `${CITY_FOR[cd.faction]}: buff up, ~${humanClock(cd.activeMsLeft)} until the next can drop`,
         )
         .join(" | ");
       lines.push(`Rallying Cry - ${part}.`);

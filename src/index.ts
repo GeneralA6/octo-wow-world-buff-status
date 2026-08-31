@@ -19,6 +19,7 @@ import {
   formatBuffDroppedWhisper,
   formatBuffWhisper,
   formatFeedbackPost,
+  formatRaidFinished,
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
 import { groupByRelevantCities } from "./notify/faction-routing.js";
@@ -478,6 +479,8 @@ async function runConnection(
         } else if (ms > CEILING_MS) {
           logger.info(`raid clear ignored: ~${mins(ms)}m exceeds the ${mins(CEILING_MS)}m ceiling — likely a merge`);
         } else {
+          // A real, completed clear — post the recap (with the raid # and how long it took).
+          void push(formatRaidFinished(clear.number, ms, config.watchAreaName));
           void (async () => {
             await durationStore.record({ ms, ts: new Date(now) });
             const [learned, samples] = await Promise.all([
