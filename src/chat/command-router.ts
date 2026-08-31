@@ -153,12 +153,12 @@ export class CommandRouter {
 
     if (arg === "") {
       const code = await linker.startDmLink(sender);
-      const line1 = invite
-        ? `Want the buff alerts on Discord too? First join our server ${invite}, then send our bot a direct message there with just this code: ${code}.`
-        : `Want the buff alerts on Discord too? Send our bot a direct message on Discord with just this code: ${code}.`;
+      const alt = invite
+        ? `Or join our server ${invite} and send our bot the code ${code} in a DM there instead.`
+        : `Or send our bot a direct message on Discord with the code ${code} instead.`;
       return [
-        line1,
-        `Or, if it's easier, whisper me your Discord ID here and I'll DM you a code to whisper back instead. Either way the code expires in ~15 min.`,
+        `Want the buff alerts on Discord too? Grab your Discord ID from your profile and whisper me "discord <that id>" — I'll DM you a code to whisper straight back here, and you're linked.`,
+        `${alt} Either way the code expires in ~15 min.`,
       ];
     }
     if (["off", "clear", "none", "remove"].includes(arg.toLowerCase())) {
