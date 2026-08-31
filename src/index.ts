@@ -18,6 +18,7 @@ import {
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
+  formatCapitalStatusYell,
   formatFeedbackPost,
   formatRaidFinished,
 } from "./notify/format.js";
@@ -233,6 +234,7 @@ async function runConnection(
   await new Promise<void>((resolve, reject) => {
     let pollTimer: NodeJS.Timeout | null = null;
     let cooldownTimer: NodeJS.Timeout | null = null;
+    let statusYellTimer: NodeJS.Timeout | null = null;
     let whisperQueue: WhisperQueue | null = null;
     // The world server can accept the TCP connection but stall the handshake, and
     // there's no other timeout past connect — so bound the time to reach in-world.
@@ -252,6 +254,7 @@ async function runConnection(
       settled = true;
       if (pollTimer) clearTimeout(pollTimer);
       if (cooldownTimer) clearInterval(cooldownTimer);
+      if (statusYellTimer) clearInterval(statusYellTimer);
       if (readyTimer) clearTimeout(readyTimer);
       whisperQueue?.stop();
       outreach.setChannel(null, null); // watcher going away — stop greeting through it
@@ -382,6 +385,46 @@ async function runConnection(
           );
           yellSink[faction]?.(whisperLine); // broadcast to the capital (task: yell)
         }
+      }
+    };
+
+    // The raid in progress for a faction (from the lane covering it), or null.
+    const raidStateFor = (faction: Faction, now: number): { number: number | null; elapsedMs: number } | null => {
+      for (const lane of lanes) {
+        if (!lane.cities.includes(faction)) continue;
+        const elapsedMs = lane.watch.raidElapsedMs(now);
+        if (elapsedMs !== null) return { number: lane.watch.raidNumber(), elapsedMs };
+      }
+      return null;
+    };
+
+    // Every ~10 min, yell a buff-status board in each capital: the cooldown clock, the raid
+    // in the lair, a "park" nudge only when a fresh buff is genuinely possible at their clear,
+    // and a subscribe/discord CTA. Reaches everyone standing in the city, not just subscribers.
+    const yellCapitalStatus = async (): Promise<void> => {
+      if (!config.whispersEnabled) return;
+      const now = Date.now();
+      const nowDate = new Date(now);
+      const learnedMs = await durationStore.median(config.raidLearnMinSamples).catch(() => null);
+      const raidDurationMs = learnedMs ?? config.raidDurationEstimateMs;
+      for (const faction of FACTIONS) {
+        const yell = yellSink[faction];
+        if (!yell) continue; // no listener parked in this capital right now
+        let buff: Awaited<ReturnType<typeof buffStore.current>> = null;
+        try {
+          buff = await buffStore.current(faction, nowDate);
+        } catch (error) {
+          logger.debug(`status yell ${faction}: ${describeError(error)}`);
+          continue;
+        }
+        const cooldownActiveMsLeft = buff?.active ? buff.expiresAt.getTime() - now : null;
+        const raid = raidStateFor(faction, now);
+        // "may drop when they clear" = the buff gate: a fresh buff is possible by the time this
+        // in-progress raid is predicted to finish (form time + the learned/estimated clear time).
+        const buffPossible = raid
+          ? shouldAlertForRaid(buff, now - raid.elapsedMs + raidDurationMs, now).alert
+          : false;
+        yell(formatCapitalStatusYell(faction, cooldownActiveMsLeft, raid, buffPossible));
       }
     };
 
@@ -650,6 +693,11 @@ async function runConnection(
             if (!settled) void checkCooldowns().catch((e) => logger.debug(`cooldown: ${describeError(e)}`));
           }, 60_000);
           cooldownTimer.unref?.();
+          // Yell a buff-status board in the capitals on a slow cadence.
+          statusYellTimer = setInterval(() => {
+            if (!settled) void yellCapitalStatus().catch((e) => logger.debug(`status yell: ${describeError(e)}`));
+          }, config.statusYellMs);
+          statusYellTimer.unref?.();
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
         onWhisperUndelivered: config.whispersEnabled ? onWhisperUndelivered : undefined,

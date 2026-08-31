@@ -74,6 +74,8 @@ export interface BotConfig {
   /** How long the raid's roster must stay gone to count a departure as a real clear rather
    *  than a wipe (they run back). ~5 min — enough time to corpse-run back to the instance. */
   readonly raidClearSustainedMs: number;
+  /** How often the buff-status board is yelled in each capital (default 10 min). */
+  readonly statusYellMs: number;
   /** How long a sent park-alert suppresses a repeat for the same city+kind, so a redeploy,
    *  a wipe (count dipping and recovering) or roster churn can't re-broadcast the same
    *  cycle. Reset early when a fresh buff actually drops for that city. */
@@ -238,6 +240,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidLearnMinSamples = intWithDefault("WOW_RAID_LEARN_MIN_SAMPLES", 15, 1);
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 5, 1) * 60_000;
+  const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // Default to the buff window: within one head-block cycle we should speak once.
   const broadcastDedupMs = intWithDefault("WOW_BROADCAST_DEDUP_MINUTES", 120, 1) * 60_000;
 
@@ -327,6 +330,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidLearnMinSamples,
     raidMinClearMs,
     raidClearSustainedMs,
+    statusYellMs,
     broadcastDedupMs,
     realmType,
     raidGrouping,

@@ -154,6 +154,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_CLEAR_SUSTAINED_MINUTES: "7" }).raidClearSustainedMs).toBe(7 * 60_000);
   });
 
+  it("defaults the capital status-yell cadence to 10 minutes and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).statusYellMs).toBe(10 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_STATUS_YELL_MINUTES: "15" }).statusYellMs).toBe(15 * 60_000);
+  });
+
   it("defaults the /who timeout to 8s and accepts an override for slow peak load", () => {
     expect(loadConfig({ ...minimalEnv }).whoTimeoutMs).toBe(8_000);
     expect(loadConfig({ ...minimalEnv, WOW_WHO_TIMEOUT_MS: "15000" }).whoTimeoutMs).toBe(15_000);

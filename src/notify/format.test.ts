@@ -7,6 +7,7 @@ import {
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
+  formatCapitalStatusYell,
   formatFeedbackPost,
   formatRaidEvent,
   formatRaidFinished,
@@ -123,6 +124,49 @@ describe("formatRaidFinished", () => {
 
   it("falls back to 'A raid' when unnumbered", () => {
     expect(formatRaidFinished(null, 60 * 60_000, "Onyxia's Lair").title).toContain("A raid");
+  });
+});
+
+describe("formatCapitalStatusYell", () => {
+  const raid = { number: 834, elapsedMs: 42 * 60_000 };
+
+  it("buff up + no raid: leads with the cooldown clock, states no raid, always the CTA", () => {
+    const y = formatCapitalStatusYell("alliance", 72 * 60_000, null, false);
+    expect(y).toContain("Rallying Cry cooldown in Stormwind: ~1h12m until a fresh one can drop");
+    expect(y).toContain("No raid in the lair");
+    expect(y).not.toMatch(/park here/);
+    expect(y).toMatch(/subscribe.*discord/);
+  });
+
+  it("buff up + raid, but a fresh one can't come in time: raid # shown, NO park nudge", () => {
+    const y = formatCapitalStatusYell("horde", 72 * 60_000, raid, false);
+    expect(y).toContain("~1h12m until a fresh one can drop");
+    expect(y).toContain("raid #834");
+    expect(y).toContain("in for ~42m");
+    expect(y).not.toMatch(/park here/);
+  });
+
+  it("cooldown about to clear + raid: shows the park nudge", () => {
+    const y = formatCapitalStatusYell("horde", 15 * 60_000, raid, true);
+    expect(y).toContain("~15m until a fresh one can drop");
+    expect(y).toMatch(/one may drop when they clear, park here!/);
+  });
+
+  it("ready + no raid: says a fresh one waits on a raid clearing", () => {
+    const y = formatCapitalStatusYell("alliance", null, null, false);
+    expect(y).toMatch(/a fresh Rallying Cry can drop in Stormwind as soon as a raid clears/i);
+    expect(y).toContain("No raid in the lair");
+  });
+
+  it("ready + raid: a fresh one can drop now, with the park nudge", () => {
+    const y = formatCapitalStatusYell("alliance", null, raid, true);
+    expect(y).toMatch(/can drop in Stormwind now/);
+    expect(y).toMatch(/park here!/);
+  });
+
+  it("stays within the 255-char yell cap even in the busiest state", () => {
+    const y = formatCapitalStatusYell("horde", 119 * 60_000, { number: 99999, elapsedMs: 135 * 60_000 }, true);
+    expect(y.length).toBeLessThanOrEqual(255);
   });
 });
 

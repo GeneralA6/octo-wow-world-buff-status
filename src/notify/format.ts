@@ -109,6 +109,38 @@ export function formatFeedbackPost(from: string, text: string, server?: string):
   return `💬 **Suggestion from ${who}:**\n${text}`;
 }
 
+export interface CapitalStatusRaid {
+  readonly number: number | null;
+  readonly elapsedMs: number;
+}
+
+/**
+ * The periodic status board yelled in a capital: leads with the buff cooldown clock, then
+ * the raid in the lair (with its # and how long it's been in), then a "park" nudge ONLY
+ * when a fresh buff is genuinely possible when they clear (the buff-gate decision), and
+ * always a subscribe/discord CTA. `cooldownActiveMsLeft` is ms until the current buff wears
+ * off (a fresh one can then drop), or null if one can drop now.
+ */
+export function formatCapitalStatusYell(
+  faction: Faction,
+  cooldownActiveMsLeft: number | null,
+  raid: CapitalStatusRaid | null,
+  buffPossible: boolean,
+): string {
+  const city = CITY_FOR[faction];
+  const cooldown =
+    cooldownActiveMsLeft !== null
+      ? `Rallying Cry cooldown in ${city}: ~${humanClock(cooldownActiveMsLeft)} until a fresh one can drop`
+      : raid
+        ? `A fresh Rallying Cry can drop in ${city} now`
+        : `A fresh Rallying Cry can drop in ${city} as soon as a raid clears Onyxia`;
+  const raidPart = raid
+    ? `A raid's in the lair (${raid.number !== null ? `raid #${raid.number}, ` : ""}in for ~${humanClock(raid.elapsedMs)})`
+    : `No raid in the lair`;
+  const raidSentence = raid && buffPossible ? `${raidPart} - one may drop when they clear, park here!` : `${raidPart}.`;
+  return `[Onyxia] ${cooldown}. ${raidSentence} Whisper Bufftracker "subscribe" (or "discord" for Discord pings).`;
+}
+
 /** Human list of the capitals where a fresh buff is possible ("Stormwind or Orgrimmar"). */
 function cityList(cities: readonly Faction[]): string {
   const names = cities.map((faction) => CITY_FOR[faction]);
