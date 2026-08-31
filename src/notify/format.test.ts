@@ -102,6 +102,14 @@ describe("formatFeedbackPost", () => {
     expect(post).toContain("the timer felt 5 min late");
     expect(post).toMatch(/suggestion/i);
   });
+
+  it("appends the realm in brackets after the character when given", () => {
+    expect(formatFeedbackPost("Raider", "hi", "N'Zoth")).toContain("Raider (N'Zoth)");
+  });
+
+  it("omits the brackets when no server is given", () => {
+    expect(formatFeedbackPost("Raider", "hi")).not.toContain("(");
+  });
 });
 
 describe("formatBuffCooldownRefreshedWhisper", () => {
