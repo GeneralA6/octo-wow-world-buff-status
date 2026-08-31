@@ -16,7 +16,7 @@ export function introLines(config: OutreachConfig): string[] {
   return [
     `Hi! I'm Bufftracker, made by ${config.author} of <${config.guildName}> - I warn you before the Onyxia Rallying Cry world buff drops, so you can park in a capital and grab it. Whisper me "subscribe" and I'll ping you in-game when it's time.`,
     `Want it even when you're offline? Whisper me "discord" to link Discord - I'll DM you so you never miss a buff. <${config.guildName}> is recruiting for the ${config.community} community - whisper "invite" to join! "help" for more.`,
-    `Bufftracker is free and always will be. If it's saved you a buff or two and you'd like to say thanks, ${config.author} gratefully accepts gold tips in-game - never expected, always appreciated!`,
+    `Bufftracker is free and always will be. If it's saved you a buff or two, gold tips are welcome - never expected! Please mail them to ${config.author}, NOT to me or the listener bots (they're unattended).`,
   ];
 }
 

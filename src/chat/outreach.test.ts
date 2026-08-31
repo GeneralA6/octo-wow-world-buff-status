@@ -16,8 +16,14 @@ describe("introLines", () => {
     const lines = introLines(config).join(" ");
     expect(lines).toContain("made by Gibom");
     expect(lines).toMatch(/gold tips/i);
-    // The tip line names the same author and frames it as optional, never demanded.
-    expect(lines).toMatch(/never expected|always appreciated/i);
+    // The tip line frames it as optional, never demanded.
+    expect(lines).toMatch(/never expected/i);
+  });
+
+  it("directs tips to the author, warning against the unattended bot characters", () => {
+    const tip = introLines(config).find((l) => /gold tips/i.test(l)) ?? "";
+    expect(tip).toMatch(/mail them to Gibom/i);
+    expect(tip).toMatch(/not to me|listener bots|unattended/i);
   });
 
   it("threads the configured author through both the credit and the tip line", () => {
