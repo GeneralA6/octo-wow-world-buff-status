@@ -9,6 +9,7 @@ import {
   type SubscriberStore,
 } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
+import { FACTION_FILTER_HINT } from "../notify/format.js";
 import type { DiscordLinker } from "./discord-linker.js";
 import { parseIntent, type Intent } from "./intent.js";
 
@@ -102,11 +103,12 @@ export class CommandRouter {
       case "start": {
         const added = await store.add(sender);
         if (added) this.#factionLookup?.(sender); // auto-detect their side in the background
-        return [
-          added
-            ? `You're subscribed! I'll whisper you when a raid clears and the buff is about to drop. Want it even when you're offline? Whisper "discord" to link, then "mode offline" for DMs while you're logged out.`
-            : `You're already subscribed to ${areaName} alerts. Whisper "me" for your settings, or "help" for what I can do.`,
-        ];
+        return added
+          ? [
+              `You're subscribed! I'll whisper you when a raid clears and the buff is about to drop. Want it even when you're offline? Whisper "discord" to link, then "mode offline" for DMs while you're logged out.`,
+              FACTION_FILTER_HINT,
+            ]
+          : [`You're already subscribed to ${areaName} alerts. Whisper "me" for your settings, or "help" for what I can do.`];
       }
       case "unsubscribe":
       case "unsub":

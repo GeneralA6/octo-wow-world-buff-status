@@ -55,6 +55,17 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "subscribe"))[0]).toMatch(/already subscribed/);
   });
 
+  it("follows a fresh subscribe with the full faction/unsubscribe hint (once, on opt-in)", async () => {
+    const { router } = deps();
+    const reply = await router.handle("Raider", "subscribe");
+    const hint = reply.find((l) => /alliance/i.test(l)) ?? "";
+    expect(hint).toMatch(/alliance.*horde|horde.*alliance/i);
+    expect(hint).toMatch(/unsubscribe/i);
+    // A repeat subscribe does NOT re-send the hint.
+    const again = await router.handle("Raider", "subscribe");
+    expect(again.some((l) => /alliance/i.test(l))).toBe(false);
+  });
+
   it("unsubscribes a player", async () => {
     const { store, router } = deps();
     await router.handle("Raider", "subscribe");

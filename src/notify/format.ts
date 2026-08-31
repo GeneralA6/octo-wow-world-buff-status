@@ -41,17 +41,21 @@ export function formatBuffDroppedWhisper(faction: Faction, durationMs: number): 
   );
 }
 
-/** How to narrow alerts to a single faction, and how to stop them entirely. Appended to
- *  the broadcast Discord post (which reaches everyone) and to a DM only when the reader
- *  hasn't already picked a side. Both are per-subscriber settings set by in-game whisper. */
+/** The full tuning hint: how to pick a side, and how to stop. Sent once, on the subscribe
+ *  confirmation — the natural onboarding moment, not on every alert. */
 export const FACTION_FILTER_HINT =
   `Only want one side's buffs? Whisper Bufftracker "alliance" or "horde" in-game and I'll ping you for just that faction (or "both" for all). Whisper "unsubscribe" to stop alerts.`;
+
+/** A short faction-only nudge for the recurring cooldown post — no unsubscribe, kept brief
+ *  because it rides on every ~2h refresh. */
+export const FACTION_HINT_SHORT =
+  `Only want one side? Whisper Bufftracker "alliance" or "horde" and I'll ping just that faction.`;
 
 /**
  * The buff's window just elapsed, so a fresh one can drop again. Discord channel post.
  * Names the full buff and ties it to Onyxia, so a reader who wasn't following knows
  * exactly which buff this is and where it comes from. `includeFilterHint` appends the
- * how-to-filter line — true for the public channel post, but set false for a DM to a
+ * short faction nudge — true for the public channel post, but set false for a DM to a
  * subscriber who has already chosen a single side (don't nag them about it).
  */
 export function formatBuffCooldownRefreshed(faction: Faction, includeFilterHint = true): NotifyMessage {
@@ -63,7 +67,7 @@ export function formatBuffCooldownRefreshed(faction: Faction, includeFilterHint 
   return {
     kind: "info",
     title: `🔄 Rallying Cry of the Dragonslayer can drop again in ${city}`,
-    body: includeFilterHint ? `${body}\n\n${FACTION_FILTER_HINT}` : body,
+    body: includeFilterHint ? `${body}\n\n${FACTION_HINT_SHORT}` : body,
   };
 }
 
