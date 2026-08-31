@@ -111,7 +111,7 @@ export class CommandRouter {
         const removed = await store.remove(sender);
         return [
           removed
-            ? `Unsubscribed — no more ${areaName} alerts. Whisper "subscribe" to opt back in.`
+            ? `Unsubscribed - no more ${areaName} alerts. Whisper "subscribe" to opt back in.`
             : `You weren't subscribed. Whisper "subscribe" to start.`,
         ];
       }
@@ -145,7 +145,7 @@ export class CommandRouter {
           : `no Discord linked`;
         const alerts = sub.alerts.length ? sub.alerts.join(", ") : "none";
         return [
-          `Subscribed — ${factionLabel(sub.factions)} buffs; ${discord}. Alerts: ${alerts}. ("alliance"/"horde"/"both" to change your side.)`,
+          `Subscribed - ${factionLabel(sub.factions)} buffs; ${discord}. Alerts: ${alerts}. ("alliance"/"horde"/"both" to change your side.)`,
         ];
       }
       case "status": {
@@ -158,10 +158,10 @@ export class CommandRouter {
       case "?":
         return [
           `I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me:`,
-          `subscribe — start getting alerts (unsubscribe anytime to stop)`,
-          `alliance / horde / both — which side's buff you want (I try to detect it; default both)`,
-          `discord — link Discord for DMs. Best combo: link it, then "mode offline" and I'll DM you ONLY when you're logged out — so you never miss a buff, even away from the game.`,
-          `invite — join <${this.#deps.guildName}>, the guild that runs me (we're recruiting!)`,
+          `subscribe - start getting alerts (unsubscribe anytime to stop)`,
+          `alliance / horde / both - which side's buff you want (I try to detect it; default both)`,
+          `discord - link Discord for DMs. Best combo: link it, then "mode offline" and I'll DM you ONLY when you're logged out - so you never miss a buff, even away from the game.`,
+          `invite - join <${this.#deps.guildName}>, the guild that runs me (we're recruiting!)`,
           `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), me (your settings).`,
         ];
       default: {
@@ -196,7 +196,7 @@ export class CommandRouter {
       return [`Whisper "alliance", "horde", or "both". You're on ${factionLabel(sub.factions)}.`];
     }
     await store.update(sender, { factions: [...factions] });
-    return [`Done — I'll alert you for ${factionLabel(factions)} buffs.`];
+    return [`Done - I'll alert you for ${factionLabel(factions)} buffs.`];
   }
 
   #linkedLine(): string {
@@ -209,20 +209,20 @@ export class CommandRouter {
 
     if (["off", "clear", "none", "remove"].includes(arg.toLowerCase())) {
       const ok = await linker.unlink(sender);
-      return [ok ? `Discord unlinked — in-game whispers only.` : `You're not subscribed.`];
+      return [ok ? `Discord unlinked - in-game whispers only.` : `You're not subscribed.`];
     }
 
     // Flow B: they pasted their Discord ID — DM them a code to whisper back.
     if (arg !== "") {
       if (!DISCORD_ID.test(arg)) {
         return [
-          `"${arg}" isn't your Discord ID — that's a NUMBER, not your username.`,
+          `"${arg}" isn't your Discord ID - that's a NUMBER, not your username.`,
           `Get it in Discord: Settings → Developer → turn on Developer Mode, then right-click your name → Copy User ID. Then whisper "discord <that number>".`,
         ];
       }
       switch (await linker.startIdLink(sender, arg)) {
         case "sent":
-          return [`I DMed you a code on Discord — whisper it back here to confirm.`];
+          return [`I DMed you a code on Discord - whisper it back here to confirm.`];
         case "unreachable":
           return [
             `I couldn't DM you.${linker.serverInviteUrl ? ` Join ${linker.serverInviteUrl} first.` : ""} Then enable "DMs from server members" and try again.`,
@@ -230,7 +230,7 @@ export class CommandRouter {
         case "not-configured":
           return [`Discord isn't set up on this bot.`];
         default:
-          return [`Trouble reaching Discord — try again in a moment.`];
+          return [`Trouble reaching Discord - try again in a moment.`];
       }
     }
 
@@ -239,8 +239,8 @@ export class CommandRouter {
     // is offered last, for clients where chat links are actually clickable.
     const server = linker.serverInviteUrl;
     const lines = [
-      `Get buff alerts on Discord — easiest: in our server, type "/link ${sender}" and you're done.${server ? ` (Not in the server? Join ${server} first.)` : ""}`,
-      `Or from WoW: whisper me "discord <your Discord ID>" and I'll DM you a code to whisper back. Your ID is a NUMBER, not your username —`,
+      `Get buff alerts on Discord - easiest: in our server, type "/link ${sender}" and you're done.${server ? ` (Not in the server? Join ${server} first.)` : ""}`,
+      `Or from WoW: whisper me "discord <your Discord ID>" and I'll DM you a code to whisper back. Your ID is a NUMBER, not your username -`,
       `get it in Discord: Settings → Developer → turn on Developer Mode, then right-click your name → Copy User ID.`,
     ];
     if (mintInvite) {
@@ -267,15 +267,15 @@ export class CommandRouter {
     if (delivery !== "ingame" && !sub.discordId) {
       return [
         delivery === "discord"
-          ? `Set to "discord", but you have NO Discord linked — you'll get nothing until you whisper "discord" to link it.`
+          ? `Set to "discord", but you have NO Discord linked - you'll get nothing until you whisper "discord" to link it.`
           : `Set to "${delivery}", but link Discord with "discord" so I can reach you there.`,
       ];
     }
     const CONFIRM: Record<DeliveryMode, string> = {
-      ingame: `Delivery set to "ingame" — in-game whispers only.`,
-      both: `Delivery set to "both" — in-game and Discord.`,
-      offline: `Delivery set to "offline" — Discord only when your character is offline.`,
-      discord: `Delivery set to "discord" — Discord DMs only, no in-game whispers.`,
+      ingame: `Delivery set to "ingame" - in-game whispers only.`,
+      both: `Delivery set to "both" - in-game and Discord.`,
+      offline: `Delivery set to "offline" - Discord only when your character is offline.`,
+      discord: `Delivery set to "discord" - Discord DMs only, no in-game whispers.`,
     };
     return [CONFIRM[delivery]];
   }
@@ -302,7 +302,7 @@ export class CommandRouter {
     }
     if (t === "none") {
       await store.update(sender, { alerts: [] });
-      return [`All alerts OFF — still subscribed, but I won't whisper you. "notify all" to undo.`];
+      return [`All alerts OFF - still subscribed, but I won't whisper you. "notify all" to undo.`];
     }
     if (!isAlertType(t)) {
       return [`Unknown alert "${target}". Types: ${ALL_ALERT_TYPES.join(", ")}. Try "notify ${ALL_ALERT_TYPES[0]} off".`];
@@ -323,10 +323,10 @@ export class CommandRouter {
   #invite(sender: string): string[] {
     const { guildName } = this.#deps;
     if (!this.#guildInvite) {
-      return [`I can't send a guild invite right now — try again in a moment.`];
+      return [`I can't send a guild invite right now - try again in a moment.`];
     }
     this.#guildInvite(sender);
-    return [`Invite to <${guildName}> sent — accept the popup and you're in. Welcome aboard!`];
+    return [`Invite to <${guildName}> sent - accept the popup and you're in. Welcome aboard!`];
   }
 
   /** Act on a natural-language intent — re-dispatching to the canonical command where one exists. */
@@ -341,7 +341,7 @@ export class CommandRouter {
       case "guild":
         return [
           `We're <${guildName}>, a ${community} community guild, and we're recruiting! ` +
-            `Whisper "invite" and I'll send you an invite right now — and "subscribe" for buff alerts.`,
+            `Whisper "invite" and I'll send you an invite right now - and "subscribe" for buff alerts.`,
         ];
       case "buff":
         return [

@@ -70,7 +70,7 @@ export class InviteLinker {
     const code = whichInviteUsed(this.#cache, list);
     this.#cache = useCounts(list);
     if (!code) {
-      this.#logger.debug(`invite-link: join by ${discordUserId} — couldn't single out an invite`);
+      this.#logger.debug(`invite-link: join by ${discordUserId} - couldn't single out an invite`);
       return;
     }
     const character = this.#links.take(code);

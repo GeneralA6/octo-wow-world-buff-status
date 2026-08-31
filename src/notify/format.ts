@@ -24,7 +24,7 @@ export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs:
     kind: "info",
     title: `🎉 Rallying Cry is up in ${city}`,
     body:
-      `The Rallying Cry of the Dragonslayer just dropped in ${city} — good for ~${humanDuration(durationMs)}, ` +
+      `The Rallying Cry of the Dragonslayer just dropped in ${city} - good for ~${humanDuration(durationMs)}, ` +
       `until <t:${expiresUnix}:t> (<t:${expiresUnix}:R>). ` +
       `That's also the earliest a fresh one can drop, so start watching again then.`,
   };
@@ -36,7 +36,7 @@ export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs:
 export function formatBuffDroppedWhisper(faction: Faction, durationMs: number): string {
   const city = CITY_FOR[faction];
   return (
-    `The Rallying Cry just dropped in ${city}! It's up for ~${humanDuration(durationMs)} — go grab it now. ` +
+    `The Rallying Cry just dropped in ${city}! It's up for ~${humanDuration(durationMs)} - go grab it now. ` +
     `The next one can't drop until this one wears off.`
   );
 }
@@ -63,7 +63,7 @@ export function formatRaidEvent(event: RaidEvent, areaName: string): NotifyMessa
       return {
         kind: "entered",
         title: `🐉 Raid forming in ${areaName}`,
-        body: `${label} just reached ${count} in ${areaName} — a raid is about to start.`,
+        body: `${label} just reached ${count} in ${areaName} - a raid is about to start.`,
       };
     }
     case "raid-left": {
@@ -85,7 +85,7 @@ export function formatRaidWhisper(event: RaidEvent, areaName: string): string {
   const { label, count } = event.cohort;
   return event.initial
     ? `A raid is already underway in ${areaName}: ${label} (${count}).`
-    : `${label} is forming in ${areaName} (${count}) — a raid is about to start!`;
+    : `${label} is forming in ${areaName} (${count}) - a raid is about to start!`;
 }
 
 function plural(count: number, word: string): string {
@@ -107,7 +107,7 @@ export function formatBuffAlert(event: RaidEvent, cities: readonly Faction[], ar
       title: "🐉 Rallying Cry may be coming",
       body:
         `A raid ${verb} in ${areaName} (${event.cohort.count}). ` +
-        `A Rallying Cry buff may drop in ${where} when they clear it and turn in the head — ` +
+        `A Rallying Cry buff may drop in ${where} when they clear it and turn in the head - ` +
         `get ready to park.`,
     };
   }
@@ -124,8 +124,8 @@ export function formatBuffAlert(event: RaidEvent, cities: readonly Faction[], ar
 export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], areaName: string): string {
   const where = cityList(cities);
   if (event.kind === "raid-left") {
-    return `A raid just cleared ${areaName} — park in ${where} for a possible Rallying Cry buff.`;
+    return `A raid just cleared ${areaName} - park in ${where} for a possible Rallying Cry buff.`;
   }
   const verb = event.initial ? "underway" : "forming";
-  return `A raid is ${verb} in ${areaName} (${event.cohort.count}) — get ready to park in ${where} for the buff.`;
+  return `A raid is ${verb} in ${areaName} (${event.cohort.count}) - get ready to park in ${where} for the buff.`;
 }

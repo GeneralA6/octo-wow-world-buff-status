@@ -12,8 +12,8 @@ export type GuildInviteFn = (target: string) => void;
 /** The lines Bufftracker whispers to a player who first contacts a listener. */
 export function introLines(config: OutreachConfig): string[] {
   return [
-    `Hi! I'm Bufftracker — I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me "subscribe" and I'll ping you in-game when it's time.`,
-    `Want it even when you're offline? Whisper me "discord" to link Discord — I'll DM you so you never miss a buff. <${config.guildName}> is recruiting for the ${config.community} community — whisper "invite" to join! "help" for more.`,
+    `Hi! I'm Bufftracker - I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me "subscribe" and I'll ping you in-game when it's time.`,
+    `Want it even when you're offline? Whisper me "discord" to link Discord - I'll DM you so you never miss a buff. <${config.guildName}> is recruiting for the ${config.community} community - whisper "invite" to join! "help" for more.`,
   ];
 }
 
@@ -59,7 +59,7 @@ export class Outreach {
     for (const line of introLines(this.#config)) this.#whisper(playerName, line);
     if (this.#config.guildInviteEnabled && this.#guildInvite) {
       this.#guildInvite(playerName);
-      this.#whisper(playerName, `And I've sent you an invite to <${this.#config.guildName}> — welcome aboard!`);
+      this.#whisper(playerName, `And I've sent you an invite to <${this.#config.guildName}> - welcome aboard!`);
     }
   }
 }

@@ -65,7 +65,7 @@ export class DiscordLinker {
       `Your ${this.#deps.areaName} link code is ${code}. Whisper it back to the bot in-game to confirm.`,
     );
     if (result.ok) return "sent";
-    this.#deps.pending.remove(code); // couldn't reach them — don't leave a dangling code
+    this.#deps.pending.remove(code); // couldn't reach them - don't leave a dangling code
     return result.kind === "unreachable"
       ? "unreachable"
       : result.kind === "not-configured"
