@@ -139,9 +139,12 @@ describe("CommandRouter", () => {
 
   it("flow A: 'discord' mints a code to DM and subscribes the caller", async () => {
     const { store, router } = deps();
-    const reply = (await router.handle("Raider", "discord"))[0];
-    expect(reply).toMatch(/DM the bot the code CODE01/);
-    expect(reply).toContain("discord.gg/x");
+    const lines = await router.handle("Raider", "discord");
+    const reply = lines.join(" ");
+    expect(reply).toContain("CODE01"); // the code to send
+    expect(reply).toContain("discord.gg/x"); // the server to join
+    expect(reply).toMatch(/on discord/i); // clarifies WHERE to send it
+    expect(reply).toMatch(/not back here/i); // ...and where NOT to
     expect(await store.has("Raider")).toBe(true);
   });
 
