@@ -63,4 +63,26 @@ describe("DiscordDmSender", () => {
     const fetchImpl: DiscordFetch = () => Promise.reject(new Error("network"));
     expect(await new DiscordDmSender("tok", fetchImpl).send("42", "hi")).toEqual({ ok: false, kind: "error" });
   });
+
+  describe("postToChannel", () => {
+    it("posts directly to a channel by id, no DM-channel open step", async () => {
+      const fetchImpl = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200));
+      const result = await new DiscordDmSender("tok", fetchImpl).postToChannel("chan9", "hello city");
+      expect(result).toEqual({ ok: true });
+      expect(fetchImpl).toHaveBeenCalledTimes(1); // one POST, straight to the channel
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toContain("/channels/chan9/messages");
+      expect(init.headers.Authorization).toBe("Bot tok");
+      expect(JSON.parse(init.body)).toEqual({ content: "hello city" });
+    });
+
+    it("reports not-configured without a token", async () => {
+      expect(await new DiscordDmSender(null).postToChannel("chan9", "hi")).toEqual({ ok: false, kind: "not-configured" });
+    });
+
+    it("classifies a failed post", async () => {
+      const sender = new DiscordDmSender("tok", () => Promise.resolve(res(false, 403)));
+      expect(await sender.postToChannel("chan9", "hi")).toEqual({ ok: false, kind: "unreachable", status: 403 });
+    });
+  });
 });

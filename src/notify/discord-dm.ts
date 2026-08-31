@@ -50,17 +50,32 @@ export class DiscordDmSender {
     return this.#botToken !== null;
   }
 
+  #headers(token: string): Record<string, string> {
+    return { Authorization: `Bot ${token}`, "Content-Type": "application/json" };
+  }
+
+  /** Post a plain message to a channel the bot can see (by id). Used for the feedback
+   *  channel; the DM flow reuses it after opening the recipient's DM channel. */
+  async postToChannel(channelId: string, content: string): Promise<DmResult> {
+    if (!this.#botToken) return { ok: false, kind: "not-configured" };
+    try {
+      const response = await this.#fetch(`${API}/channels/${channelId}/messages`, {
+        method: "POST",
+        headers: this.#headers(this.#botToken),
+        body: JSON.stringify({ content }),
+      });
+      return response.ok ? { ok: true } : classify(response.status);
+    } catch {
+      return { ok: false, kind: "error" };
+    }
+  }
+
   async send(discordUserId: string, content: string): Promise<DmResult> {
     if (!this.#botToken) return { ok: false, kind: "not-configured" };
-    const headers = {
-      Authorization: `Bot ${this.#botToken}`,
-      "Content-Type": "application/json",
-    };
-
     try {
       const channelResponse = await this.#fetch(`${API}/users/@me/channels`, {
         method: "POST",
-        headers,
+        headers: this.#headers(this.#botToken),
         body: JSON.stringify({ recipient_id: discordUserId }),
       });
       if (!channelResponse.ok) return classify(channelResponse.status);
@@ -68,14 +83,7 @@ export class DiscordDmSender {
       const channelId = readChannelId(await channelResponse.json());
       if (!channelId) return { ok: false, kind: "error" };
 
-      const messageResponse = await this.#fetch(`${API}/channels/${channelId}/messages`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ content }),
-      });
-      if (!messageResponse.ok) return classify(messageResponse.status);
-
-      return { ok: true };
+      return this.postToChannel(channelId, content);
     } catch {
       return { ok: false, kind: "error" };
     }
