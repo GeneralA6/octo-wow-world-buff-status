@@ -865,8 +865,9 @@ async function runListener(
             ? (raw) => {
                 if (interacted) return;
                 // parseUpdateObject returns partial results (never throws) on a shape
-                // it can't decode, so we keep whatever GameObjects it read.
-                const parsed = parseUpdateObject(raw);
+                // it can't decode, so we keep whatever GameObjects it read. Pass our own
+                // GUID so `self` is OUR position, never a bystander's in the same packet.
+                const parsed = parseUpdateObject(raw, world.selfGuid ?? undefined);
                 for (const go of parsed.gameObjects) nearby.push(go);
                 if (parsed.self) selfPos = parsed.self;
               }

@@ -1,5 +1,31 @@
 import { describe, expect, it } from "vitest";
+import { PacketWriter } from "../net/byte-buffer.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject } from "./update-object.js";
+
+function packGuid(w: PacketWriter, guid: bigint): void {
+  let mask = 0;
+  const bytes: number[] = [];
+  for (let i = 0; i < 8; i += 1) {
+    const b = Number((guid >> BigInt(i * 8)) & 0xffn);
+    if (b) {
+      mask |= 1 << i;
+      bytes.push(b);
+    }
+  }
+  w.u8(mask);
+  for (const b of bytes) w.u8(b);
+}
+
+/** A minimal CREATE block (HAS_POSITION, no LIVING) for a player or GameObject. */
+function block(w: PacketWriter, objType: number, guid: bigint, x: number, y: number, z: number, entry?: number): void {
+  w.u8(2); // UPDATETYPE_CREATE
+  packGuid(w, guid);
+  w.u8(objType);
+  w.u8(0x40); // UPDATEFLAG_HAS_POSITION
+  w.f32LE(x).f32LE(y).f32LE(z).f32LE(0); // x, y, z, orientation
+  if (entry !== undefined) w.u8(1).u32LE(0x08).u32LE(entry); // values: field 3 (OBJECT_FIELD_ENTRY)
+  else w.u8(1).u32LE(0); // values: one empty block
+}
 
 // A real decompressed SMSG_UPDATE_OBJECT block captured live from OctoWoW (Stormwind):
 // 14 GameObjects, no player. Ground truth for the 1.12 layout.
@@ -39,6 +65,31 @@ describe("parseUpdateObject (real grid packet with pathing NPCs)", () => {
     // Parsing past the spline-moving NPCs yields the interleaved GameObjects.
     expect(result.gameObjects.length).toBe(18);
     expect(result.gameObjects.every((g) => g.entry > 0)).toBe(true);
+  });
+});
+
+describe("parseUpdateObject self-guid filtering", () => {
+  function packet(): Buffer {
+    const w = new PacketWriter();
+    w.u32LE(3); // object count
+    w.u8(0); // hasTransport
+    block(w, 4, 1n, 10, 20, 30); // OBJTYPE_PLAYER — us (guid 1)
+    block(w, 4, 2n, 100, 200, 300); // OBJTYPE_PLAYER — a bystander (guid 2)
+    block(w, 5, 3n, 11, 21, 31, 24397); // OBJTYPE_GAMEOBJECT — the bench
+    return w.toBuffer();
+  }
+
+  it("takes OUR position by guid, not a bystander player in the same packet", () => {
+    const mine = parseUpdateObject(packet(), 1n);
+    expect(mine.self?.x).toBeCloseTo(10, 1);
+    expect(mine.self?.y).toBeCloseTo(20, 1);
+    expect(mine.gameObjects).toHaveLength(1);
+    expect(mine.gameObjects[0]?.entry).toBe(24397);
+  });
+
+  it("without a self-guid, the last player wins (the legacy bug we fixed)", () => {
+    const legacy = parseUpdateObject(packet());
+    expect(legacy.self?.x).toBeCloseTo(100, 1); // the bystander at (100,200,300)
   });
 });
 

@@ -72,6 +72,13 @@ export class PacketWriter {
     return this;
   }
 
+  f32LE(value: number): this {
+    this.#ensure(4);
+    this.#buf.writeFloatLE(value, this.#length);
+    this.#length += 4;
+    return this;
+  }
+
   u64LE(value: bigint): this {
     this.#ensure(8);
     this.#buf.writeBigUInt64LE(BigInt.asUintN(64, value), this.#length);

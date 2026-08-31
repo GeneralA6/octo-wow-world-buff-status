@@ -62,7 +62,12 @@ const SPLINE_FINAL_POINT = 0x00008000;
 const SPLINE_FINAL_TARGET = 0x00010000;
 const SPLINE_FINAL_ANGLE = 0x00020000;
 
-export function parseUpdateObject(body: Buffer): WorldObjects {
+/**
+ * Parse a nearby-objects update. `selfGuid`, when given, is our own character's GUID: only
+ * the block for THAT player sets `self`, so a bystander in the same packet (common in a city)
+ * can't overwrite our position. Without it, any player's position is taken (legacy/test use).
+ */
+export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects {
   const reader = new PacketReader(body);
   const count = reader.u32LE();
   reader.u8(); // hasTransport
@@ -86,7 +91,7 @@ export function parseUpdateObject(body: Buffer): WorldObjects {
         const pos = readMovement(reader, flags);
         const entry = readValuesEntry(reader);
         if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
-        if (objType === OBJTYPE_PLAYER && pos) self = pos;
+        if (objType === OBJTYPE_PLAYER && pos && (selfGuid === undefined || guid === selfGuid)) self = pos;
       } else if (updateType === UPDATETYPE_VALUES) {
         readValuesEntry(reader);
       } else if (updateType === UPDATETYPE_MOVEMENT) {

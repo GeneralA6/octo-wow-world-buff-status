@@ -75,6 +75,7 @@ export class WorldClient {
   readonly #account: string;
   readonly #sessionKey: Buffer;
   readonly #characterName: string;
+  #selfGuid: bigint | null = null;
   readonly #handlers: WorldClientHandlers;
   readonly #logger: Logger;
   readonly #pingIntervalMs: number;
@@ -183,6 +184,12 @@ export class WorldClient {
     if (!this.#ready) throw new Error("cannot sit before the character is in world");
     this.#logger.debug("world: /sit");
     this.#send(WorldOpcode.CMSG_STANDSTATECHANGE, buildStandStateBody(STAND_STATE_SIT));
+  }
+
+  /** Our own character's GUID once logged in, else null — used to pick our position out of
+   *  an object-update packet that also carries nearby players. */
+  get selfGuid(): bigint | null {
+    return this.#selfGuid;
   }
 
   /** Use/interact with a GameObject by guid (e.g. sit on a bench). */
@@ -331,6 +338,7 @@ export class WorldClient {
       );
     }
     this.#logger.debug(`world: logging in character ${match.name}`);
+    this.#selfGuid = match.guid; // so update-object parsing can pick OUR position, not a bystander's
     this.#send(WorldOpcode.CMSG_PLAYER_LOGIN, buildPlayerLoginBody(match.guid));
   }
 
