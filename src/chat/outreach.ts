@@ -4,6 +4,8 @@ export interface OutreachConfig {
   readonly guildName: string;
   readonly community: string;
   readonly guildInviteEnabled: boolean;
+  /** Who made the bot — credited in the intro and named for optional gold tips. */
+  readonly author: string;
 }
 
 export type WhisperFn = (target: string, message: string) => void;
@@ -12,8 +14,9 @@ export type GuildInviteFn = (target: string) => void;
 /** The lines Bufftracker whispers to a player who first contacts a listener. */
 export function introLines(config: OutreachConfig): string[] {
   return [
-    `Hi! I'm Bufftracker - I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me "subscribe" and I'll ping you in-game when it's time.`,
+    `Hi! I'm Bufftracker, made by ${config.author} of <${config.guildName}> - I warn you before the Onyxia Rallying Cry world buff drops, so you can park in a capital and grab it. Whisper me "subscribe" and I'll ping you in-game when it's time.`,
     `Want it even when you're offline? Whisper me "discord" to link Discord - I'll DM you so you never miss a buff. <${config.guildName}> is recruiting for the ${config.community} community - whisper "invite" to join! "help" for more.`,
+    `Bufftracker is free and always will be. If it's saved you a buff or two and you'd like to say thanks, ${config.author} gratefully accepts gold tips in-game - never expected, always appreciated!`,
   ];
 }
 

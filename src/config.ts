@@ -112,6 +112,8 @@ export interface BotConfig {
   readonly guildName: string;
   /** Community name used in the intro whisper. */
   readonly community: string;
+  /** Who built the bot — credited in the intro whisper and named for optional gold tips. */
+  readonly author: string;
   /** Auto guild-invite players who contact a listener. Needs the watcher to be guilded. */
   readonly guildInviteEnabled: boolean;
   readonly logLevel: LogLevel;
@@ -269,6 +271,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const guildName = env.WOW_GUILD_NAME?.trim() || "Rage Quit";
   const community = env.WOW_COMMUNITY?.trim() || "OctoWoW";
+  const author = env.WOW_AUTHOR?.trim() || "Gibom";
   const inviteRaw = env.WOW_GUILD_INVITE?.trim().toLowerCase();
   const guildInviteEnabled = inviteRaw === "true" || inviteRaw === "1";
 
@@ -331,6 +334,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordMentionRoleId,
     guildName,
     community,
+    author,
     guildInviteEnabled,
     logLevel,
   };

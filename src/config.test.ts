@@ -289,15 +289,18 @@ describe("loadConfig", () => {
     const bare = loadConfig({ ...minimalEnv });
     expect(bare.guildName).toBe("Rage Quit");
     expect(bare.community).toBe("OctoWoW");
+    expect(bare.author).toBe("Gibom");
     expect(bare.guildInviteEnabled).toBe(false);
     const configured = loadConfig({
       ...minimalEnv,
       WOW_GUILD_NAME: "Late Night",
       WOW_COMMUNITY: "Turtle",
+      WOW_AUTHOR: "Someone",
       WOW_GUILD_INVITE: "true",
     });
     expect(configured.guildName).toBe("Late Night");
     expect(configured.community).toBe("Turtle");
+    expect(configured.author).toBe("Someone");
     expect(configured.guildInviteEnabled).toBe(true);
   });
 

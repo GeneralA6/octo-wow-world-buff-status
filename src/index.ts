@@ -1005,7 +1005,12 @@ async function main(): Promise<void> {
     mintInvite: inviteLinker.isConfigured ? (character) => inviteLinker.mintFor(character) : undefined,
   });
   const outreach = new Outreach(
-    { guildName: config.guildName, community: config.community, guildInviteEnabled: config.guildInviteEnabled },
+    {
+      guildName: config.guildName,
+      community: config.community,
+      guildInviteEnabled: config.guildInviteEnabled,
+      author: config.author,
+    },
     logger,
   );
   const services: ConnectionServices = {
