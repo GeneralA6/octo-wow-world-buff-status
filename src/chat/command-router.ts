@@ -108,7 +108,7 @@ export class CommandRouter {
               `You're subscribed! I'll whisper you when a raid clears and the buff is about to drop. Want it even when you're offline? Whisper "discord" to link, then "mode offline" for DMs while you're logged out.`,
               FACTION_FILTER_HINT,
             ]
-          : [`You're already subscribed to ${areaName} alerts. Whisper "me" for your settings, or "help" for what I can do.`];
+          : [`You're already subscribed to ${areaName} alerts. Whisper "profile" for your settings, or "help" for what I can do.`];
       }
       case "unsubscribe":
       case "unsub":
@@ -146,6 +146,7 @@ export class CommandRouter {
       case "notify":
       case "alerts":
         return this.#notify(sender, arg, (parts[2] ?? "").toLowerCase());
+      case "profile":
       case "me": {
         const sub = await store.get(sender);
         if (!sub) return [`You're not subscribed. Whisper "subscribe" to start.`];
@@ -172,7 +173,7 @@ export class CommandRouter {
           `discord - link Discord for DMs. Best combo: link it, then "mode offline" and I'll DM you ONLY when you're logged out - so you never miss a buff, even away from the game.`,
           `invite - join <${this.#deps.guildName}>, the guild that runs me (we're recruiting!)`,
           `feedback <message> - send a suggestion or bug report straight to the team`,
-          `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), me (your settings).`,
+          `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), profile (your settings).`,
         ];
       default: {
         // A bare confirmation code from a flow-B link (whisper the code straight back).

@@ -123,7 +123,7 @@ describe("CommandRouter", () => {
 
     it("guides an unlinked account to link first", async () => {
       const { router } = deps();
-      expect((await router.handleFromDiscord("999", "me"))[0]).toMatch(/not linked/i);
+      expect((await router.handleFromDiscord("999", "profile"))[0]).toMatch(/not linked/i);
     });
 
     it("still gives help to an unlinked account", async () => {
@@ -329,11 +329,12 @@ describe("CommandRouter", () => {
     expect((await store.get("Raider"))?.delivery).toBe("discord");
   });
 
-  it("shows the caller their settings and rejects unknown commands", async () => {
+  it("shows the caller their settings via 'profile' (and the 'me' alias), rejects unknown commands", async () => {
     const { router } = deps();
-    expect((await router.handle("Raider", "me"))[0]).toMatch(/not subscribed/);
+    expect((await router.handle("Raider", "profile"))[0]).toMatch(/not subscribed/);
     await router.handle("Raider", "subscribe");
-    expect((await router.handle("Raider", "me"))[0]).toMatch(/no Discord linked/);
+    expect((await router.handle("Raider", "profile"))[0]).toMatch(/no Discord linked/);
+    expect((await router.handle("Raider", "me"))[0]).toMatch(/no Discord linked/); // alias still works
     expect((await router.handle("Raider", "flibber"))[0]).toMatch(/didn't get that/);
   });
 
