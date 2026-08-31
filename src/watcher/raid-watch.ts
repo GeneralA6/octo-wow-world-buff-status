@@ -1,4 +1,5 @@
 import type { WhoPlayer } from "../protocol/who.js";
+import { ClearTracker, type ConfirmedClear } from "./clear-tracker.js";
 import { PresenceTracker, type PresenceChange } from "./presence.js";
 import { RaidSessions } from "./raid-sessions.js";
 import { RaidTracker, type ActiveRaid, type GroupingMode, type RaidEvent } from "./raid-tracker.js";
@@ -15,39 +16,44 @@ export interface RaidWatchOptions {
   readonly minRaidSize: number;
   readonly grouping: GroupingMode;
   readonly clearSize: number;
+  /** How long the roster must stay gone for a departure to count as a real clear (not a wipe). */
+  readonly clearSustainedMs: number;
 }
 
 export interface RaidObservation {
   readonly change: PresenceChange;
   readonly countEvents: readonly RaidEvent[];
   readonly temporalEvents: readonly RaidEvent[];
+  /** A real, completed clear was confirmed this poll — the ground truth for the timer. */
+  readonly clear: ConfirmedClear | null;
 }
 
 export class RaidWatch {
   readonly #presence = new PresenceTracker();
   readonly #tracker: RaidTracker;
   readonly #sessions: RaidSessions;
+  readonly #clears: ClearTracker;
 
   constructor(options: RaidWatchOptions) {
     this.#tracker = new RaidTracker(options.minRaidSize, options.grouping, options.clearSize);
     this.#sessions = new RaidSessions({ formAt: options.minRaidSize });
+    this.#clears = new ClearTracker({ formAt: options.minRaidSize, sustainedMs: options.clearSustainedMs });
   }
 
   observe(players: readonly WhoPlayer[], now: number, complete: boolean): RaidObservation {
-    const change = this.#presence.observe(
-      players.map((player) => player.name),
-      now,
-      complete,
-    );
+    const names = players.map((player) => player.name);
+    const change = this.#presence.observe(names, now, complete);
     if (change.blackout) {
       this.#tracker.rebaseline(players);
       this.#sessions.update(change); // clears its state on blackout too
-      return { change, countEvents: [], temporalEvents: [] };
+      this.#clears.observe(names, now, true); // discard any in-progress clear measurement
+      return { change, countEvents: [], temporalEvents: [], clear: null };
     }
     return {
       change,
       countEvents: this.#tracker.update(players),
       temporalEvents: this.#sessions.update(change),
+      clear: this.#clears.observe(names, now, false),
     };
   }
 

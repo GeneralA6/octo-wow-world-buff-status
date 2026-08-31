@@ -149,6 +149,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_MIN_CLEAR_MINUTES: "8" }).raidMinClearMs).toBe(8 * 60_000);
   });
 
+  it("defaults the clear-sustained window to 5 minutes and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidClearSustainedMs).toBe(5 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_CLEAR_SUSTAINED_MINUTES: "7" }).raidClearSustainedMs).toBe(7 * 60_000);
+  });
+
   it("defaults the /who timeout to 8s and accepts an override for slow peak load", () => {
     expect(loadConfig({ ...minimalEnv }).whoTimeoutMs).toBe(8_000);
     expect(loadConfig({ ...minimalEnv, WOW_WHO_TIMEOUT_MS: "15000" }).whoTimeoutMs).toBe(15_000);

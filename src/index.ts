@@ -458,34 +458,36 @@ async function runConnection(
         );
       }
 
-      // Self-improving timer: record every observed form→clear duration (the temporal
-      // detector measures it), then log the learned median vs the estimate in use.
-      for (const event of obs.temporalEvents) {
-        if (event.kind !== "raid-left" || event.durationMs === undefined) continue;
-        const ms = event.durationMs;
-        // A raid that "cleared" faster than a real Onyxia clear can happen is churn —
-        // a crowd that gathered and scattered (common during a flaky server) — not a
-        // real run. Drop it so it can't drag the learned median down.
+      // Self-improving timer: record a real, COMPLETED clear. The ClearTracker confirms one
+      // only when the raid's roster leaves and stays gone past the wipe-runback window — so
+      // wipes (they run back), gave-ups mid-run, ambient traffic and blackouts yield nothing.
+      // Then log the learned median vs the estimate in use.
+      if (obs.clear) {
+        const clear = obs.clear;
+        const ms = clear.durationMs;
+        const CEILING_MS = 6 * 60 * 60_000; // a single Onyxia clear is not 6h+ — that's a merge/bug
         if (!isPlausibleClear(ms, config.raidMinClearMs)) {
           logger.info(
             `raid clear ignored: ~${mins(ms)}m is below the ${mins(config.raidMinClearMs)}m floor — churn, not a real clear`,
           );
-          continue;
+        } else if (ms > CEILING_MS) {
+          logger.info(`raid clear ignored: ~${mins(ms)}m exceeds the ${mins(CEILING_MS)}m ceiling — likely a merge`);
+        } else {
+          void (async () => {
+            await durationStore.record({ ms, ts: new Date(now) });
+            const [learned, samples] = await Promise.all([
+              durationStore.median(config.raidLearnMinSamples),
+              durationStore.count(),
+            ]);
+            logger.info(
+              `raid clear recorded: ~${mins(ms)}m (peak ${clear.peak}, ${samples} samples; ` +
+                (learned
+                  ? `learned median ${mins(learned)}m now driving the heads-up`
+                  : `need ${config.raidLearnMinSamples} to switch off the ${mins(config.raidDurationEstimateMs)}m estimate`) +
+                ")",
+            );
+          })().catch((error) => logger.debug(`duration: ${describeError(error)}`));
         }
-        void (async () => {
-          await durationStore.record({ ms, ts: new Date(now) });
-          const [learned, samples] = await Promise.all([
-            durationStore.median(config.raidLearnMinSamples),
-            durationStore.count(),
-          ]);
-          logger.info(
-            `raid clear recorded: ~${mins(ms)}m (${samples} samples; ` +
-              (learned
-                ? `learned median ${mins(learned)}m now driving the heads-up`
-                : `need ${config.raidLearnMinSamples} to switch off the ${mins(config.raidDurationEstimateMs)}m estimate`) +
-              ")",
-          );
-        })().catch((error) => logger.debug(`duration: ${describeError(error)}`));
       }
     };
 
@@ -887,6 +889,7 @@ async function main(): Promise<void> {
     minRaidSize: config.minRaidSize,
     grouping: config.raidGrouping,
     clearSize: config.raidClearSize,
+    clearSustainedMs: config.raidClearSustainedMs,
   };
   const lanes: DetectionLane[] =
     config.realmType === "faction"
