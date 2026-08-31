@@ -116,6 +116,10 @@ export interface BotConfig {
   /** How long to wait for a /who reply before giving up. Under peak server load /who
    *  can be slow, so this is tunable — raise it if the watcher logs repeated timeouts. */
   readonly whoTimeoutMs: number;
+  /** Max distance (yards) a GameObject may be for an "interact" listener to `use` it (sit on
+   *  the bench). Tunable because the server range-checks the use, so it needs the character
+   *  parked within reach of the bench. */
+  readonly interactMaxYd: number;
   readonly discordWebhookUrl: string;
   /** Role to ping on raid enter/leave so only opted-in members are notified. */
   readonly discordMentionRoleId: string | null;
@@ -281,6 +285,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
   const whoTimeoutMs = intWithDefault("WOW_WHO_TIMEOUT_MS", 8_000, 1_000);
+  const interactMaxYd = intWithDefault("WOW_INTERACT_MAX_YD", 8, 1);
 
   const discordWebhookUrl = required("DISCORD_WEBHOOK_URL");
 
@@ -349,6 +354,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     mongodbDb,
     pollIntervalMs,
     whoTimeoutMs,
+    interactMaxYd,
     discordWebhookUrl,
     discordMentionRoleId,
     guildName,

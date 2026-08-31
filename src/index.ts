@@ -103,9 +103,6 @@ const HEARTBEAT_MS = 15 * 60_000;
  *  object burst can arrive over several seconds, so we poll rather than wait once. */
 const OBJECT_POLL_MS = 2_500;
 const OBJECT_POLL_MAX = 12;
-/** Only interact with an object we're basically standing ON. A character parked on a
- *  bench sits ~0.5yd from it; anything further is a different object she isn't on. */
-const OBJECT_INTERACT_MAX_YD = 3;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -808,10 +805,11 @@ async function runListener(
                 target && selfPos
                   ? Math.hypot(target.pos.x - selfPos.x, target.pos.y - selfPos.y, target.pos.z - selfPos.z)
                   : Infinity;
-              if (target && dist <= OBJECT_INTERACT_MAX_YD) {
+              if (target && dist <= config.interactMaxYd) {
                 interacted = true;
                 logger.info(
-                  `${listener.characterName}: using nearest object entry=${target.entry} (~${dist.toFixed(1)} yd)`,
+                  `${listener.characterName}: using nearest object entry=${target.entry} (~${dist.toFixed(1)} yd) — ` +
+                    `check in-game whether ${listener.characterName} is now seated; if not, the server likely refused the use at that range (park closer to the bench)`,
                 );
                 world.useGameObject(target.guid);
                 return;
@@ -831,7 +829,7 @@ async function runListener(
                       .join(", ")
                   : "n/a";
                 logger.warn(
-                  `${listener.characterName}: no object within ${OBJECT_INTERACT_MAX_YD}yd after ${attempts} tries ` +
+                  `${listener.characterName}: no object within ${config.interactMaxYd}yd after ${attempts} tries ` +
                     `(self=${sp ? `(${sp.x.toFixed(0)},${sp.y.toFixed(0)},${sp.z.toFixed(0)})` : "no"}, ` +
                     `objects=${nearby.length}, closest=[${closest}])`,
                 );

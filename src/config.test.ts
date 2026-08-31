@@ -164,6 +164,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_WHO_TIMEOUT_MS: "15000" }).whoTimeoutMs).toBe(15_000);
   });
 
+  it("defaults the interact range to 8 yards and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).interactMaxYd).toBe(8);
+    expect(loadConfig({ ...minimalEnv, WOW_INTERACT_MAX_YD: "5" }).interactMaxYd).toBe(5);
+  });
+
   it("defaults the realm type to crossfaction and accepts faction", () => {
     expect(loadConfig({ ...minimalEnv }).realmType).toBe("crossfaction");
     expect(loadConfig({ ...minimalEnv, WOW_REALM_TYPE: "faction" }).realmType).toBe("faction");
