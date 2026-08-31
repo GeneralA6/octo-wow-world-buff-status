@@ -81,6 +81,19 @@ describe("formatBuffCooldownRefreshed", () => {
     expect(message.body).toContain("Orgrimmar");
     expect(message.body).not.toContain("Stormwind");
   });
+
+  it("appends the how-to-filter/unsubscribe hint by default (the public channel post)", () => {
+    const body = formatBuffCooldownRefreshed("horde").body;
+    expect(body).toMatch(/alliance.*horde|horde.*alliance/i);
+    expect(body).toMatch(/unsubscribe/i);
+  });
+
+  it("omits the hint when asked (a DM to a subscriber who already picked a side)", () => {
+    const body = formatBuffCooldownRefreshed("horde", false).body;
+    expect(body).not.toMatch(/unsubscribe/i);
+    expect(body).not.toContain('"alliance"');
+    expect(body).toContain("Onyxia"); // the substance is still there
+  });
 });
 
 describe("formatFeedbackPost", () => {
