@@ -17,12 +17,11 @@ import { parseIntent, type Intent } from "./intent.js";
  * Commands (case-insensitive, a leading !/./ tolerated):
  *   subscribe | sub | start        — opt in to in-game raid alerts
  *   unsubscribe | unsub | stop      — opt out
- *   discord                         — link Discord by DMing the bot a code (flow A)
- *   discord <id>                    — link by pasting your id; bot DMs a code (flow B)
+ *   discord                         — link Discord: bot mints a code, you DM it to the bot on Discord
  *   discord off                     — unlink
- *   confirm <code> | <code>         — confirm a flow-B code in-game
+ *   invite | join                   — guild-invite the caller
  *   mode both | mode offline        — Discord always, or only when offline in-game
- *   status | me | help
+ *   notify | status | me | help
  */
 export interface CommandDeps {
   readonly store: SubscriberStore;
@@ -36,7 +35,6 @@ export interface CommandDeps {
   readonly linker?: DiscordLinker | null;
 }
 
-const DISCORD_ID = /^\d{17,20}$/;
 const MODE_ALIASES: Record<string, DeliveryMode> = {
   ingame: "ingame",
   "in-game": "ingame",
@@ -68,7 +66,7 @@ export class CommandRouter {
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
     const command = (parts[0] ?? "").toLowerCase();
     const arg = parts[1] ?? "";
-    const { store, activeRaids, areaName, linker } = this.#deps;
+    const { store, activeRaids, areaName } = this.#deps;
 
     switch (command) {
       case "subscribe":
@@ -93,11 +91,6 @@ export class CommandRouter {
       }
       case "discord":
         return this.#discord(sender, arg);
-      case "confirm": {
-        if (!linker) return ["Discord isn't set up on this bot."];
-        const ok = await linker.confirmFromWhisper(sender, arg);
-        return [ok ? this.#linkedLine() : `That code didn't match. Whisper "discord" to start again.`];
-      }
       case "invite":
       case "join":
         return this.#invite(sender);
@@ -131,9 +124,7 @@ export class CommandRouter {
           `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), me (your settings).`,
         ];
       default: {
-        // A bare confirmation code from a flow-B link.
-        if (linker && (await linker.confirmFromWhisper(sender, command))) return [this.#linkedLine()];
-        // Fall back to natural-language intent detection over the whole message.
+        // Natural-language intent detection over the whole message.
         const intent = parseIntent(text);
         if (intent) return this.#handleIntent(intent, sender);
         return [`Sorry, I didn't get that. Whisper "help" for what I can do.`];
@@ -141,44 +132,22 @@ export class CommandRouter {
     }
   }
 
-  #linkedLine(): string {
-    return `Discord linked! You'll get ${this.#deps.areaName} alerts there too. "mode offline" for DMs only when you're offline.`;
-  }
-
   async #discord(sender: string, arg: string): Promise<string[]> {
     const { linker } = this.#deps;
     if (!linker) return ["Discord isn't set up on this bot."];
-    const invite = linker.serverInviteUrl;
-    const joinHint = invite ? ` Join ${invite} first.` : "";
 
-    if (arg === "") {
-      const code = await linker.startDmLink(sender);
-      const join = invite ? `join our server ${invite}, then ` : "";
-      return [
-        `Want the buff alerts on Discord too? Easiest way, no ID needed: ${join}send our bot a DM on Discord with the code ${code}, and I'll know it's you.`,
-        `Or, whisper me your numeric Discord ID — an 18-digit number (Developer Mode on, right-click your name, Copy User ID) — and I'll DM you a code to whisper back. Codes expire ~15 min.`,
-      ];
-    }
     if (["off", "clear", "none", "remove"].includes(arg.toLowerCase())) {
       const ok = await linker.unlink(sender);
       return [ok ? `Discord unlinked — in-game whispers only.` : `You're not subscribed.`];
     }
-    if (!DISCORD_ID.test(arg)) {
-      return [
-        `"${arg}" looks like a username, not your ID. I need your numeric Discord ID — an 18-digit number (Developer Mode on in Discord, right-click your name, Copy User ID).`,
-        `Or skip the ID entirely: whisper just "discord" and I'll link you with a code — no ID needed.`,
-      ];
-    }
-    switch (await linker.startIdLink(sender, arg)) {
-      case "sent":
-        return [`I DMed you a code — whisper it back here to confirm.`];
-      case "unreachable":
-        return [`I couldn't DM you.${joinHint} Enable "DMs from server members", then try again.`];
-      case "not-configured":
-        return [`Discord isn't set up on this bot.`];
-      default:
-        return [`Trouble reaching Discord — try again in a moment.`];
-    }
+
+    const invite = linker.serverInviteUrl;
+    const code = await linker.startDmLink(sender);
+    const join = invite ? `join our server ${invite}, then ` : "";
+    return [
+      `Want the buff alerts on Discord too? ${join}send our bot a DM on Discord with the code ${code}, and I'll know it's you — no ID needed.`,
+      `Send the code as a direct message to the bot on Discord (not here in WoW). It expires in ~15 min.`,
+    ];
   }
 
   async #mode(sender: string, arg: string): Promise<string[]> {

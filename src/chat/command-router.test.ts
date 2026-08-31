@@ -137,44 +137,22 @@ describe("CommandRouter", () => {
     expect((await router.handle("Ghost", "notify"))[0]).toMatch(/not subscribed/);
   });
 
-  it("flow A: 'discord' mints a code to DM and subscribes the caller", async () => {
+  it("'discord' mints a code to DM the bot and subscribes the caller", async () => {
     const { store, router } = deps();
     const reply = (await router.handle("Raider", "discord")).join(" ");
-    expect(reply).toContain("CODE01"); // the DM-a-code method
+    expect(reply).toContain("CODE01"); // the code to DM the bot
     expect(reply).toContain("discord.gg/x"); // the server to join
-    expect(reply).toMatch(/discord id/i); // ...AND the give-us-your-id method, both stated
+    expect(reply).toMatch(/no id needed/i); // no ID/username step
+    expect(reply).toMatch(/not here in WoW/i); // send it on Discord
     expect(await store.has("Raider")).toBe(true);
   });
 
-  it("flow B: 'discord <id>' DMs a code and asks to confirm", async () => {
-    const { router } = deps();
-    expect((await router.handle("Raider", "discord 123456789012345678"))[0]).toMatch(/DMed you a code/);
-  });
-
-  it("flow B: an unreachable id guides the user to join and open DMs", async () => {
-    const { router } = deps({ fetch: () => Promise.resolve(res(false, 403)) });
-    const reply = (await router.handle("Raider", "discord 123456789012345678"))[0];
-    expect(reply).toMatch(/couldn't DM you/);
-    expect(reply).toContain("discord.gg/x");
-  });
-
-  it("confirms a flow-B code, whether via 'confirm <code>' or a bare code", async () => {
+  it("'discord off' unlinks", async () => {
     const { store, router } = deps();
-    await router.handle("Raider", "discord 123456789012345678");
-    expect((await router.handle("Raider", "confirm CODE01"))[0]).toMatch(/linked/i);
-    expect((await store.get("Raider"))?.discordId).toBe("123456789012345678");
-
-    const again = deps();
-    await again.router.handle("Raider", "discord 123456789012345678");
-    expect((await again.router.handle("Raider", "CODE01"))[0]).toMatch(/linked/i);
-  });
-
-  it("explains a username isn't the numeric id and points at the DM flow", async () => {
-    const { router } = deps();
-    const reply = (await router.handle("Raider", "discord General_A6#6266")).join(" ");
-    expect(reply).toContain("General_A6#6266"); // echoes what they sent
-    expect(reply).toMatch(/18-digit|numeric/i); // explains the real id
-    expect(reply).toMatch(/no ID needed|link you with a code/i); // offers the no-id path
+    await router.handle("Raider", "subscribe");
+    await store.update("Raider", { discordId: "999888777" });
+    expect((await router.handle("Raider", "discord off"))[0]).toMatch(/unlinked/i);
+    expect((await store.get("Raider"))?.discordId).toBeNull();
   });
 
   it("unlinks with 'discord off'", async () => {

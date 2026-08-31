@@ -33,46 +33,23 @@ describe("DiscordLinker", () => {
     expect((await store.get("Raider"))?.discordId).toBe("999888777");
   });
 
-  it("flow B: startIdLink DMs a code and reports sent", async () => {
+  it("ignores a DM code that was never minted", async () => {
     const okFetch = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200));
     const { linker } = make({ fetch: okFetch });
-    expect(await linker.startIdLink("Raider", "123456789012345678")).toBe("sent");
-  });
-
-  it("flow B: an unreachable DM reports unreachable and drops the code", async () => {
-    const badFetch = vi.fn<DiscordFetch>().mockResolvedValue(res(false, 403));
-    const { pending, linker } = make({ fetch: badFetch });
-    expect(await linker.startIdLink("Raider", "123456789012345678")).toBe("unreachable");
-    expect(pending.size).toBe(0);
-  });
-
-  it("flow B: confirmFromWhisper links the minted id, only for the owning character", async () => {
-    const okFetch = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200));
-    const { store, linker } = make({ fetch: okFetch });
-    await linker.startIdLink("Raider", "123456789012345678");
-
-    expect(await linker.confirmFromWhisper("SomeoneElse", "CODE01")).toBe(false);
-    expect(await linker.confirmFromWhisper("Raider", "CODE01")).toBe(true);
-    expect((await store.get("Raider"))?.discordId).toBe("123456789012345678");
-  });
-
-  it("does not confirm a flow-A (id-less) code from an in-game whisper", async () => {
-    const { linker } = make();
-    await linker.startDmLink("Raider"); // no id on the pending
-    expect(await linker.confirmFromWhisper("Raider", "CODE01")).toBe(false);
+    expect(await linker.confirmFromDm("999888777", "NOSUCH")).toBeNull();
   });
 
   it("reports not-configured without a bot token", async () => {
     const { linker } = make({ token: null });
     expect(linker.isConfigured).toBe(false);
-    expect(await linker.startIdLink("Raider", "123456789012345678")).toBe("not-configured");
   });
 
   it("unlinks a character", async () => {
     const okFetch = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200));
     const { store, linker } = make({ fetch: okFetch });
-    await linker.startIdLink("Raider", "123456789012345678");
-    await linker.confirmFromWhisper("Raider", "CODE01");
+    await linker.startDmLink("Raider");
+    await linker.confirmFromDm("123456789012345678", "CODE01");
+    expect((await store.get("Raider"))?.discordId).toBe("123456789012345678");
     expect(await linker.unlink("Raider")).toBe(true);
     expect((await store.get("Raider"))?.discordId).toBeNull();
   });
