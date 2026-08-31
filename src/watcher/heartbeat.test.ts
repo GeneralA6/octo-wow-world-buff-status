@@ -41,4 +41,27 @@ describe("formatHeartbeat", () => {
     const line = formatHeartbeat({ ...base, buffs: [{ faction: "horde", leftMs: 89_000 }] });
     expect(line).toContain("horde up 1m left");
   });
+
+  it("appends the timer accuracy with a signed bias when clears have been scored", () => {
+    const line = formatHeartbeat({
+      ...base,
+      samples: 20,
+      learnedMedianMs: 45 * 60_000,
+      accuracy: { evaluated: 15, maeMs: 6 * 60_000, biasMs: 2 * 60_000 },
+    });
+    expect(line).toContain("accuracy MAE 6m bias +2m over 15");
+  });
+
+  it("shows a negative bias with a minus sign", () => {
+    const line = formatHeartbeat({
+      ...base,
+      accuracy: { evaluated: 9, maeMs: 4 * 60_000, biasMs: -3 * 60_000 },
+    });
+    expect(line).toContain("bias -3m");
+  });
+
+  it("omits the accuracy segment when nothing has been scored yet", () => {
+    expect(formatHeartbeat({ ...base, accuracy: null })).not.toContain("accuracy");
+    expect(formatHeartbeat({ ...base, accuracy: { evaluated: 0, maeMs: 0, biasMs: 0 } })).not.toContain("accuracy");
+  });
 });

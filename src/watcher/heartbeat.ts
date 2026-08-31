@@ -13,6 +13,16 @@ export interface HeartbeatBuff {
   readonly leftMs: number | null;
 }
 
+/** How well the learned timer has predicted past clears — the self-evaluation segment. */
+export interface HeartbeatAccuracy {
+  /** How many past clears were scored. */
+  readonly evaluated: number;
+  /** Mean absolute prediction error (ms). */
+  readonly maeMs: number;
+  /** Mean signed error (ms): positive = raids ran longer than predicted (alert fires early). */
+  readonly biasMs: number;
+}
+
 export interface HeartbeatStats {
   readonly subscribers: number;
   readonly samples: number;
@@ -21,21 +31,28 @@ export interface HeartbeatStats {
   readonly estimateMs: number;
   readonly minSamples: number;
   readonly buffs: readonly HeartbeatBuff[];
+  /** Timer self-evaluation, appended when at least one past clear has been scored. */
+  readonly accuracy?: HeartbeatAccuracy | null;
 }
 
 const mins = (ms: number): number => Math.round(ms / 60_000);
+const signedMins = (ms: number): string => `${ms >= 0 ? "+" : "-"}${Math.abs(mins(ms))}m`;
 
-/** One log line: `monitor: 12 subs; raid timer learned median 43m (18 samples); buffs alliance up 74m left, horde clear`. */
+/** One log line: `monitor: 12 subs; raid timer learned median 43m (18 samples); accuracy MAE 6m bias +2m over 15; buffs alliance up 74m left, horde clear`. */
 export function formatHeartbeat(stats: HeartbeatStats): string {
   const timer =
     stats.learnedMedianMs !== null
       ? `learned median ${mins(stats.learnedMedianMs)}m (${stats.samples} samples)`
       : `${mins(stats.estimateMs)}m estimate (${stats.samples}/${stats.minSamples} to learn)`;
+  const accuracy =
+    stats.accuracy && stats.accuracy.evaluated > 0
+      ? `; accuracy MAE ${mins(stats.accuracy.maeMs)}m bias ${signedMins(stats.accuracy.biasMs)} over ${stats.accuracy.evaluated}`
+      : "";
   const buffs =
     stats.buffs.length === 0
       ? "none tracked"
       : stats.buffs
           .map((b) => `${b.faction} ${b.leftMs === null ? "clear" : `up ${mins(b.leftMs)}m left`}`)
           .join(", ");
-  return `monitor: ${stats.subscribers} subs; raid timer ${timer}; buffs ${buffs}`;
+  return `monitor: ${stats.subscribers} subs; raid timer ${timer}${accuracy}; buffs ${buffs}`;
 }

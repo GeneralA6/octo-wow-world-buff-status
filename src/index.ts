@@ -42,6 +42,7 @@ import {
   type DurationStore,
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
+import { evaluateTimer } from "./watcher/timer-eval.js";
 import {
   InMemoryRaidCounterStore,
   MongoRaidCounterStore,
@@ -89,6 +90,9 @@ const POLL_JITTER_RATIO = 0.15;
 
 /** Don't re-check the CDN build more often than this while a rejection persists. */
 const HEAL_CHECK_COOLDOWN_MS = 5 * 60_000;
+
+/** How many recent clears the timer self-evaluation replays each heartbeat. */
+const TIMER_EVAL_WINDOW = 200;
 
 /** Max time from connecting to reaching in-world before the handshake is deemed stalled. */
 const WORLD_READY_TIMEOUT_MS = 30_000;
@@ -476,8 +480,8 @@ async function runConnection(
     };
 
     const logHeartbeat = async (now: number): Promise<void> => {
-      const [samples, learnedMedianMs, subscribers, buffs] = await Promise.all([
-        durationStore.count(),
+      const [series, learnedMedianMs, subscribers, buffs] = await Promise.all([
+        durationStore.recent(TIMER_EVAL_WINDOW),
         durationStore.median(config.raidLearnMinSamples),
         store.all().then((all) => all.length),
         Promise.all(
@@ -488,14 +492,21 @@ async function runConnection(
           }),
         ),
       ]);
+      // Self-evaluate the learned timer: how well would its expanding-window median have
+      // predicted each past clear? Logged so the overnight monitor shows whether it's good.
+      const evaln = evaluateTimer(series.map((d) => d.ms), config.raidLearnMinSamples);
       logger.info(
         formatHeartbeat({
           subscribers,
-          samples,
+          samples: evaln.samples,
           learnedMedianMs,
           estimateMs: config.raidDurationEstimateMs,
           minSamples: config.raidLearnMinSamples,
           buffs,
+          accuracy:
+            evaln.evaluated > 0 && evaln.maeMs !== null && evaln.biasMs !== null
+              ? { evaluated: evaln.evaluated, maeMs: evaln.maeMs, biasMs: evaln.biasMs }
+              : null,
         }),
       );
     };

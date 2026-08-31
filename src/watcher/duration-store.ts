@@ -19,6 +19,9 @@ export interface DurationStore {
   record(duration: RaidDuration): Promise<void>;
   /** Median clear time (ms) once at least `minSamples` are recorded, else null. */
   median(minSamples: number): Promise<number | null>;
+  /** The most recent durations, up to `limit`, in CHRONOLOGICAL order (oldest first) —
+   *  for the timer self-evaluation, which replays history forwards. */
+  recent(limit: number): Promise<RaidDuration[]>;
   count(): Promise<number>;
   close(): Promise<void>;
 }
@@ -50,6 +53,9 @@ export class InMemoryDurationStore implements DurationStore {
   async median(minSamples: number): Promise<number | null> {
     if (this.#durations.length < minSamples) return null;
     return medianOf(this.#durations.map((d) => d.ms));
+  }
+  async recent(limit: number): Promise<RaidDuration[]> {
+    return this.#durations.slice(-limit);
   }
   async count(): Promise<number> {
     return this.#durations.length;
@@ -112,6 +118,12 @@ export class MongoDurationStore implements DurationStore {
     const docs = await this.#db.recent(MEDIAN_WINDOW);
     if (docs.length < minSamples) return null;
     return medianOf(docs.map((d) => d.ms));
+  }
+
+  async recent(limit: number): Promise<RaidDuration[]> {
+    // The port returns newest-first; the evaluation replays forwards, so reverse to chronological.
+    const docs = await this.#db.recent(limit);
+    return docs.reverse().map((d) => ({ ms: d.ms, ts: d.ts }));
   }
 
   async count(): Promise<number> {
