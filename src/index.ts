@@ -362,7 +362,7 @@ async function runConnection(
         const was = lastBuffActive.get(faction);
         lastBuffActive.set(faction, active);
         if (was === true && !active) {
-          logger.info(`buff cooldown refreshed: ${faction}`);
+          logger.info(`Onyxia Rallying Cry cooldown refreshed for ${faction} (${faction === "alliance" ? "Stormwind" : "Orgrimmar"}) - a fresh one can drop again`);
           const whisperLine = formatBuffCooldownRefreshedWhisper(faction);
           void push(formatBuffCooldownRefreshed(faction));
           void notifyFactionSubscribers(faction, whisperLine, formatBuffCooldownRefreshed(faction).body);

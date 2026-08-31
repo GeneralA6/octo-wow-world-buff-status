@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { RaidCohortSnapshot } from "../watcher/raid-tracker.js";
 import {
   formatBuffAlert,
+  formatBuffCooldownRefreshed,
+  formatBuffCooldownRefreshedWhisper,
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
@@ -62,6 +64,31 @@ describe("formatBuffDroppedWhisper", () => {
     expect(line).toContain("~2h");
     expect(line).not.toMatch(/\d{1,2}:\d{2}/); // no HH:MM
     expect(line).not.toMatch(/<t:/); // no Discord timestamp (WoW can't render it)
+  });
+
+  it("names the buff in full, so a reader knows which buff it is", () => {
+    expect(formatBuffDroppedWhisper("horde", 120 * 60_000)).toContain("Rallying Cry of the Dragonslayer");
+  });
+});
+
+describe("formatBuffCooldownRefreshed", () => {
+  it("names the city, the full buff, and its Onyxia source so it's unambiguous", () => {
+    const message = formatBuffCooldownRefreshed("horde");
+    expect(message.title).toContain("Orgrimmar");
+    expect(message.title).toContain("Rallying Cry of the Dragonslayer");
+    expect(message.body).toContain("Onyxia");
+    expect(message.body).toContain("Orgrimmar");
+    expect(message.body).not.toContain("Stormwind");
+  });
+});
+
+describe("formatBuffCooldownRefreshedWhisper", () => {
+  it("spells out the full buff and its Onyxia source for a city yell, no clock time", () => {
+    const line = formatBuffCooldownRefreshedWhisper("alliance");
+    expect(line).toContain("Rallying Cry of the Dragonslayer");
+    expect(line).toContain("Onyxia");
+    expect(line).toContain("Stormwind");
+    expect(line).not.toMatch(/<t:/); // WoW can't render Discord timestamps
   });
 });
 

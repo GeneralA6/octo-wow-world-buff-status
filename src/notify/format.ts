@@ -36,25 +36,34 @@ export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs:
 export function formatBuffDroppedWhisper(faction: Faction, durationMs: number): string {
   const city = CITY_FOR[faction];
   return (
-    `The Rallying Cry just dropped in ${city}! It's up for ~${humanDuration(durationMs)} - go grab it now. ` +
+    `The Rallying Cry of the Dragonslayer just dropped in ${city}! It's up for ~${humanDuration(durationMs)} - go grab it now. ` +
     `The next one can't drop until this one wears off.`
   );
 }
 
-/** The buff's window just elapsed, so a fresh one can drop again. Discord channel post. */
+/** The buff's window just elapsed, so a fresh one can drop again. Discord channel post.
+ *  Names the full buff and ties it to Onyxia, so a reader who wasn't following knows
+ *  exactly which buff this is and where it comes from. */
 export function formatBuffCooldownRefreshed(faction: Faction): NotifyMessage {
   const city = CITY_FOR[faction];
   return {
     kind: "info",
-    title: `🔄 Rallying Cry ready in ${city}`,
-    body: `The ${city} Rallying Cry has worn off - a fresh one can drop now, so park up if you want to catch it.`,
+    title: `🔄 Rallying Cry of the Dragonslayer can drop again in ${city}`,
+    body:
+      `The last Rallying Cry of the Dragonslayer (the Onyxia world buff) in ${city} has worn off, ` +
+      `so a fresh one can drop again as soon as a raid clears Onyxia and turns in the head. ` +
+      `Park up in ${city} if you want to catch it.`,
   };
 }
 
-/** Plain in-game line (whisper or yell) that the cooldown is up. */
+/** Plain in-game line (whisper or yell) that the cooldown is up. Spells out the full buff
+ *  name and its Onyxia source, since a city yell reaches people who weren't following. */
 export function formatBuffCooldownRefreshedWhisper(faction: Faction): string {
   const city = CITY_FOR[faction];
-  return `The ${city} Rallying Cry has worn off - a fresh one can drop now. Park up to catch it!`;
+  return (
+    `Heads up - the Rallying Cry of the Dragonslayer (the Onyxia world buff) can drop again in ${city}: ` +
+    `the last one just wore off, so the next Onyxia clear can hand it out. Park up to catch it!`
+  );
 }
 
 /** Human list of the capitals where a fresh buff is possible ("Stormwind or Orgrimmar"). */
