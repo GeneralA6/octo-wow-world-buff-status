@@ -30,6 +30,17 @@ export class InMemorySubscriberStore implements SubscriberStore {
     return this.#byKey.delete(subscriberKey(name));
   }
 
+  async removeByDiscordId(discordId: string): Promise<string[]> {
+    const removed: string[] = [];
+    for (const [key, sub] of this.#byKey) {
+      if (sub.discordId === discordId) {
+        this.#byKey.delete(key);
+        removed.push(sub.name);
+      }
+    }
+    return removed;
+  }
+
   async has(name: string): Promise<boolean> {
     return this.#byKey.has(subscriberKey(name));
   }

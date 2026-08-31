@@ -51,6 +51,22 @@ describe("MongoSubscriberStore", () => {
     expect(sub).not.toHaveProperty("_id");
   });
 
+  it("removes every character linked to a Discord id and returns their names", async () => {
+    const db = fakeDb();
+    const store = new MongoSubscriberStore(db);
+    await store.add("Main");
+    await store.add("Alt");
+    await store.add("Other");
+    await store.update("main", { discordId: "42" });
+    await store.update("alt", { discordId: "42" });
+    await store.update("other", { discordId: "99" });
+    const removed = await store.removeByDiscordId("42");
+    expect(removed.sort()).toEqual(["Alt", "Main"]);
+    expect(db.docs.has("main")).toBe(false);
+    expect(db.docs.has("other")).toBe(true);
+    expect(await store.removeByDiscordId("nobody")).toEqual([]);
+  });
+
   it("updates only the provided fields", async () => {
     const db = fakeDb();
     const store = new MongoSubscriberStore(db);

@@ -67,6 +67,9 @@ export interface SubscriberStore {
   add(name: string): Promise<boolean>;
   /** Remove a subscriber. True if one was removed. */
   remove(name: string): Promise<boolean>;
+  /** Remove every subscriber linked to a Discord id (unsubscribe from the Discord side).
+   *  Returns the character names removed. */
+  removeByDiscordId(discordId: string): Promise<string[]>;
   has(name: string): Promise<boolean>;
   get(name: string): Promise<Subscriber | null>;
   /** Apply changes to an existing subscriber. False if they aren't subscribed. */

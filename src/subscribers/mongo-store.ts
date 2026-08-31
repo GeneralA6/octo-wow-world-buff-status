@@ -114,6 +114,16 @@ export class MongoSubscriberStore implements SubscriberStore {
     return (await this.#db.deleteByKey(key)).deletedCount === 1;
   }
 
+  async removeByDiscordId(discordId: string): Promise<string[]> {
+    if (!discordId) return [];
+    const mine = (await this.#db.list()).filter((doc) => doc.discordId === discordId);
+    const removed: string[] = [];
+    for (const doc of mine) {
+      if ((await this.#db.deleteByKey(doc._id)).deletedCount === 1) removed.push(doc.name);
+    }
+    return removed;
+  }
+
   async has(name: string): Promise<boolean> {
     const key = subscriberKey(name);
     if (!key) return false;
