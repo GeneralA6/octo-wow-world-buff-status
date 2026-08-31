@@ -21,6 +21,13 @@ export interface CreatedInvite {
   readonly url: string;
 }
 
+/** The invite operations the linker depends on — so it can be tested with a fake. */
+export interface InvitesApi {
+  readonly isConfigured: boolean;
+  createInvite(channelId: string): Promise<CreatedInvite | null>;
+  listInvites(guildId: string): Promise<InviteUse[] | null>;
+}
+
 const API = "https://discord.com/api/v10";
 const DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // unused personal invites expire in a week
 const defaultFetch: InviteFetch = (url, init) => fetch(url, init);
@@ -41,7 +48,7 @@ function readNumber(value: unknown, key: string): number | null {
   return null;
 }
 
-export class DiscordInvites {
+export class DiscordInvites implements InvitesApi {
   readonly #token: string | null;
   readonly #fetch: InviteFetch;
   readonly #maxAgeSeconds: number;
