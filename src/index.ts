@@ -65,7 +65,7 @@ import { Outreach } from "./chat/outreach.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
-import { subscriberKey, type AlertType, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
+import { subscriberKey, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 
 /** Client identity values that self-heal from the CDN across OctoWoW patches. */
@@ -265,8 +265,7 @@ async function runConnection(
       // Yell in each open capital via its listener, so everyone standing there hears it.
       for (const city of cities) yellSink[city]?.(formatBuffWhisper(event, [city], config.watchAreaName));
 
-      // Whisper the in-game subscribers who want this alert type, each hearing only their side.
-      const alertType: AlertType = event.kind === "raid-forming" ? "forming" : "cleared";
+      // Whisper the in-game subscribers, each hearing only their side.
       let subscribers: Subscriber[] = [];
       try {
         subscribers = await store.all();
@@ -274,7 +273,6 @@ async function runConnection(
         logger.error(`subscribers: ${describeError(error)}`);
         return;
       }
-      subscribers = subscribers.filter((subscriber) => subscriber.alerts.includes(alertType));
       if (subscribers.length === 0) return;
       for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, cities)) {
         const line = formatBuffWhisper(event, groupCities, config.watchAreaName);
@@ -292,7 +290,7 @@ async function runConnection(
         logger.error(`subscribers: ${describeError(error)}`);
         return;
       }
-      subscribers = subscribers.filter((s) => s.factions.includes(faction) && s.alerts.length > 0);
+      subscribers = subscribers.filter((s) => s.factions.includes(faction));
       if (subscribers.length === 0) return;
       whisperQueue?.enqueueAll(subscribers.map((s) => s.name), whisperLine);
     };
@@ -1080,6 +1078,7 @@ async function main(): Promise<void> {
     areaName: config.watchAreaName,
     guildName: config.guildName,
     community: config.community,
+    discordInvite: config.discordServerInvite,
     onFeedback,
   });
   const outreach = new Outreach(

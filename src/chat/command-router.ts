@@ -1,12 +1,4 @@
-import {
-  ALL_ALERT_TYPES,
-  DEFAULT_FACTIONS,
-  isAlertType,
-  isFaction,
-  type AlertType,
-  type Faction,
-  type SubscriberStore,
-} from "../subscribers/store.js";
+import { DEFAULT_FACTIONS, isFaction, type Faction, type SubscriberStore } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
 import { CITY_FOR, FACTION_FILTER_HINT, humanClock } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
@@ -38,7 +30,8 @@ export function factionLabel(factions: readonly Faction[]): string {
  *   alliance | horde | both         — which side's buff you want
  *   invite | join                   — guild-invite the caller
  *   feedback | suggest              — send a message to the team
- *   notify | status | profile | help
+ *   discord                         — share the community Discord invite link
+ *   status | profile | help
  */
 export interface CommandDeps {
   readonly store: SubscriberStore;
@@ -48,6 +41,9 @@ export interface CommandDeps {
   /** Guild + community named in recruiting/intent replies. */
   readonly guildName: string;
   readonly community: string;
+  /** The community Discord server invite link, shared by the "discord" command.
+   *  Null/undefined = not configured, and the command says so. */
+  readonly discordInvite?: string | null;
   /** Receives a player's "feedback"/"suggest" message (sender + text). Fire-and-forget:
    *  the caller persists it and posts it to the feedback channel. Undefined = no-op. */
   readonly onFeedback?: (from: string, text: string) => void;
@@ -122,16 +118,14 @@ export class CommandRouter {
       case "faction":
       case "side":
         return this.#setFaction(sender, arg);
-      case "notify":
-      case "alerts":
-        return this.#notify(sender, arg, (parts[2] ?? "").toLowerCase());
+      case "discord":
+        return this.#discord();
       case "profile":
       case "me": {
         const sub = await store.get(sender);
         if (!sub) return [`You're not subscribed. Whisper "subscribe" to start.`];
-        const alerts = sub.alerts.length ? sub.alerts.join(", ") : "none";
         return [
-          `Subscribed - ${factionLabel(sub.factions)} buffs. Alerts: ${alerts}. ("alliance"/"horde"/"both" to change your side.)`,
+          `Subscribed - ${factionLabel(sub.factions)} buffs. ("alliance"/"horde"/"both" to change your side.)`,
         ];
       }
       case "status":
@@ -145,7 +139,7 @@ export class CommandRouter {
           `alliance / horde / both - which side's buff you want (I try to detect it; default both)`,
           `invite - join <${this.#deps.guildName}>, the guild that runs me (we're recruiting!)`,
           `feedback <message> - send a suggestion or bug report straight to the team`,
-          `also: notify which alerts (e.g. "notify cleared off"), status (raids now), profile (your settings).`,
+          `also: discord (our Discord), status (raids now), profile (your settings).`,
         ];
       default: {
         // Natural-language intent detection over the whole message.
@@ -207,42 +201,13 @@ export class CommandRouter {
     return [`Done - I'll alert you for ${factionLabel(factions)} buffs.`];
   }
 
-  /** Choose which alert types you get. "notify" shows them; "notify <type> on|off",
-   *  "notify all", "notify none". A bare "notify <type>" flips it. */
-  async #notify(sender: string, target: string, onOff: string): Promise<string[]> {
-    const { store } = this.#deps;
-    const sub = await store.get(sender);
-    if (!sub) return [`You're not subscribed. Whisper "subscribe" first.`];
-
-    const listing = sub.alerts.length ? sub.alerts.join(", ") : "none";
-    const t = target.toLowerCase();
-
-    if (t === "") {
-      return [
-        `You get: ${listing} (of: ${ALL_ALERT_TYPES.join(", ")}). ` +
-          `Change with "notify <type> on|off", "notify all", or "notify none".`,
-      ];
+  /** Share the community Discord invite link. Null when no invite is configured. */
+  #discord(): string[] {
+    const { discordInvite, guildName, community } = this.#deps;
+    if (!discordInvite) {
+      return [`I don't have a Discord invite link set up right now - sorry!`];
     }
-    if (t === "all") {
-      await store.update(sender, { alerts: [...ALL_ALERT_TYPES] });
-      return [`All alerts ON: ${ALL_ALERT_TYPES.join(", ")}.`];
-    }
-    if (t === "none") {
-      await store.update(sender, { alerts: [] });
-      return [`All alerts OFF - still subscribed, but I won't whisper you. "notify all" to undo.`];
-    }
-    if (!isAlertType(t)) {
-      return [`Unknown alert "${target}". Types: ${ALL_ALERT_TYPES.join(", ")}. Try "notify ${ALL_ALERT_TYPES[0]} off".`];
-    }
-
-    const has = sub.alerts.includes(t);
-    const wantOn = onOff === "" ? !has : onOff !== "off" && onOff !== "0" && onOff !== "no";
-    const set = new Set<AlertType>(sub.alerts);
-    if (wantOn) set.add(t);
-    else set.delete(t);
-    const alerts = ALL_ALERT_TYPES.filter((type) => set.has(type));
-    await store.update(sender, { alerts });
-    return [`"${t}" ${wantOn ? "ON" : "OFF"}. You now get: ${alerts.length ? alerts.join(", ") : "nothing"}.`];
+    return [`Join the ${community} Discord (home of <${guildName}>): ${discordInvite}`];
   }
 
   /** Capture a player's feedback/suggestion and hand it off (persisted + posted to the

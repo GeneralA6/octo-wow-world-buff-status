@@ -155,36 +155,27 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "qwzx blorp"))[0]).toMatch(/didn't get that/i);
   });
 
-  it("notify: shows all alert types by default", async () => {
-    const { store, router } = deps();
-    await store.add("Raider");
-    const reply = (await router.handle("Raider", "notify"))[0];
-    expect(reply).toContain("forming, cleared");
+  it("no longer has a 'notify' command — alert-type choosing is gone", async () => {
+    const { router } = deps();
+    expect((await router.handle("Raider", "notify forming off"))[0]).toMatch(/didn't get that/i);
   });
 
-  it("notify <type> off/on toggles that alert", async () => {
-    const { store, router } = deps();
-    await store.add("Raider");
-    await router.handle("Raider", "notify forming off");
-    expect((await store.get("Raider"))?.alerts).toEqual(["cleared"]);
-    await router.handle("Raider", "notify forming on");
-    expect((await store.get("Raider"))?.alerts).toEqual(["forming", "cleared"]);
-  });
-
-  it("notify <type> with no on/off flips it", async () => {
-    const { store, router } = deps();
-    await store.add("Raider");
-    await router.handle("Raider", "notify cleared");
-    expect((await store.get("Raider"))?.alerts).toEqual(["forming"]);
-  });
-
-  it("notify all / none set every alert", async () => {
-    const { store, router } = deps();
-    await store.add("Raider");
-    await router.handle("Raider", "notify none");
-    expect((await store.get("Raider"))?.alerts).toEqual([]);
-    await router.handle("Raider", "notify all");
-    expect((await store.get("Raider"))?.alerts).toEqual(["forming", "cleared"]);
+  it("shares the Discord invite link on 'discord', or says it's not set", async () => {
+    const withInvite = new CommandRouter({
+      store: new InMemorySubscriberStore(),
+      activeRaids: () => [],
+      areaName: "Onyxia's Lair",
+      guildName: "Rage Quit",
+      community: "OctoWoW",
+      discordInvite: "https://discord.gg/abc",
+    });
+    const reply = (await withInvite.handle("Raider", "discord")).join(" ");
+    expect(reply).toContain("https://discord.gg/abc");
+    expect(reply).toMatch(/OctoWoW/);
+    // No invite configured → it says so, and never the old linking/ID flow.
+    const bare = (await deps().router.handle("Raider", "discord")).join(" ");
+    expect(bare).toMatch(/don't have a Discord invite/i);
+    expect(bare).not.toMatch(/\/link|user id|whisper.*code/i);
   });
 
   it("sets the subscriber's side with alliance / horde / both", async () => {
@@ -206,13 +197,6 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "faction wat"))[0]).toMatch(/alliance.*horde.*both/i);
   });
 
-  it("notify rejects an unknown type and nudges an unsubscribed player", async () => {
-    const { store, router } = deps();
-    await store.add("Raider");
-    expect((await router.handle("Raider", "notify bogus"))[0]).toMatch(/Unknown alert/);
-    expect((await router.handle("Ghost", "notify"))[0]).toMatch(/not subscribed/);
-  });
-
   it("shows the caller their settings via 'profile' (and the 'me' alias), rejects unknown commands", async () => {
     const { router } = deps();
     expect((await router.handle("Raider", "profile"))[0]).toMatch(/not subscribed/);
@@ -222,12 +206,13 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "flibber"))[0]).toMatch(/didn't get that/);
   });
 
-  it("help leads with subscribe and covers side, invite and feedback — with no Discord", async () => {
+  it("help leads with subscribe and covers side, invite, feedback and discord — but not notify", async () => {
     const { router } = deps();
     const help = (await router.handle("Raider", "help")).join(" ");
     expect(help).toMatch(/subscribe/i);
     expect(help).toMatch(/alliance/i);
     expect(help).toMatch(/feedback/i);
-    expect(help).not.toMatch(/discord/i);
+    expect(help).toMatch(/discord/i);
+    expect(help).not.toMatch(/notify/i);
   });
 });
