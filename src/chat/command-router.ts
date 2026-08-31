@@ -144,7 +144,7 @@ export class CommandRouter {
       default: {
         // Natural-language intent detection over the whole message.
         const intent = parseIntent(text);
-        if (intent) return this.#handleIntent(intent, sender);
+        if (intent) return this.#handleIntent(intent, sender, text);
         return [`Sorry, I didn't get that. Whisper "help" for what I can do.`];
       }
     }
@@ -234,15 +234,22 @@ export class CommandRouter {
     return [`Invite to <${guildName}> sent - accept the popup and you're in. Welcome aboard!`];
   }
 
-  /** Act on a natural-language intent — re-dispatching to the canonical command where one exists. */
-  async #handleIntent(intent: Intent, sender: string): Promise<string[]> {
+  /** Act on a natural-language intent — re-dispatching to the canonical command where one
+   *  exists. `text` is the whole original message, used when an intent carries a payload
+   *  (feedback). */
+  async #handleIntent(intent: Intent, sender: string, text: string): Promise<string[]> {
     const { areaName, guildName, community } = this.#deps;
     switch (intent) {
       case "subscribe":
       case "unsubscribe":
       case "status":
+      case "discord":
+      case "profile":
       case "help":
         return this.handle(sender, intent);
+      case "feedback":
+        // The phrasing IS the suggestion — pass the whole message through.
+        return this.#feedback(sender, text.trim());
       case "guild":
         return [
           `We're <${guildName}>, a ${community} community guild, and we're recruiting! ` +
@@ -253,6 +260,8 @@ export class CommandRouter {
           `I call out Rallying Cry buff drops from ${areaName} raids. ` +
             `Whisper "subscribe" and I'll ping you when one's about to drop.`,
         ];
+      case "thanks":
+        return [`You're very welcome - happy raiding! Whisper "help" anytime.`];
     }
   }
 }

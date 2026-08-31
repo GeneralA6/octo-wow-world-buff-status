@@ -155,6 +155,30 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "qwzx blorp"))[0]).toMatch(/didn't get that/i);
   });
 
+  it("routes a natural-language suggestion to feedback, keeping the whole message", async () => {
+    const { router, feedback } = deps();
+    const reply = await router.handle("Raider", "you should add a horde-only mode");
+    expect(feedback[0]).toEqual({ from: "Raider", text: "you should add a horde-only mode" });
+    expect(reply[0]).toMatch(/thanks/i);
+  });
+
+  it("answers a natural-language Discord question by sharing the invite (when set)", async () => {
+    const withInvite = new CommandRouter({
+      store: new InMemorySubscriberStore(),
+      activeRaids: () => [],
+      areaName: "Onyxia's Lair",
+      guildName: "Rage Quit",
+      community: "OctoWoW",
+      discordInvite: "https://discord.gg/abc",
+    });
+    expect((await withInvite.handle("Raider", "whats your discord?")).join(" ")).toContain("https://discord.gg/abc");
+  });
+
+  it("acknowledges a thank-you warmly", async () => {
+    const { router } = deps();
+    expect((await router.handle("Raider", "thanks so much!"))[0]).toMatch(/welcome/i);
+  });
+
   it("no longer has a 'notify' command — alert-type choosing is gone", async () => {
     const { router } = deps();
     expect((await router.handle("Raider", "notify forming off"))[0]).toMatch(/didn't get that/i);
