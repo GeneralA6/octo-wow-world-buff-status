@@ -97,6 +97,9 @@ export interface BotConfig {
   readonly discordGuildId: string | null;
   /** Channel the personal invites point to. Both, plus MANAGE_GUILD + Server Members intent, enable it. */
   readonly discordInviteChannelId: string | null;
+  /** Channel the "feedback" command posts player suggestions to (via the bot). Null = not set,
+   *  and feedback is still saved + acknowledged, just not posted to Discord. */
+  readonly discordFeedbackChannelId: string | null;
   /** MongoDB connection string for the subscriber store; null keeps subscribers in memory. */
   readonly mongodbUri: string | null;
   /** MongoDB database name for the subscriber store. */
@@ -261,6 +264,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordGateway = gatewayRaw !== "false" && gatewayRaw !== "0" && gatewayRaw !== "none";
   const discordGuildId = env.DISCORD_GUILD_ID?.trim() || null;
   const discordInviteChannelId = env.DISCORD_INVITE_CHANNEL_ID?.trim() || null;
+  const discordFeedbackChannelId = env.DISCORD_FEEDBACK_CHANNEL_ID?.trim() || null;
   const mongodbUri = env.MONGODB_URI?.trim() || null;
   const mongodbDb = env.MONGODB_DB?.trim() || "onyxiabot";
 
@@ -326,6 +330,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordGateway,
     discordGuildId,
     discordInviteChannelId,
+    discordFeedbackChannelId,
     mongodbUri,
     mongodbDb,
     pollIntervalMs,

@@ -66,6 +66,12 @@ export function formatBuffCooldownRefreshedWhisper(faction: Faction): string {
   );
 }
 
+/** A player's feedback/suggestion, as a plain Discord-channel message that names the
+ *  sender. Posted via the bot (not the webhook), so it's plain content with markdown. */
+export function formatFeedbackPost(from: string, text: string): string {
+  return `💬 **Suggestion from ${from}:**\n${text}`;
+}
+
 /** Human list of the capitals where a fresh buff is possible ("Stormwind or Orgrimmar"). */
 function cityList(cities: readonly Faction[]): string {
   const names = cities.map((faction) => CITY_FOR[faction]);

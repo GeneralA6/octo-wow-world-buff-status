@@ -7,6 +7,7 @@ import {
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
+  formatFeedbackPost,
   formatRaidEvent,
   formatRaidWhisper,
 } from "./format.js";
@@ -79,6 +80,15 @@ describe("formatBuffCooldownRefreshed", () => {
     expect(message.body).toContain("Onyxia");
     expect(message.body).toContain("Orgrimmar");
     expect(message.body).not.toContain("Stormwind");
+  });
+});
+
+describe("formatFeedbackPost", () => {
+  it("names the sender and includes their message verbatim", () => {
+    const post = formatFeedbackPost("Raider", "the timer felt 5 min late");
+    expect(post).toContain("Raider");
+    expect(post).toContain("the timer felt 5 min late");
+    expect(post).toMatch(/suggestion/i);
   });
 });
 

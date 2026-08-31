@@ -290,6 +290,7 @@ describe("loadConfig", () => {
     expect(bare.guildName).toBe("Rage Quit");
     expect(bare.community).toBe("OctoWoW");
     expect(bare.author).toBe("Gibom");
+    expect(bare.discordFeedbackChannelId).toBeNull();
     expect(bare.guildInviteEnabled).toBe(false);
     const configured = loadConfig({
       ...minimalEnv,
@@ -297,10 +298,12 @@ describe("loadConfig", () => {
       WOW_COMMUNITY: "Turtle",
       WOW_AUTHOR: "Someone",
       WOW_GUILD_INVITE: "true",
+      DISCORD_FEEDBACK_CHANNEL_ID: "1543926066907844729",
     });
     expect(configured.guildName).toBe("Late Night");
     expect(configured.community).toBe("Turtle");
     expect(configured.author).toBe("Someone");
+    expect(configured.discordFeedbackChannelId).toBe("1543926066907844729");
     expect(configured.guildInviteEnabled).toBe(true);
   });
 
