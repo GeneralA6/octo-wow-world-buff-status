@@ -987,14 +987,29 @@ async function main(): Promise<void> {
   }
 
   let shuttingDown = false;
-  process.on("SIGINT", () => {
+  // Railway (and most orchestrators) send SIGTERM on redeploy; without handling it the
+  // old instance stays LOGGED IN until it's force-killed ~30s later, so for that window
+  // two instances share the account — the "logs in twice" / duplicate-alert bug. Handle
+  // both signals, stop reconnecting, and exit promptly (which closes the sockets = logout).
+  let shutdownStarted = false;
+  const shutdown = (signal: string): void => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
     shuttingDown = true;
-    logger.info("shutting down");
+    logger.info(`shutting down (${signal})`);
     gateway?.stop();
-    void Promise.allSettled([store.close(), snapshots.close(), buffStore.close(), durationStore.close()]).finally(() =>
-      process.exit(0),
-    );
-  });
+    // Exit even if a store.close() hangs, so we log out fast and don't overlap a redeploy.
+    const hardExit = setTimeout(() => process.exit(0), 3_000);
+    hardExit.unref?.();
+    void Promise.allSettled([
+      store.close(),
+      snapshots.close(),
+      buffStore.close(),
+      durationStore.close(),
+    ]).finally(() => process.exit(0));
+  };
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 
   // The watcher does /who + alerts + whispers; each listener only forwards buff yells.
   // They run concurrently, each with its own self-reconnecting supervisor.
