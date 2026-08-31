@@ -92,16 +92,10 @@ export interface BotConfig {
   readonly whispersEnabled: boolean;
   /** Delay between outgoing whispers (ms) to stay under the server's chat throttle. */
   readonly whisperThrottleMs: number;
-  /** Discord bot token for DM delivery + DM-based linking; null disables both. */
+  /** Discord bot token for posting to the notification/feedback channels; null disables them. */
   readonly discordBotToken: string | null;
-  /** Server invite shown in link instructions (subscribers must share a server to be DM'd). */
+  /** The community Discord server invite link, shared by the in-game "discord" command. Null = unset. */
   readonly discordServerInvite: string | null;
-  /** Run the Discord gateway (link flow A — DM the bot a code). Needs the MESSAGE CONTENT intent. */
-  readonly discordGateway: boolean;
-  /** Server id for personal-invite linking (bot mints a per-character invite, links on join). */
-  readonly discordGuildId: string | null;
-  /** Channel the personal invites point to. Both, plus MANAGE_GUILD + Server Members intent, enable it. */
-  readonly discordInviteChannelId: string | null;
   /** Channel the "feedback" command posts player suggestions to (via the bot). Null = not set,
    *  and feedback is still saved + acknowledged, just not posted to Discord. */
   readonly discordFeedbackChannelId: string | null;
@@ -111,9 +105,6 @@ export interface BotConfig {
    *  a Discord-side opt-in, unrelated to any in-game character's chosen side. */
   readonly discordAllianceRoleId: string | null;
   readonly discordHordeRoleId: string | null;
-  /** Discord user id that operational notices (auth failures, store outages, self-heal, "bot
-   *  stopped") are DM'd to, instead of the public channel. Null = log them only. */
-  readonly discordAdminId: string | null;
   /** MongoDB connection string for the subscriber store; null keeps subscribers in memory. */
   readonly mongodbUri: string | null;
   /** MongoDB database name for the subscriber store. */
@@ -129,9 +120,6 @@ export interface BotConfig {
   /** If set, an "interact" listener only `use`s a GameObject of THIS entry (the stone bench),
    *  ignoring closer non-bench clutter. Null = use whatever object is nearest. */
   readonly interactEntry: number | null;
-  readonly discordWebhookUrl: string;
-  /** Role to ping on raid enter/leave so only opted-in members are notified. */
-  readonly discordMentionRoleId: string | null;
   /** Guild the bot represents — used in the intro whisper and for auto-invites. */
   readonly guildName: string;
   /** Community name used in the intro whisper. */
@@ -283,15 +271,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const whisperThrottleMs = intWithDefault("WOW_WHISPER_THROTTLE_MS", 1200, 200);
   const discordBotToken = env.DISCORD_BOT_TOKEN?.trim() || null;
   const discordServerInvite = env.DISCORD_SERVER_INVITE_URL?.trim() || null;
-  const gatewayRaw = env.DISCORD_GATEWAY?.trim().toLowerCase();
-  const discordGateway = gatewayRaw !== "false" && gatewayRaw !== "0" && gatewayRaw !== "none";
-  const discordGuildId = env.DISCORD_GUILD_ID?.trim() || null;
-  const discordInviteChannelId = env.DISCORD_INVITE_CHANNEL_ID?.trim() || null;
   const discordFeedbackChannelId = env.DISCORD_FEEDBACK_CHANNEL_ID?.trim() || null;
   const discordOnyxiaChannelId = env.DISCORD_ONYXIA_CHANNEL_ID?.trim() || null;
   const discordAllianceRoleId = env.DISCORD_ALLIANCE_ROLE_ID?.trim() || null;
   const discordHordeRoleId = env.DISCORD_HORDE_ROLE_ID?.trim() || null;
-  const discordAdminId = env.DISCORD_ADMIN_ID?.trim() || null;
+  for (const [name, value] of [
+    ["DISCORD_ALLIANCE_ROLE_ID", discordAllianceRoleId],
+    ["DISCORD_HORDE_ROLE_ID", discordHordeRoleId],
+  ] as const) {
+    if (value && !/^\d+$/.test(value)) errors.push(`${name} must be a numeric Discord role id`);
+  }
   const mongodbUri = env.MONGODB_URI?.trim() || null;
   const mongodbDb = env.MONGODB_DB?.trim() || "onyxiabot";
 
@@ -301,18 +290,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const interactEntryRaw = env.WOW_INTERACT_ENTRY?.trim();
   const interactEntry = interactEntryRaw && /^\d+$/.test(interactEntryRaw) ? Number(interactEntryRaw) : null;
 
-  const discordWebhookUrl = required("DISCORD_WEBHOOK_URL");
-
   const guildName = env.WOW_GUILD_NAME?.trim() || "Rage Quit";
   const community = env.WOW_COMMUNITY?.trim() || "OctoWoW";
   const author = env.WOW_AUTHOR?.trim() || "Gibom";
   const inviteRaw = env.WOW_GUILD_INVITE?.trim().toLowerCase();
   const guildInviteEnabled = inviteRaw === "true" || inviteRaw === "1";
-
-  const discordMentionRoleId = env.DISCORD_MENTION_ROLE_ID?.trim() || null;
-  if (discordMentionRoleId && !/^\d+$/.test(discordMentionRoleId)) {
-    errors.push("DISCORD_MENTION_ROLE_ID must be a numeric Discord role id");
-  }
 
   const logLevelRaw = (env.LOG_LEVEL?.trim() || "info") as LogLevel;
   const logLevel: LogLevel = LOG_LEVELS.includes(logLevelRaw) ? logLevelRaw : "info";
@@ -359,22 +341,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     whisperThrottleMs,
     discordBotToken,
     discordServerInvite,
-    discordGateway,
-    discordGuildId,
-    discordInviteChannelId,
     discordFeedbackChannelId,
     discordOnyxiaChannelId,
     discordAllianceRoleId,
     discordHordeRoleId,
-    discordAdminId,
     mongodbUri,
     mongodbDb,
     pollIntervalMs,
     whoTimeoutMs,
     interactMaxYd,
     interactEntry,
-    discordWebhookUrl,
-    discordMentionRoleId,
     guildName,
     community,
     author,

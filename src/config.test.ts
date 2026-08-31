@@ -5,7 +5,6 @@ const minimalEnv = {
   WOW_ACCOUNT: "botacct",
   WOW_PASSWORD: "secret",
   WOW_CHARACTER: "Botchar",
-  DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/1/x",
 } satisfies NodeJS.ProcessEnv;
 
 describe("loadConfig", () => {
@@ -24,7 +23,7 @@ describe("loadConfig", () => {
 
   it("collects every missing required field into one error", () => {
     expect(() => loadConfig({})).toThrow(
-      /WOW_ACCOUNT is required[\s\S]*WOW_PASSWORD is required[\s\S]*WOW_CHARACTER is required[\s\S]*DISCORD_WEBHOOK_URL is required/,
+      /WOW_ACCOUNT is required[\s\S]*WOW_PASSWORD is required[\s\S]*WOW_CHARACTER is required/,
     );
   });
 
@@ -53,18 +52,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...minimalEnv, LOG_LEVEL: "verbose" })).toThrow(/LOG_LEVEL must be/);
   });
 
-  it("defaults the mention role to null", () => {
-    expect(loadConfig({ ...minimalEnv }).discordMentionRoleId).toBeNull();
-  });
-
-  it("keeps a numeric mention role id", () => {
-    const config = loadConfig({ ...minimalEnv, DISCORD_MENTION_ROLE_ID: "123456789012345678" });
-    expect(config.discordMentionRoleId).toBe("123456789012345678");
-  });
-
-  it("rejects a non-numeric mention role id", () => {
-    expect(() => loadConfig({ ...minimalEnv, DISCORD_MENTION_ROLE_ID: "@OnyxiaWatch" })).toThrow(
-      /DISCORD_MENTION_ROLE_ID must be a numeric/,
+  it("rejects a non-numeric faction role id", () => {
+    expect(() => loadConfig({ ...minimalEnv, DISCORD_ALLIANCE_ROLE_ID: "@Alliance" })).toThrow(
+      /DISCORD_ALLIANCE_ROLE_ID must be a numeric/,
+    );
+    expect(() => loadConfig({ ...minimalEnv, DISCORD_HORDE_ROLE_ID: "@Horde" })).toThrow(
+      /DISCORD_HORDE_ROLE_ID must be a numeric/,
     );
   });
 
@@ -290,20 +283,9 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_WHISPER_THROTTLE_MS: "800" }).whisperThrottleMs).toBe(800);
   });
 
-  it("defaults the Discord DM settings and reads overrides", () => {
-    const bare = loadConfig({ ...minimalEnv });
-    expect(bare.discordBotToken).toBeNull();
-    expect(bare.discordServerInvite).toBeNull();
-    expect(bare.discordGateway).toBe(true);
-    const configured = loadConfig({
-      ...minimalEnv,
-      DISCORD_BOT_TOKEN: "bot.tok.en",
-      DISCORD_SERVER_INVITE_URL: "https://discord.gg/abc",
-      DISCORD_GATEWAY: "false",
-    });
-    expect(configured.discordBotToken).toBe("bot.tok.en");
-    expect(configured.discordServerInvite).toBe("https://discord.gg/abc");
-    expect(configured.discordGateway).toBe(false);
+  it("defaults the Discord bot token to null and reads an override", () => {
+    expect(loadConfig({ ...minimalEnv }).discordBotToken).toBeNull();
+    expect(loadConfig({ ...minimalEnv, DISCORD_BOT_TOKEN: "bot.tok.en" }).discordBotToken).toBe("bot.tok.en");
   });
 
   it("defaults the guild/community settings and reads overrides", () => {
@@ -315,7 +297,6 @@ describe("loadConfig", () => {
     expect(bare.discordOnyxiaChannelId).toBeNull();
     expect(bare.discordAllianceRoleId).toBeNull();
     expect(bare.discordHordeRoleId).toBeNull();
-    expect(bare.discordAdminId).toBeNull();
     expect(bare.guildInviteEnabled).toBe(false);
     const configured = loadConfig({
       ...minimalEnv,
@@ -327,7 +308,6 @@ describe("loadConfig", () => {
       DISCORD_ONYXIA_CHANNEL_ID: "1544021433720635392",
       DISCORD_ALLIANCE_ROLE_ID: "111",
       DISCORD_HORDE_ROLE_ID: "222",
-      DISCORD_ADMIN_ID: "219142840696045568",
     });
     expect(configured.guildName).toBe("Late Night");
     expect(configured.community).toBe("Turtle");
@@ -336,7 +316,6 @@ describe("loadConfig", () => {
     expect(configured.discordOnyxiaChannelId).toBe("1544021433720635392");
     expect(configured.discordAllianceRoleId).toBe("111");
     expect(configured.discordHordeRoleId).toBe("222");
-    expect(configured.discordAdminId).toBe("219142840696045568");
     expect(configured.guildInviteEnabled).toBe(true);
   });
 
