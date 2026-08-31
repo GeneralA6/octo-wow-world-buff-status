@@ -32,7 +32,7 @@ class MockSocket implements GatewaySocket {
   }
 }
 
-const INTENTS = (1 << 12) | (1 << 15);
+const INTENTS = (1 << 0) | (1 << 1) | (1 << 12) | (1 << 15);
 
 function start(socket: MockSocket, onDm = vi.fn()) {
   const gw = new DiscordGateway({ token: "tok", onDirectMessage: onDm, connect: () => socket });
@@ -72,6 +72,34 @@ describe("DiscordGateway", () => {
     const { gw, onDm } = ready(socket);
     socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 2, d: { author: { id: "user1" }, content: "ONYX-42" } });
     expect(onDm).toHaveBeenCalledWith("user1", "ONYX-42");
+    gw.stop();
+  });
+
+  it("fires onReady and dispatches a join to onGuildMemberAdd (but not the bot's own)", () => {
+    const socket = new MockSocket();
+    const onReady = vi.fn();
+    const onGuildMemberAdd = vi.fn();
+    const gw = new DiscordGateway({
+      token: "tok",
+      onDirectMessage: vi.fn(),
+      onReady,
+      onGuildMemberAdd,
+      connect: () => socket,
+    });
+    gw.start();
+    socket.receive({ op: 10, d: { heartbeat_interval: 45_000 } });
+    socket.receive({
+      op: 0,
+      t: "READY",
+      s: 1,
+      d: { session_id: "s", resume_gateway_url: "wss://x", user: { id: "botid" } },
+    });
+    expect(onReady).toHaveBeenCalledTimes(1);
+
+    socket.receive({ op: 0, t: "GUILD_MEMBER_ADD", s: 2, d: { user: { id: "joiner1" } } });
+    expect(onGuildMemberAdd).toHaveBeenCalledWith("joiner1");
+    socket.receive({ op: 0, t: "GUILD_MEMBER_ADD", d: { user: { id: "botid" } } }); // its own join
+    expect(onGuildMemberAdd).toHaveBeenCalledTimes(1);
     gw.stop();
   });
 

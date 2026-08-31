@@ -85,6 +85,10 @@ export interface BotConfig {
   readonly discordServerInvite: string | null;
   /** Run the Discord gateway (link flow A — DM the bot a code). Needs the MESSAGE CONTENT intent. */
   readonly discordGateway: boolean;
+  /** Server id for personal-invite linking (bot mints a per-character invite, links on join). */
+  readonly discordGuildId: string | null;
+  /** Channel the personal invites point to. Both, plus MANAGE_GUILD + Server Members intent, enable it. */
+  readonly discordInviteChannelId: string | null;
   /** MongoDB connection string for the subscriber store; null keeps subscribers in memory. */
   readonly mongodbUri: string | null;
   /** MongoDB database name for the subscriber store. */
@@ -238,6 +242,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordServerInvite = env.DISCORD_SERVER_INVITE_URL?.trim() || null;
   const gatewayRaw = env.DISCORD_GATEWAY?.trim().toLowerCase();
   const discordGateway = gatewayRaw !== "false" && gatewayRaw !== "0" && gatewayRaw !== "none";
+  const discordGuildId = env.DISCORD_GUILD_ID?.trim() || null;
+  const discordInviteChannelId = env.DISCORD_INVITE_CHANNEL_ID?.trim() || null;
   const mongodbUri = env.MONGODB_URI?.trim() || null;
   const mongodbDb = env.MONGODB_DB?.trim() || "onyxiabot";
 
@@ -299,6 +305,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordBotToken,
     discordServerInvite,
     discordGateway,
+    discordGuildId,
+    discordInviteChannelId,
     mongodbUri,
     mongodbDb,
     pollIntervalMs,

@@ -7,16 +7,18 @@ import { silentLogger, type Logger } from "../logger.js";
  * same spirit as the WoW client rather than pulling in discord.js.
  *
  * Flow: connect → HELLO (op 10) starts the heartbeat → IDENTIFY (op 2) with the
- * DIRECT_MESSAGES + MESSAGE_CONTENT intents → READY captures the session → DM
- * MESSAGE_CREATE events are dispatched. Missing heartbeat ACKs, op 7 RECONNECT,
- * op 9 INVALID_SESSION and socket closes all reconnect (resuming when possible).
+ * intents → READY captures the session → MESSAGE_CREATE (DMs) and GUILD_MEMBER_ADD
+ * (joins, for personal-invite linking) events are dispatched. Missing heartbeat ACKs,
+ * op 7 RECONNECT, op 9 INVALID_SESSION and socket closes all reconnect (resuming when
+ * possible).
  *
- * MESSAGE_CONTENT is a privileged intent (free under 100 servers); without it the
- * DM `content` arrives empty and flow A can't read the code.
+ * MESSAGE_CONTENT and GUILD_MEMBERS are privileged intents (free under 100 servers, but
+ * each must be toggled on in the Developer Portal): without MESSAGE_CONTENT a DM's text
+ * arrives empty; without GUILD_MEMBERS no join event fires.
  */
 
-// DIRECT_MESSAGES (1<<12) | MESSAGE_CONTENT (1<<15)
-const INTENTS = (1 << 12) | (1 << 15);
+// GUILDS (1<<0) | GUILD_MEMBERS (1<<1) | DIRECT_MESSAGES (1<<12) | MESSAGE_CONTENT (1<<15)
+const INTENTS = (1 << 0) | (1 << 1) | (1 << 12) | (1 << 15);
 const GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json";
 const MAX_BACKOFF_MS = 30_000;
 
@@ -35,6 +37,10 @@ export interface DiscordGatewayOptions {
   readonly token: string;
   /** Called with (authorId, content) for each DM the bot receives. */
   readonly onDirectMessage: (authorId: string, content: string) => void;
+  /** Called with the new member's user id on each server join (personal-invite linking). */
+  readonly onGuildMemberAdd?: (userId: string) => void;
+  /** Called once the gateway reaches READY — a good moment to snapshot invite counts. */
+  readonly onReady?: () => void;
   readonly logger?: Logger;
   /** Test seam: how to open a socket. Defaults to a real `ws` connection. */
   readonly connect?: SocketFactory;
@@ -71,6 +77,8 @@ function recField(o: Record<string, unknown>, k: string): Record<string, unknown
 export class DiscordGateway {
   readonly #token: string;
   readonly #onDm: (authorId: string, content: string) => void;
+  readonly #onMemberAdd: ((userId: string) => void) | null;
+  readonly #onReady: (() => void) | null;
   readonly #logger: Logger;
   readonly #connect: SocketFactory;
 
@@ -88,6 +96,8 @@ export class DiscordGateway {
   constructor(options: DiscordGatewayOptions) {
     this.#token = options.token;
     this.#onDm = options.onDirectMessage;
+    this.#onMemberAdd = options.onGuildMemberAdd ?? null;
+    this.#onReady = options.onReady ?? null;
     this.#logger = options.logger ?? silentLogger;
     this.#connect = options.connect ?? defaultConnect;
   }
@@ -173,11 +183,16 @@ export class DiscordGateway {
       this.#botUserId = user ? strField(user, "id") : null;
       this.#backoffMs = 1_000;
       this.#logger.info("discord gateway: ready");
+      this.#onReady?.();
     } else if (type === "RESUMED") {
       this.#backoffMs = 1_000;
       this.#logger.debug("discord gateway: resumed");
     } else if (type === "MESSAGE_CREATE" && data) {
       this.#onMessageCreate(data);
+    } else if (type === "GUILD_MEMBER_ADD" && data) {
+      const user = recField(data, "user");
+      const userId = user ? strField(user, "id") : null;
+      if (userId && userId !== this.#botUserId) this.#onMemberAdd?.(userId);
     }
   }
 

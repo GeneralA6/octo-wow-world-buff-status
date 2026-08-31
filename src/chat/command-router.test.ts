@@ -11,7 +11,13 @@ function res(ok: boolean, status: number, body: unknown = { id: "chan" }): Disco
   return { ok, status, json: () => Promise.resolve(body), text: () => Promise.resolve("") };
 }
 
-function deps(opts: { withLinker?: boolean; fetch?: DiscordFetch } = {}) {
+function deps(
+  opts: {
+    withLinker?: boolean;
+    fetch?: DiscordFetch;
+    mintInvite?: (character: string) => Promise<string | null>;
+  } = {},
+) {
   const store = new InMemorySubscriberStore();
   const tracker = new RaidTracker(15);
   const pending = new PendingLinks({ generate: () => "CODE01" });
@@ -27,6 +33,7 @@ function deps(opts: { withLinker?: boolean; fetch?: DiscordFetch } = {}) {
     guildName: "Rage Quit",
     community: "OctoWoW",
     linker,
+    mintInvite: opts.mintInvite,
   });
   return { store, tracker, pending, linker, router };
 }
@@ -145,6 +152,19 @@ describe("CommandRouter", () => {
     expect(reply).toMatch(/no id needed/i); // no ID/username step
     expect(reply).toMatch(/not here in WoW/i); // send it on Discord
     expect(await store.has("Raider")).toBe(true);
+  });
+
+  it("discord hands out a personal invite link when personal-invite linking is on", async () => {
+    const { router } = deps({ mintInvite: async (character) => `https://discord.gg/for-${character}` });
+    const reply = (await router.handle("Raider", "discord"))[0];
+    expect(reply).toContain("https://discord.gg/for-Raider");
+    expect(reply).toMatch(/automatically/i);
+  });
+
+  it("discord falls back to the DM-a-code flow when a personal invite can't be minted", async () => {
+    const { router } = deps({ mintInvite: async () => null });
+    const reply = (await router.handle("Raider", "discord")).join(" ");
+    expect(reply).toContain("CODE01");
   });
 
   it("'discord off' unlinks", async () => {

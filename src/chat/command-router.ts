@@ -33,6 +33,10 @@ export interface CommandDeps {
   readonly community: string;
   /** Null when no bot token is configured — the discord commands then say so. */
   readonly linker?: DiscordLinker | null;
+  /** Mints a personal, auto-linking Discord invite for a character (the preferred path);
+   *  undefined when personal-invite linking isn't configured, so `discord` falls back to
+   *  the DM-a-code flow. Returns the invite url, or null if it couldn't be created. */
+  readonly mintInvite?: (character: string) => Promise<string | null>;
 }
 
 const MODE_ALIASES: Record<string, DeliveryMode> = {
@@ -133,12 +137,23 @@ export class CommandRouter {
   }
 
   async #discord(sender: string, arg: string): Promise<string[]> {
-    const { linker } = this.#deps;
+    const { linker, mintInvite } = this.#deps;
     if (!linker) return ["Discord isn't set up on this bot."];
 
     if (["off", "clear", "none", "remove"].includes(arg.toLowerCase())) {
       const ok = await linker.unlink(sender);
       return [ok ? `Discord unlinked — in-game whispers only.` : `You're not subscribed.`];
+    }
+
+    // Preferred path: a personal, single-use invite — click it and you're linked
+    // automatically, no code or setup. Falls back to the DM-a-code flow if it's off/fails.
+    if (mintInvite) {
+      const url = await mintInvite(sender);
+      if (url) {
+        return [
+          `Want buff alerts on Discord too? Click your personal invite and you're linked automatically — no code, no setup: ${url}`,
+        ];
+      }
     }
 
     const invite = linker.serverInviteUrl;

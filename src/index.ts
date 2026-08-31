@@ -8,6 +8,8 @@ import { resolveBuild } from "./net/client-resolver.js";
 import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
 import { DiscordDmSender } from "./notify/discord-dm.js";
 import { DiscordGateway } from "./notify/discord-gateway.js";
+import { DiscordInvites } from "./notify/discord-invites.js";
+import { InviteLinker } from "./notify/invite-linker.js";
 import { formatBuffAlert, formatBuffDropped, formatBuffWhisper } from "./notify/format.js";
 import type { RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
@@ -788,6 +790,17 @@ async function main(): Promise<void> {
     serverInviteUrl: config.discordServerInvite,
     areaName: config.watchAreaName,
   });
+  // Personal-invite linking: the bot mints a per-character invite and links the joiner
+  // automatically. Off (no-op) unless a bot token + guild + channel are all configured.
+  const inviteLinker = new InviteLinker({
+    invites: new DiscordInvites(config.discordBotToken),
+    store,
+    dm,
+    guildId: config.discordGuildId,
+    channelId: config.discordInviteChannelId,
+    areaName: config.watchAreaName,
+    logger,
+  });
   const router = new CommandRouter({
     store,
     activeRaids: () => lanes.flatMap((lane) => lane.watch.activeRaids()),
@@ -795,6 +808,7 @@ async function main(): Promise<void> {
     guildName: config.guildName,
     community: config.community,
     linker: dm.isConfigured ? linker : null,
+    mintInvite: inviteLinker.isConfigured ? (character) => inviteLinker.mintFor(character) : undefined,
   });
   const outreach = new Outreach(
     { guildName: config.guildName, community: config.community, guildInviteEnabled: config.guildInviteEnabled },
@@ -817,6 +831,7 @@ async function main(): Promise<void> {
   let gateway: DiscordGateway | null = null;
   const botToken = config.discordBotToken;
   if (config.whispersEnabled && botToken && config.discordGateway) {
+    const inviteWired = inviteLinker.isConfigured;
     gateway = new DiscordGateway({
       token: botToken,
       logger,
@@ -830,9 +845,30 @@ async function main(): Promise<void> {
           }
         })();
       },
+      onReady: inviteWired
+        ? () =>
+            void inviteLinker
+              .refresh()
+              .then((ok) =>
+                logger.info(
+                  ok
+                    ? "invite-link: tracking invites (personal-invite linking active)"
+                    : "invite-link: could NOT read invites — check the bot has MANAGE_GUILD and the Server Members intent",
+                ),
+              )
+              .catch((error) => logger.error(`invite-link refresh: ${describeError(error)}`))
+        : undefined,
+      onGuildMemberAdd: inviteWired
+        ? (userId) =>
+            void inviteLinker
+              .onMemberJoin(userId)
+              .catch((error) => logger.error(`invite-link join: ${describeError(error)}`))
+        : undefined,
     });
     gateway.start();
-    logger.info("discord gateway: started (DM linking active)");
+    logger.info(
+      `discord gateway: started (DM linking${inviteWired ? " + personal-invite linking" : ""} active)`,
+    );
   }
 
   logger.info(`turtle-onyxia-bot starting as ${config.characterName}`);
