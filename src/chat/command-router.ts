@@ -4,13 +4,11 @@ import {
   isAlertType,
   isFaction,
   type AlertType,
-  type DeliveryMode,
   type Faction,
   type SubscriberStore,
 } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
 import { CITY_FOR, FACTION_FILTER_HINT, humanClock } from "../notify/format.js";
-import type { DiscordLinker } from "./discord-linker.js";
 import { parseIntent, type Intent } from "./intent.js";
 
 /** Per-faction buff cooldown for the status query. */
@@ -31,17 +29,16 @@ export function factionLabel(factions: readonly Faction[]): string {
 
 /**
  * Routes a whisper from a player to a command and produces the reply line(s) to
- * whisper back. Pure aside from the injected store/linker; terse because a whisper
+ * whisper back. Pure aside from the injected store; terse because a whisper
  * is length-limited and a chatty bot is a reported bot.
  *
  * Commands (case-insensitive, a leading !/./ tolerated):
  *   subscribe | sub | start        — opt in to in-game raid alerts
  *   unsubscribe | unsub | stop      — opt out
- *   discord                         — link Discord: bot mints a code, you DM it to the bot on Discord
- *   discord off                     — unlink
+ *   alliance | horde | both         — which side's buff you want
  *   invite | join                   — guild-invite the caller
- *   mode both | mode offline        — Discord always, or only when offline in-game
- *   notify | status | me | help
+ *   feedback | suggest              — send a message to the team
+ *   notify | status | profile | help
  */
 export interface CommandDeps {
   readonly store: SubscriberStore;
@@ -51,12 +48,6 @@ export interface CommandDeps {
   /** Guild + community named in recruiting/intent replies. */
   readonly guildName: string;
   readonly community: string;
-  /** Null when no bot token is configured — the discord commands then say so. */
-  readonly linker?: DiscordLinker | null;
-  /** Mints a personal, auto-linking Discord invite for a character (the preferred path);
-   *  undefined when personal-invite linking isn't configured, so `discord` falls back to
-   *  the DM-a-code flow. Returns the invite url, or null if it couldn't be created. */
-  readonly mintInvite?: (character: string) => Promise<string | null>;
   /** Receives a player's "feedback"/"suggest" message (sender + text). Fire-and-forget:
    *  the caller persists it and posts it to the feedback channel. Undefined = no-op. */
   readonly onFeedback?: (from: string, text: string) => void;
@@ -67,19 +58,6 @@ export interface CommandDeps {
   /** Per-faction buff cooldown for status — how long until a fresh Rallying Cry can drop. */
   readonly buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
 }
-
-const DISCORD_ID = /^\d{17,20}$/;
-const MODE_ALIASES: Record<string, DeliveryMode> = {
-  ingame: "ingame",
-  "in-game": "ingame",
-  whisper: "ingame",
-  both: "both",
-  all: "both",
-  offline: "offline",
-  "offline-only": "offline",
-  discord: "discord",
-  dm: "discord",
-};
 
 export class CommandRouter {
   readonly #deps: CommandDeps;
@@ -108,7 +86,7 @@ export class CommandRouter {
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
     const command = (parts[0] ?? "").toLowerCase();
     const arg = parts[1] ?? "";
-    const { store, activeRaids, areaName, linker } = this.#deps;
+    const { store, activeRaids, areaName } = this.#deps;
 
     switch (command) {
       case "subscribe":
@@ -117,10 +95,7 @@ export class CommandRouter {
         const added = await store.add(sender);
         if (added) this.#factionLookup?.(sender); // auto-detect their side in the background
         return added
-          ? [
-              `You're subscribed! I'll whisper you when a raid clears and the buff is about to drop. Want it even when you're offline? Whisper "discord" to link, then "mode offline" for DMs while you're logged out.`,
-              FACTION_FILTER_HINT,
-            ]
+          ? [`You're subscribed! I'll whisper you in-game when a raid clears and the buff is about to drop.`, FACTION_FILTER_HINT]
           : [`You're already subscribed to ${areaName} alerts. Whisper "profile" for your settings, or "help" for what I can do.`];
       }
       case "unsubscribe":
@@ -132,13 +107,6 @@ export class CommandRouter {
             ? `Unsubscribed - no more ${areaName} alerts. Whisper "subscribe" to opt back in.`
             : `You weren't subscribed. Whisper "subscribe" to start.`,
         ];
-      }
-      case "discord":
-        return this.#discord(sender, arg);
-      case "confirm": {
-        if (!linker) return ["Discord isn't set up on this bot."];
-        const ok = await linker.confirmFromWhisper(sender, arg);
-        return [ok ? this.#linkedLine() : `That code didn't match. Whisper "discord" to start again.`];
       }
       case "invite":
       case "join":
@@ -154,8 +122,6 @@ export class CommandRouter {
       case "faction":
       case "side":
         return this.#setFaction(sender, arg);
-      case "mode":
-        return this.#mode(sender, arg);
       case "notify":
       case "alerts":
         return this.#notify(sender, arg, (parts[2] ?? "").toLowerCase());
@@ -163,12 +129,9 @@ export class CommandRouter {
       case "me": {
         const sub = await store.get(sender);
         if (!sub) return [`You're not subscribed. Whisper "subscribe" to start.`];
-        const discord = sub.discordId
-          ? `Discord linked, delivery "${sub.delivery}"`
-          : `no Discord linked`;
         const alerts = sub.alerts.length ? sub.alerts.join(", ") : "none";
         return [
-          `Subscribed - ${factionLabel(sub.factions)} buffs; ${discord}. Alerts: ${alerts}. ("alliance"/"horde"/"both" to change your side.)`,
+          `Subscribed - ${factionLabel(sub.factions)} buffs. Alerts: ${alerts}. ("alliance"/"horde"/"both" to change your side.)`,
         ];
       }
       case "status":
@@ -178,49 +141,19 @@ export class CommandRouter {
       case "?":
         return [
           `I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me:`,
-          `subscribe - start getting alerts (unsubscribe anytime to stop)`,
+          `subscribe - start getting in-game alerts (unsubscribe anytime to stop)`,
           `alliance / horde / both - which side's buff you want (I try to detect it; default both)`,
-          `discord - link Discord for DMs. Best combo: link it, then "mode offline" and I'll DM you ONLY when you're logged out - so you never miss a buff, even away from the game.`,
           `invite - join <${this.#deps.guildName}>, the guild that runs me (we're recruiting!)`,
           `feedback <message> - send a suggestion or bug report straight to the team`,
-          `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), profile (your settings).`,
+          `also: notify which alerts (e.g. "notify cleared off"), status (raids now), profile (your settings).`,
         ];
       default: {
-        // A bare confirmation code from a flow-B link (whisper the code straight back).
-        if (linker && (await linker.confirmFromWhisper(sender, command))) return [this.#linkedLine()];
         // Natural-language intent detection over the whole message.
         const intent = parseIntent(text);
         if (intent) return this.#handleIntent(intent, sender);
         return [`Sorry, I didn't get that. Whisper "help" for what I can do.`];
       }
     }
-  }
-
-  /**
-   * Route a Discord DM through the same command engine, so everything that works in-game
-   * works from Discord too. Identity there is the Discord id, so it's resolved to the linked
-   * character first. "unsubscribe" stops ALL of the account's characters; every other command
-   * acts on the primary (first-linked) one. An unlinked account can still get "help".
-   */
-  async handleFromDiscord(discordId: string, text: string): Promise<string[]> {
-    const { store, areaName } = this.#deps;
-    const command = (text.trim().replace(/^[!./]+/, "").split(/\s+/)[0] ?? "").toLowerCase();
-    if (command === "unsubscribe" || command === "unsub" || command === "stop") {
-      const removed = await store.removeByDiscordId(discordId);
-      return [
-        removed.length > 0
-          ? `Unsubscribed ${removed.join(", ")} - no more ${areaName} alerts. Whisper "subscribe" in-game to opt back in.`
-          : `No ${areaName} subscription is linked to this Discord account.`,
-      ];
-    }
-    const linked = await store.findByDiscordId(discordId);
-    if (linked.length === 0) {
-      if (command === "help" || command === "commands" || command === "?") return this.handle("", text);
-      return [
-        `You're not linked to a character yet. In-game, whisper the bot "discord" (or use "/link <character>") to connect this Discord account - then you can manage everything from here.`,
-      ];
-    }
-    return this.handle(linked[0].name, text);
   }
 
   /** Live-state query: what's raiding the lair now (and how long they've been in), and how
@@ -272,87 +205,6 @@ export class CommandRouter {
     }
     await store.update(sender, { factions: [...factions] });
     return [`Done - I'll alert you for ${factionLabel(factions)} buffs.`];
-  }
-
-  #linkedLine(): string {
-    return `Discord linked! You'll get ${this.#deps.areaName} alerts there too. "mode offline" for DMs only when you're offline.`;
-  }
-
-  async #discord(sender: string, arg: string): Promise<string[]> {
-    const { linker, mintInvite } = this.#deps;
-    if (!linker) return ["Discord isn't set up on this bot."];
-
-    if (["off", "clear", "none", "remove"].includes(arg.toLowerCase())) {
-      const ok = await linker.unlink(sender);
-      return [ok ? `Discord unlinked - in-game whispers only.` : `You're not subscribed.`];
-    }
-
-    // Flow B: they pasted their Discord ID — DM them a code to whisper back.
-    if (arg !== "") {
-      if (!DISCORD_ID.test(arg)) {
-        return [
-          `"${arg}" isn't your Discord ID - that's a NUMBER, not your username.`,
-          `Get it in Discord: Settings → Developer → turn on Developer Mode, then right-click your name → Copy User ID. Then whisper "discord <that number>".`,
-        ];
-      }
-      switch (await linker.startIdLink(sender, arg)) {
-        case "sent":
-          return [`I DMed you a code on Discord - whisper it back here to confirm.`];
-        case "unreachable":
-          return [
-            `I couldn't DM you.${linker.serverInviteUrl ? ` Join ${linker.serverInviteUrl} first.` : ""} Then enable "DMs from server members" and try again.`,
-          ];
-        case "not-configured":
-          return [`Discord isn't set up on this bot.`];
-        default:
-          return [`Trouble reaching Discord - try again in a moment.`];
-      }
-    }
-
-    // No arg: show the easy paths. "/link" (in Discord) is simplest, especially if you're
-    // already in the server; the ID flow stays fully in WoW; a personal one-click invite
-    // is offered last, for clients where chat links are actually clickable.
-    const server = linker.serverInviteUrl;
-    const lines = [
-      `Get buff alerts on Discord - easiest: in our server, type "/link ${sender}" and you're done.${server ? ` (Not in the server? Join ${server} first.)` : ""}`,
-      `Or from WoW: whisper me "discord <your Discord ID>" and I'll DM you a code to whisper back. Your ID is a NUMBER, not your username -`,
-      `get it in Discord: Settings → Developer → turn on Developer Mode, then right-click your name → Copy User ID.`,
-    ];
-    if (mintInvite) {
-      const url = await mintInvite(sender);
-      if (url) lines.push(`Or one-click, if links are clickable for you: ${url}`);
-    }
-    return lines;
-  }
-
-  async #mode(sender: string, arg: string): Promise<string[]> {
-    const { store } = this.#deps;
-    const delivery = MODE_ALIASES[arg.toLowerCase()];
-    if (!delivery) {
-      return [
-        `Whisper "mode ingame" (whispers only), "mode both" (whispers + Discord), ` +
-          `"mode offline" (Discord only when you're offline), or "mode discord" (Discord DMs only).`,
-      ];
-    }
-    const sub = await store.get(sender);
-    if (!sub) return [`You're not subscribed. Whisper "subscribe" first.`];
-    await store.update(sender, { delivery });
-
-    // The Discord modes are useless without a linked id — "discord" would reach nobody.
-    if (delivery !== "ingame" && !sub.discordId) {
-      return [
-        delivery === "discord"
-          ? `Set to "discord", but you have NO Discord linked - you'll get nothing until you whisper "discord" to link it.`
-          : `Set to "${delivery}", but link Discord with "discord" so I can reach you there.`,
-      ];
-    }
-    const CONFIRM: Record<DeliveryMode, string> = {
-      ingame: `Delivery set to "ingame" - in-game whispers only.`,
-      both: `Delivery set to "both" - in-game and Discord.`,
-      offline: `Delivery set to "offline" - Discord only when your character is offline.`,
-      discord: `Delivery set to "discord" - Discord DMs only, no in-game whispers.`,
-    };
-    return [CONFIRM[delivery]];
   }
 
   /** Choose which alert types you get. "notify" shows them; "notify <type> on|off",

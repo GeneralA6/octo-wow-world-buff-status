@@ -7,10 +7,6 @@ import { WorldClient } from "./net/world-client.js";
 import { resolveBuild } from "./net/client-resolver.js";
 import type { NotifyMessage } from "./notify/notifier.js";
 import { DiscordDmSender } from "./notify/discord-dm.js";
-import { DiscordGateway } from "./notify/discord-gateway.js";
-import { registerLinkCommand, replyToInteraction } from "./notify/discord-commands.js";
-import { DiscordInvites } from "./notify/discord-invites.js";
-import { InviteLinker } from "./notify/invite-linker.js";
 import {
   formatBuffAlert,
   formatBuffCooldownRefreshed,
@@ -66,11 +62,9 @@ import {
 } from "./watcher/broadcast-ledger.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
-import { DiscordLinker } from "./chat/discord-linker.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
-import { PendingLinks } from "./subscribers/pending-links.js";
 import { subscriberKey, type AlertType, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 
@@ -94,9 +88,6 @@ const POLL_JITTER_RATIO = 0.15;
 
 /** Don't re-check the CDN build more often than this while a rejection persists. */
 const HEAL_CHECK_COOLDOWN_MS = 5 * 60_000;
-
-/** How long an offline-mode Discord fallback waits for a whisper to bounce. */
-const OFFLINE_FALLBACK_TTL_MS = 60_000;
 
 /** Max time from connecting to reaching in-world before the handshake is deemed stalled. */
 const WORLD_READY_TIMEOUT_MS = 30_000;
@@ -244,12 +235,6 @@ async function runConnection(
     let readyTimer: NodeJS.Timeout | null = null;
     // Throttles the monitoring heartbeat; 0 so the first poll after connect logs one.
     let lastHeartbeatAt = 0;
-    // Offline-mode subscribers whose in-game whisper may bounce → DM them instead.
-    const offlinePending = new Map<string, { discordId: string; message: string; timer: NodeJS.Timeout }>();
-    const clearOfflinePending = (): void => {
-      for (const { timer } of offlinePending.values()) clearTimeout(timer);
-      offlinePending.clear();
-    };
 
     let settled = false;
     const settle = (error?: Error): void => {
@@ -264,7 +249,6 @@ async function runConnection(
       router.setGuildInvite(null); // and stop offering guild invites until reconnected
       router.setFactionLookup(null); // and stop the /who-based faction detection
       buffDropSink.notify = null; // and stop routing buff-drop whispers until reconnected
-      clearOfflinePending();
       if (error) reject(error);
       else resolve();
     };
@@ -381,16 +365,6 @@ async function runConnection(
           : false;
         yell(formatCapitalStatusYell(faction, cooldownActiveMsLeft, raid, buffPossible));
       }
-    };
-
-    // A whisper bounced: the target is offline — deliver their armed Discord DM.
-    const onWhisperUndelivered = (target: string): void => {
-      const key = target.toLowerCase();
-      const pending = offlinePending.get(key);
-      if (!pending) return;
-      clearTimeout(pending.timer);
-      offlinePending.delete(key);
-      void dm.send(pending.discordId, pending.message);
     };
 
     // One detection lane: census, then gate each raid event against its candidate
@@ -660,7 +634,6 @@ async function runConnection(
           statusYellTimer.unref?.();
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
-        onWhisperUndelivered: config.whispersEnabled ? onWhisperUndelivered : undefined,
         onError: (error) => {
           world.close();
           settle(error);
@@ -1065,25 +1038,6 @@ async function main(): Promise<void> {
     buffDropSink.notify?.(faction, appliedAt);
   };
 
-  // Discord DM linking (dm itself was created early, above, for admin notices).
-  const linker = new DiscordLinker({
-    store,
-    pending: new PendingLinks(),
-    dm,
-    serverInviteUrl: config.discordServerInvite,
-    areaName: config.watchAreaName,
-  });
-  // Personal-invite linking: the bot mints a per-character invite and links the joiner
-  // automatically. Off (no-op) unless a bot token + guild + channel are all configured.
-  const inviteLinker = new InviteLinker({
-    invites: new DiscordInvites(config.discordBotToken),
-    store,
-    dm,
-    guildId: config.discordGuildId,
-    channelId: config.discordInviteChannelId,
-    areaName: config.watchAreaName,
-    logger,
-  });
   // A player's feedback: persist it (for review) and post it to the feedback channel,
   // naming the sender. Best-effort — the player is always thanked regardless.
   const onFeedback = (from: string, text: string): void => {
@@ -1126,8 +1080,6 @@ async function main(): Promise<void> {
     areaName: config.watchAreaName,
     guildName: config.guildName,
     community: config.community,
-    linker: dm.isConfigured ? linker : null,
-    mintInvite: inviteLinker.isConfigured ? (character) => inviteLinker.mintFor(character) : undefined,
     onFeedback,
   });
   const outreach = new Outreach(
@@ -1156,83 +1108,6 @@ async function main(): Promise<void> {
     client,
   };
 
-  // Link flow A: listen for DMs the bot receives and complete any pending code.
-  let gateway: DiscordGateway | null = null;
-  const botToken = config.discordBotToken;
-  if (config.whispersEnabled && botToken && config.discordGateway) {
-    const inviteWired = inviteLinker.isConfigured;
-    gateway = new DiscordGateway({
-      token: botToken,
-      logger,
-      onDirectMessage: (authorId, content) => {
-        void (async () => {
-          try {
-            // A pending link code takes precedence (it completes the Discord link).
-            const character = await linker.confirmFromDm(authorId, content);
-            if (character) {
-              logger.info(`discord: linked ${character} via DM`);
-              return;
-            }
-            // Otherwise it's a command — route it through the same engine as in-game,
-            // resolved to this account's linked character.
-            const replies = await router.handleFromDiscord(authorId, content);
-            if (replies.length > 0) await dm.send(authorId, replies.join("\n"));
-          } catch (error) {
-            logger.error(`discord dm: ${describeError(error)}`);
-          }
-        })();
-      },
-      onReady: (applicationId) => {
-        // Register /link as a guild command (instant) so already-in-Discord users can
-        // link with one step, and snapshot invite counts for personal-invite linking.
-        if (config.discordGuildId) {
-          void registerLinkCommand(botToken, applicationId, config.discordGuildId)
-            .then((ok) => logger.info(`discord: /link command ${ok ? "registered" : "registration FAILED"}`))
-            .catch((error) => logger.error(`/link register: ${describeError(error)}`));
-        }
-        if (inviteWired) {
-          void inviteLinker
-            .refresh()
-            .then((ok) =>
-              logger.info(
-                ok
-                  ? "invite-link: tracking invites (personal-invite linking active)"
-                  : "invite-link: could NOT read invites — check the bot has MANAGE_GUILD and the Server Members intent",
-              ),
-            )
-            .catch((error) => logger.error(`invite-link refresh: ${describeError(error)}`));
-        }
-      },
-      onGuildMemberAdd: inviteWired
-        ? (userId) =>
-            void inviteLinker
-              .onMemberJoin(userId)
-              .catch((error) => logger.error(`invite-link join: ${describeError(error)}`))
-        : undefined,
-      onInteraction: (interaction) => {
-        if (interaction.commandName !== "link" || !interaction.userId) return;
-        const userId = interaction.userId;
-        const character = interaction.options.character?.trim();
-        void (async () => {
-          if (!character) {
-            await replyToInteraction(interaction, "Add your character name: /link <character>");
-            return;
-          }
-          await linker.linkByCommand(character, userId);
-          logger.info(`discord: /link ${character} -> ${userId}`);
-          await replyToInteraction(
-            interaction,
-            `Linked ${character}! You'll get its Onyxia buff alerts here. Run /link again anytime to change it.`,
-          );
-        })().catch((error) => logger.error(`/link: ${describeError(error)}`));
-      },
-    });
-    gateway.start();
-    logger.info(
-      `discord gateway: started (DM linking${inviteWired ? " + personal-invite linking" : ""} active)`,
-    );
-  }
-
   logger.info(`turtle-onyxia-bot starting as ${config.characterName}`);
   if (config.announceStartup) {
     await push({
@@ -1253,7 +1128,6 @@ async function main(): Promise<void> {
     shutdownStarted = true;
     shuttingDown = true;
     logger.info(`shutting down (${signal})`);
-    gateway?.stop();
     // Exit even if a store.close() hangs, so we log out fast and don't overlap a redeploy.
     const hardExit = setTimeout(() => process.exit(0), 3_000);
     hardExit.unref?.();
