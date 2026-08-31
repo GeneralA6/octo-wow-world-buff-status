@@ -153,12 +153,12 @@ export class CommandRouter {
 
     if (arg === "") {
       const code = await linker.startDmLink(sender);
-      const steps = invite
-        ? `To get Discord DMs: 1) join our server ${invite}  2) send our bot a DM there with just this code: ${code}`
-        : `To get Discord DMs: send our bot a direct message with just this code: ${code}`;
+      const line1 = invite
+        ? `Want the buff alerts on Discord too? First join our server ${invite}, then send our bot a direct message there with just this code: ${code}.`
+        : `Want the buff alerts on Discord too? Send our bot a direct message on Discord with just this code: ${code}.`;
       return [
-        steps,
-        `Send it ON DISCORD (a direct message to the bot) — not back here in WoW. That links your Discord to your character; code expires ~15 min.`,
+        line1,
+        `Or, if it's easier, whisper me your Discord ID here and I'll DM you a code to whisper back instead. Either way the code expires in ~15 min.`,
       ];
     }
     if (["off", "clear", "none", "remove"].includes(arg.toLowerCase())) {
