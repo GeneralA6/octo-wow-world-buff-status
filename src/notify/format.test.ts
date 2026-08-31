@@ -67,6 +67,13 @@ describe("formatBuffDroppedWhisper", () => {
     expect(line).not.toMatch(/<t:/); // no Discord timestamp (WoW can't render it)
   });
 
+  it("doesn't tell someone who missed it to grab it; points to the next one instead", () => {
+    const line = formatBuffDroppedWhisper("alliance", 120 * 60_000);
+    expect(line).not.toMatch(/go grab/i);
+    expect(line).toMatch(/next one will be available/i);
+    expect(line).toMatch(/missed it/i);
+  });
+
   it("names the buff in full, so a reader knows which buff it is", () => {
     expect(formatBuffDroppedWhisper("horde", 120 * 60_000)).toContain("Rallying Cry of the Dragonslayer");
   });
