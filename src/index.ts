@@ -18,7 +18,9 @@ import {
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
+  formatFeedbackPost,
 } from "./notify/format.js";
+import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
 import { groupByRelevantCities } from "./notify/faction-routing.js";
 import type { RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
@@ -957,6 +959,16 @@ async function main(): Promise<void> {
       logger.error(`durations: MongoDB connect failed (${describeError(error)}); recording in memory`);
     }
   }
+  // Player-submitted feedback/suggestions — kept for review, posted to the feedback channel.
+  let feedbackStore: FeedbackStore = new InMemoryFeedbackStore();
+  if (config.mongodbUri) {
+    try {
+      feedbackStore = await MongoFeedbackStore.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("feedback: recording player suggestions to MongoDB");
+    } catch (error) {
+      logger.error(`feedback: MongoDB connect failed (${describeError(error)}); recording in memory`);
+    }
+  }
 
   // The watcher fills this once in world, so a listener-heard buff drop can be whispered.
   const buffDropSink: BuffDropSink = { notify: null };
@@ -995,6 +1007,19 @@ async function main(): Promise<void> {
     areaName: config.watchAreaName,
     logger,
   });
+  // A player's feedback: persist it (for review) and post it to the feedback channel,
+  // naming the sender. Best-effort — the player is always thanked regardless.
+  const onFeedback = (from: string, text: string): void => {
+    logger.info(`feedback from ${from}: ${JSON.stringify(text)}`);
+    void feedbackStore
+      .record({ from, text, at: new Date() })
+      .catch((error) => logger.error(`feedback-store: ${describeError(error)}`));
+    if (config.discordFeedbackChannelId) {
+      void dm.postToChannel(config.discordFeedbackChannelId, formatFeedbackPost(from, text)).then((result) => {
+        if (!result.ok) logger.error(`feedback: couldn't post to channel (${result.kind}${result.status ? ` ${result.status}` : ""})`);
+      });
+    }
+  };
   const router = new CommandRouter({
     store,
     activeRaids: () => lanes.flatMap((lane) => lane.watch.activeRaids()),
@@ -1003,6 +1028,7 @@ async function main(): Promise<void> {
     community: config.community,
     linker: dm.isConfigured ? linker : null,
     mintInvite: inviteLinker.isConfigured ? (character) => inviteLinker.mintFor(character) : undefined,
+    onFeedback,
   });
   const outreach = new Outreach(
     {
@@ -1128,6 +1154,7 @@ async function main(): Promise<void> {
       buffStore.close(),
       broadcasts.close(),
       durationStore.close(),
+      feedbackStore.close(),
     ]).finally(() => process.exit(0));
   };
   process.on("SIGINT", () => shutdown("SIGINT"));

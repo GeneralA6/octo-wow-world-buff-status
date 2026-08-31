@@ -16,6 +16,7 @@ function deps(
     withLinker?: boolean;
     fetch?: DiscordFetch;
     mintInvite?: (character: string) => Promise<string | null>;
+    withFeedback?: boolean;
   } = {},
 ) {
   const store = new InMemorySubscriberStore();
@@ -26,6 +27,7 @@ function deps(
     opts.withLinker === false
       ? null
       : new DiscordLinker({ store, pending, dm, serverInviteUrl: "https://discord.gg/x", areaName: "Onyxia's Lair" });
+  const feedback: { from: string; text: string }[] = [];
   const router = new CommandRouter({
     store,
     activeRaids: () => tracker.activeRaids(),
@@ -34,8 +36,9 @@ function deps(
     community: "OctoWoW",
     linker,
     mintInvite: opts.mintInvite,
+    onFeedback: opts.withFeedback === false ? undefined : (from, text) => feedback.push({ from, text }),
   });
-  return { store, tracker, pending, linker, router };
+  return { store, tracker, pending, linker, router, feedback };
 }
 
 function crowd(guild: string, count: number): WhoPlayer[] {
@@ -57,6 +60,33 @@ describe("CommandRouter", () => {
     await router.handle("Raider", "subscribe");
     expect((await router.handle("Raider", "unsubscribe"))[0]).toMatch(/Unsubscribed/);
     expect(await store.has("Raider")).toBe(false);
+  });
+
+  it("captures feedback with the sender's name and thanks them", async () => {
+    const { router, feedback } = deps();
+    const reply = await router.handle("Raider", "feedback the timer felt 5 min late");
+    expect(feedback).toEqual([{ from: "Raider", text: "the timer felt 5 min late" }]);
+    expect(reply[0]).toMatch(/thanks/i);
+  });
+
+  it("accepts 'suggest' as an alias and does not require a subscription", async () => {
+    const { store, router, feedback } = deps();
+    await router.handle("Raider", "suggest add a horde-only mode");
+    expect(await store.has("Raider")).toBe(false); // no subscription needed
+    expect(feedback[0]).toEqual({ from: "Raider", text: "add a horde-only mode" });
+  });
+
+  it("shows usage and captures nothing when feedback has no message", async () => {
+    const { router, feedback } = deps();
+    const reply = await router.handle("Raider", "feedback");
+    expect(feedback).toEqual([]);
+    expect(reply[0]).toMatch(/feedback <your message>/i);
+  });
+
+  it("tells the player when feedback isn't wired up", async () => {
+    const { router } = deps({ withFeedback: false });
+    const reply = await router.handle("Raider", "feedback hi");
+    expect(reply[0]).toMatch(/isn't set up/i);
   });
 
   it("reports the active raid on status", async () => {

@@ -49,6 +49,9 @@ export interface CommandDeps {
    *  undefined when personal-invite linking isn't configured, so `discord` falls back to
    *  the DM-a-code flow. Returns the invite url, or null if it couldn't be created. */
   readonly mintInvite?: (character: string) => Promise<string | null>;
+  /** Receives a player's "feedback"/"suggest" message (sender + text). Fire-and-forget:
+   *  the caller persists it and posts it to the feedback channel. Undefined = no-op. */
+  readonly onFeedback?: (from: string, text: string) => void;
 }
 
 const DISCORD_ID = /^\d{17,20}$/;
@@ -125,6 +128,10 @@ export class CommandRouter {
       case "invite":
       case "join":
         return this.#invite(sender);
+      case "feedback":
+      case "suggest":
+      case "suggestion":
+        return this.#feedback(sender, parts.slice(1).join(" ").trim());
       case "alliance":
       case "horde":
       case "both":
@@ -162,6 +169,7 @@ export class CommandRouter {
           `alliance / horde / both - which side's buff you want (I try to detect it; default both)`,
           `discord - link Discord for DMs. Best combo: link it, then "mode offline" and I'll DM you ONLY when you're logged out - so you never miss a buff, even away from the game.`,
           `invite - join <${this.#deps.guildName}>, the guild that runs me (we're recruiting!)`,
+          `feedback <message> - send a suggestion or bug report straight to the team`,
           `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), me (your settings).`,
         ];
       default: {
@@ -316,6 +324,19 @@ export class CommandRouter {
     const alerts = ALL_ALERT_TYPES.filter((type) => set.has(type));
     await store.update(sender, { alerts });
     return [`"${t}" ${wantOn ? "ON" : "OFF"}. You now get: ${alerts.length ? alerts.join(", ") : "nothing"}.`];
+  }
+
+  /** Capture a player's feedback/suggestion and hand it off (persisted + posted to the
+   *  feedback channel by the caller). Empty text just shows how to use it. */
+  #feedback(sender: string, text: string): string[] {
+    if (text === "") {
+      return [`Whisper "feedback <your message>" and I'll pass your suggestion to <${this.#deps.guildName}>.`];
+    }
+    if (!this.#deps.onFeedback) {
+      return [`Feedback isn't set up on this bot right now - sorry about that!`];
+    }
+    this.#deps.onFeedback(sender, text);
+    return [`Thanks for the feedback - I've passed it along to <${this.#deps.guildName}>. Much appreciated!`];
   }
 
   /** Send the caller a guild invite. Only works while the watcher is in world; if it
