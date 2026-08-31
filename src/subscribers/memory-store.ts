@@ -1,6 +1,4 @@
 import {
-  DEFAULT_ALERTS,
-  DEFAULT_DELIVERY,
   DEFAULT_FACTIONS,
   type Subscriber,
   type SubscriberStore,
@@ -17,9 +15,6 @@ export class InMemorySubscriberStore implements SubscriberStore {
     if (!key || this.#byKey.has(key)) return false;
     this.#byKey.set(key, {
       name: name.trim(),
-      discordId: null,
-      delivery: DEFAULT_DELIVERY,
-      alerts: [...DEFAULT_ALERTS],
       factions: [...DEFAULT_FACTIONS],
       subscribedAt: new Date(),
     });
@@ -28,22 +23,6 @@ export class InMemorySubscriberStore implements SubscriberStore {
 
   async remove(name: string): Promise<boolean> {
     return this.#byKey.delete(subscriberKey(name));
-  }
-
-  async removeByDiscordId(discordId: string): Promise<string[]> {
-    const removed: string[] = [];
-    for (const [key, sub] of this.#byKey) {
-      if (sub.discordId === discordId) {
-        this.#byKey.delete(key);
-        removed.push(sub.name);
-      }
-    }
-    return removed;
-  }
-
-  async findByDiscordId(discordId: string): Promise<Subscriber[]> {
-    if (!discordId) return [];
-    return [...this.#byKey.values()].filter((sub) => sub.discordId === discordId);
   }
 
   async has(name: string): Promise<boolean> {
@@ -59,9 +38,6 @@ export class InMemorySubscriberStore implements SubscriberStore {
     if (!existing) return false;
     this.#byKey.set(subscriberKey(name), {
       ...existing,
-      ...(changes.discordId !== undefined ? { discordId: changes.discordId } : {}),
-      ...(changes.delivery !== undefined ? { delivery: changes.delivery } : {}),
-      ...(changes.alerts !== undefined ? { alerts: [...changes.alerts] } : {}),
       ...(changes.factions !== undefined ? { factions: [...changes.factions] } : {}),
     });
     return true;

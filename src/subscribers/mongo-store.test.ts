@@ -31,7 +31,7 @@ describe("MongoSubscriberStore", () => {
     const store = new MongoSubscriberStore(db);
     expect(await store.add("Raider")).toBe(true);
     expect(await store.add("raider")).toBe(false);
-    expect(db.docs.get("raider")).toMatchObject({ name: "Raider", discordId: null, delivery: "both" });
+    expect(db.docs.get("raider")).toMatchObject({ name: "Raider", factions: ["alliance", "horde"] });
   });
 
   it("maps a delete to whether a doc was removed", async () => {
@@ -47,42 +47,23 @@ describe("MongoSubscriberStore", () => {
     const store = new MongoSubscriberStore(db);
     await store.add("Raider");
     const sub = await store.get("raider");
-    expect(sub).toMatchObject({ name: "Raider", delivery: "both" });
+    expect(sub).toMatchObject({ name: "Raider", factions: ["alliance", "horde"] });
     expect(sub).not.toHaveProperty("_id");
-  });
-
-  it("removes every character linked to a Discord id and returns their names", async () => {
-    const db = fakeDb();
-    const store = new MongoSubscriberStore(db);
-    await store.add("Main");
-    await store.add("Alt");
-    await store.add("Other");
-    await store.update("main", { discordId: "42" });
-    await store.update("alt", { discordId: "42" });
-    await store.update("other", { discordId: "99" });
-    expect((await store.findByDiscordId("42")).map((s) => s.name).sort()).toEqual(["Alt", "Main"]);
-    const removed = await store.removeByDiscordId("42");
-    expect(removed.sort()).toEqual(["Alt", "Main"]);
-    expect(db.docs.has("main")).toBe(false);
-    expect(db.docs.has("other")).toBe(true);
-    expect(await store.removeByDiscordId("nobody")).toEqual([]);
-    expect(await store.findByDiscordId("42")).toEqual([]);
   });
 
   it("updates only the provided fields", async () => {
     const db = fakeDb();
     const store = new MongoSubscriberStore(db);
     await store.add("Raider");
-    expect(await store.update("raider", { discordId: "123456789012345678" })).toBe(true);
-    expect(db.setFields).toHaveBeenCalledWith("raider", { discordId: "123456789012345678" });
-    expect(db.docs.get("raider")?.discordId).toBe("123456789012345678");
-    expect(db.docs.get("raider")?.delivery).toBe("both");
+    expect(await store.update("raider", { factions: ["horde"] })).toBe(true);
+    expect(db.setFields).toHaveBeenCalledWith("raider", { factions: ["horde"] });
+    expect(db.docs.get("raider")?.factions).toEqual(["horde"]);
   });
 
   it("returns false updating a name that isn't subscribed", async () => {
     const db = fakeDb();
     const store = new MongoSubscriberStore(db);
-    expect(await store.update("Ghost", { delivery: "offline" })).toBe(false);
+    expect(await store.update("Ghost", { factions: ["alliance"] })).toBe(false);
   });
 
   it("lists subscribers without the internal _id", async () => {
