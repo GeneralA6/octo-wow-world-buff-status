@@ -39,6 +39,29 @@ describe("DiscordLinker", () => {
     expect(await linker.confirmFromDm("999888777", "NOSUCH")).toBeNull();
   });
 
+  it("flow B: startIdLink DMs a code and confirmFromWhisper links it, only for the owner", async () => {
+    const okFetch = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200));
+    const { store, linker } = make({ fetch: okFetch });
+    expect(await linker.startIdLink("Raider", "123456789012345678")).toBe("sent");
+    expect(await linker.confirmFromWhisper("SomeoneElse", "CODE01")).toBe(false);
+    expect(await linker.confirmFromWhisper("Raider", "CODE01")).toBe(true);
+    expect((await store.get("Raider"))?.discordId).toBe("123456789012345678");
+  });
+
+  it("flow B: an unreachable DM reports unreachable and drops the code", async () => {
+    const badFetch = vi.fn<DiscordFetch>().mockResolvedValue(res(false, 403));
+    const { pending, linker } = make({ fetch: badFetch });
+    expect(await linker.startIdLink("Raider", "123456789012345678")).toBe("unreachable");
+    expect(pending.size).toBe(0);
+  });
+
+  it("linkByCommand links a character to an id directly (the /link path)", async () => {
+    const { store, linker } = make();
+    await linker.linkByCommand("Raider", "555000111");
+    expect(await store.has("Raider")).toBe(true);
+    expect((await store.get("Raider"))?.discordId).toBe("555000111");
+  });
+
   it("reports not-configured without a bot token", async () => {
     const { linker } = make({ token: null });
     expect(linker.isConfigured).toBe(false);

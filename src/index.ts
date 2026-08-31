@@ -8,6 +8,7 @@ import { resolveBuild } from "./net/client-resolver.js";
 import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
 import { DiscordDmSender } from "./notify/discord-dm.js";
 import { DiscordGateway } from "./notify/discord-gateway.js";
+import { registerLinkCommand, replyToInteraction } from "./notify/discord-commands.js";
 import { DiscordInvites } from "./notify/discord-invites.js";
 import { InviteLinker } from "./notify/invite-linker.js";
 import { formatBuffAlert, formatBuffDropped, formatBuffWhisper } from "./notify/format.js";
@@ -845,25 +846,50 @@ async function main(): Promise<void> {
           }
         })();
       },
-      onReady: inviteWired
-        ? () =>
-            void inviteLinker
-              .refresh()
-              .then((ok) =>
-                logger.info(
-                  ok
-                    ? "invite-link: tracking invites (personal-invite linking active)"
-                    : "invite-link: could NOT read invites — check the bot has MANAGE_GUILD and the Server Members intent",
-                ),
-              )
-              .catch((error) => logger.error(`invite-link refresh: ${describeError(error)}`))
-        : undefined,
+      onReady: (applicationId) => {
+        // Register /link as a guild command (instant) so already-in-Discord users can
+        // link with one step, and snapshot invite counts for personal-invite linking.
+        if (config.discordGuildId) {
+          void registerLinkCommand(botToken, applicationId, config.discordGuildId)
+            .then((ok) => logger.info(`discord: /link command ${ok ? "registered" : "registration FAILED"}`))
+            .catch((error) => logger.error(`/link register: ${describeError(error)}`));
+        }
+        if (inviteWired) {
+          void inviteLinker
+            .refresh()
+            .then((ok) =>
+              logger.info(
+                ok
+                  ? "invite-link: tracking invites (personal-invite linking active)"
+                  : "invite-link: could NOT read invites — check the bot has MANAGE_GUILD and the Server Members intent",
+              ),
+            )
+            .catch((error) => logger.error(`invite-link refresh: ${describeError(error)}`));
+        }
+      },
       onGuildMemberAdd: inviteWired
         ? (userId) =>
             void inviteLinker
               .onMemberJoin(userId)
               .catch((error) => logger.error(`invite-link join: ${describeError(error)}`))
         : undefined,
+      onInteraction: (interaction) => {
+        if (interaction.commandName !== "link" || !interaction.userId) return;
+        const userId = interaction.userId;
+        const character = interaction.options.character?.trim();
+        void (async () => {
+          if (!character) {
+            await replyToInteraction(interaction, "Add your character name: /link <character>");
+            return;
+          }
+          await linker.linkByCommand(character, userId);
+          logger.info(`discord: /link ${character} -> ${userId}`);
+          await replyToInteraction(
+            interaction,
+            `Linked ${character}! You'll get its Onyxia buff alerts here. Run /link again anytime to change it.`,
+          );
+        })().catch((error) => logger.error(`/link: ${describeError(error)}`));
+      },
     });
     gateway.start();
     logger.info(

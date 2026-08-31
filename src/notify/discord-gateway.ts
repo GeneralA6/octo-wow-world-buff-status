@@ -1,5 +1,6 @@
 import { WebSocket } from "ws";
 import { silentLogger, type Logger } from "../logger.js";
+import { parseSlashInteraction, type SlashInteraction } from "./discord-commands.js";
 
 /**
  * A minimal Discord gateway client — just enough to receive DMs the bot is sent,
@@ -39,8 +40,11 @@ export interface DiscordGatewayOptions {
   readonly onDirectMessage: (authorId: string, content: string) => void;
   /** Called with the new member's user id on each server join (personal-invite linking). */
   readonly onGuildMemberAdd?: (userId: string) => void;
-  /** Called once the gateway reaches READY — a good moment to snapshot invite counts. */
-  readonly onReady?: () => void;
+  /** Called for each `/link` (or other) slash-command interaction. */
+  readonly onInteraction?: (interaction: SlashInteraction) => void;
+  /** Called once READY arrives, with the bot's application id — for command registration
+   *  and to snapshot invite counts. */
+  readonly onReady?: (applicationId: string) => void;
   readonly logger?: Logger;
   /** Test seam: how to open a socket. Defaults to a real `ws` connection. */
   readonly connect?: SocketFactory;
@@ -78,7 +82,8 @@ export class DiscordGateway {
   readonly #token: string;
   readonly #onDm: (authorId: string, content: string) => void;
   readonly #onMemberAdd: ((userId: string) => void) | null;
-  readonly #onReady: (() => void) | null;
+  readonly #onInteraction: ((interaction: SlashInteraction) => void) | null;
+  readonly #onReady: ((applicationId: string) => void) | null;
   readonly #logger: Logger;
   readonly #connect: SocketFactory;
 
@@ -97,6 +102,7 @@ export class DiscordGateway {
     this.#token = options.token;
     this.#onDm = options.onDirectMessage;
     this.#onMemberAdd = options.onGuildMemberAdd ?? null;
+    this.#onInteraction = options.onInteraction ?? null;
     this.#onReady = options.onReady ?? null;
     this.#logger = options.logger ?? silentLogger;
     this.#connect = options.connect ?? defaultConnect;
@@ -183,7 +189,7 @@ export class DiscordGateway {
       this.#botUserId = user ? strField(user, "id") : null;
       this.#backoffMs = 1_000;
       this.#logger.info("discord gateway: ready");
-      this.#onReady?.();
+      if (this.#botUserId) this.#onReady?.(this.#botUserId); // a bot's user id IS its app id
     } else if (type === "RESUMED") {
       this.#backoffMs = 1_000;
       this.#logger.debug("discord gateway: resumed");
@@ -193,6 +199,9 @@ export class DiscordGateway {
       const user = recField(data, "user");
       const userId = user ? strField(user, "id") : null;
       if (userId && userId !== this.#botUserId) this.#onMemberAdd?.(userId);
+    } else if (type === "INTERACTION_CREATE" && data && this.#onInteraction) {
+      const interaction = parseSlashInteraction(data);
+      if (interaction) this.#onInteraction(interaction);
     }
   }
 

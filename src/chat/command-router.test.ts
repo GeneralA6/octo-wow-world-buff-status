@@ -144,27 +144,40 @@ describe("CommandRouter", () => {
     expect((await router.handle("Ghost", "notify"))[0]).toMatch(/not subscribed/);
   });
 
-  it("'discord' mints a code to DM the bot and subscribes the caller", async () => {
-    const { store, router } = deps();
+  it("'discord' offers /link and the Discord-ID path", async () => {
+    const { router } = deps();
     const reply = (await router.handle("Raider", "discord")).join(" ");
-    expect(reply).toContain("CODE01"); // the code to DM the bot
-    expect(reply).toContain("discord.gg/x"); // the server to join
-    expect(reply).toMatch(/no id needed/i); // no ID/username step
-    expect(reply).toMatch(/not here in WoW/i); // send it on Discord
-    expect(await store.has("Raider")).toBe(true);
+    expect(reply).toMatch(/\/link Raider/); // slash command, prefilled with their name
+    expect(reply).toContain("discord.gg/x"); // where to join
+    expect(reply).toMatch(/discord id/i); // the in-WoW ID path
   });
 
-  it("discord hands out a personal invite link when personal-invite linking is on", async () => {
+  it("discord adds the one-click personal invite when personal-invite linking is on", async () => {
     const { router } = deps({ mintInvite: async (character) => `https://discord.gg/for-${character}` });
-    const reply = (await router.handle("Raider", "discord"))[0];
-    expect(reply).toContain("https://discord.gg/for-Raider");
-    expect(reply).toMatch(/automatically/i);
+    const reply = (await router.handle("Raider", "discord")).join(" ");
+    expect(reply).toContain("https://discord.gg/for-Raider"); // the personal invite
+    expect(reply).toMatch(/\/link Raider/); // still leads with /link
   });
 
-  it("discord falls back to the DM-a-code flow when a personal invite can't be minted", async () => {
+  it("discord still works (no personal invite line) when minting isn't available", async () => {
     const { router } = deps({ mintInvite: async () => null });
     const reply = (await router.handle("Raider", "discord")).join(" ");
-    expect(reply).toContain("CODE01");
+    expect(reply).toMatch(/\/link Raider/);
+    expect(reply).not.toContain("discord.gg/for-"); // no personal-invite line
+  });
+
+  it("'discord <id>' DMs a code (flow B), and a whispered code back confirms", async () => {
+    const { store, router } = deps();
+    expect((await router.handle("Raider", "discord 123456789012345678"))[0]).toMatch(/DMed you a code/);
+    expect((await router.handle("Raider", "CODE01"))[0]).toMatch(/linked/i);
+    expect((await store.get("Raider"))?.discordId).toBe("123456789012345678");
+  });
+
+  it("'discord <not-an-id>' explains it needs the numeric id", async () => {
+    const { router } = deps();
+    const reply = (await router.handle("Raider", "discord General_A6#6266")).join(" ");
+    expect(reply).toMatch(/18-digit/i);
+    expect(reply).toContain("General_A6#6266");
   });
 
   it("'discord off' unlinks", async () => {

@@ -39,6 +39,7 @@ export interface CommandDeps {
   readonly mintInvite?: (character: string) => Promise<string | null>;
 }
 
+const DISCORD_ID = /^\d{17,20}$/;
 const MODE_ALIASES: Record<string, DeliveryMode> = {
   ingame: "ingame",
   "in-game": "ingame",
@@ -70,7 +71,7 @@ export class CommandRouter {
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
     const command = (parts[0] ?? "").toLowerCase();
     const arg = parts[1] ?? "";
-    const { store, activeRaids, areaName } = this.#deps;
+    const { store, activeRaids, areaName, linker } = this.#deps;
 
     switch (command) {
       case "subscribe":
@@ -95,6 +96,11 @@ export class CommandRouter {
       }
       case "discord":
         return this.#discord(sender, arg);
+      case "confirm": {
+        if (!linker) return ["Discord isn't set up on this bot."];
+        const ok = await linker.confirmFromWhisper(sender, arg);
+        return [ok ? this.#linkedLine() : `That code didn't match. Whisper "discord" to start again.`];
+      }
       case "invite":
       case "join":
         return this.#invite(sender);
@@ -128,12 +134,18 @@ export class CommandRouter {
           `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), me (your settings).`,
         ];
       default: {
+        // A bare confirmation code from a flow-B link (whisper the code straight back).
+        if (linker && (await linker.confirmFromWhisper(sender, command))) return [this.#linkedLine()];
         // Natural-language intent detection over the whole message.
         const intent = parseIntent(text);
         if (intent) return this.#handleIntent(intent, sender);
         return [`Sorry, I didn't get that. Whisper "help" for what I can do.`];
       }
     }
+  }
+
+  #linkedLine(): string {
+    return `Discord linked! You'll get ${this.#deps.areaName} alerts there too. "mode offline" for DMs only when you're offline.`;
   }
 
   async #discord(sender: string, arg: string): Promise<string[]> {
@@ -145,24 +157,41 @@ export class CommandRouter {
       return [ok ? `Discord unlinked — in-game whispers only.` : `You're not subscribed.`];
     }
 
-    // Preferred path: a personal, single-use invite — click it and you're linked
-    // automatically, no code or setup. Falls back to the DM-a-code flow if it's off/fails.
-    if (mintInvite) {
-      const url = await mintInvite(sender);
-      if (url) {
+    // Flow B: they pasted their Discord ID — DM them a code to whisper back.
+    if (arg !== "") {
+      if (!DISCORD_ID.test(arg)) {
         return [
-          `Want buff alerts on Discord too? Click your personal invite and you're linked automatically — no code, no setup: ${url}`,
+          `"${arg}" isn't a Discord ID — that's an 18-digit number from your Discord profile (••• → Copy User ID).`,
+          `Or skip it: whisper just "discord" and I'll give you a personal link instead.`,
         ];
+      }
+      switch (await linker.startIdLink(sender, arg)) {
+        case "sent":
+          return [`I DMed you a code on Discord — whisper it back here to confirm.`];
+        case "unreachable":
+          return [
+            `I couldn't DM you.${linker.serverInviteUrl ? ` Join ${linker.serverInviteUrl} first.` : ""} Then enable "DMs from server members" and try again.`,
+          ];
+        case "not-configured":
+          return [`Discord isn't set up on this bot.`];
+        default:
+          return [`Trouble reaching Discord — try again in a moment.`];
       }
     }
 
-    const invite = linker.serverInviteUrl;
-    const code = await linker.startDmLink(sender);
-    const join = invite ? `join our server ${invite}, then ` : "";
-    return [
-      `Want the buff alerts on Discord too? ${join}send our bot a DM on Discord with the code ${code}, and I'll know it's you — no ID needed.`,
-      `Send the code as a direct message to the bot on Discord (not here in WoW). It expires in ~15 min.`,
+    // No arg: show the easy paths. "/link" (in Discord) is simplest, especially if you're
+    // already in the server; the ID flow stays fully in WoW; a personal one-click invite
+    // is offered last, for clients where chat links are actually clickable.
+    const server = linker.serverInviteUrl;
+    const lines = [
+      `Get buff alerts on Discord — easiest: in our server, type "/link ${sender}" and you're done.${server ? ` (Not in the server? Join ${server} first.)` : ""}`,
+      `Or stay in WoW: whisper me "discord <your Discord ID>" — the 18-digit number on your Discord profile — and I'll DM you a code to whisper back.`,
     ];
+    if (mintInvite) {
+      const url = await mintInvite(sender);
+      if (url) lines.push(`Or one-click, if links are clickable for you: ${url}`);
+    }
+    return lines;
   }
 
   async #mode(sender: string, arg: string): Promise<string[]> {
