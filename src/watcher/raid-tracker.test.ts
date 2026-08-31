@@ -140,6 +140,45 @@ describe("RaidTracker (auto grouping — the default)", () => {
     const left = tracker.update(scattered(2)); // a real drop still fires
     expect(left.map((e) => e.kind)).toEqual(["raid-left"]);
   });
+
+  // Sticky membership: the false "raid-left" bug and the properties that must survive it.
+  it("does NOT split a guild off an active pickup raid as it grows past the threshold", () => {
+    const tracker = new RaidTracker(15, "auto", 5);
+    // Forms as a pickup: 14 of <G> + a loner, no single guild at strength → "a pickup group".
+    const formed = tracker.update([...guildCrowd("G", 14), ...guildCrowd("", 1, "loner")]);
+    expect(formed.map((e) => e.cohort.label)).toEqual(["a pickup group"]);
+    // 6 more of <G> arrive (the exact shape of the live bug). Old code split <G> off and
+    // emptied the pickup → a false raid-left while the lair was GROWING. Sticky: they join.
+    const grown = tracker.update([...guildCrowd("G", 20), ...guildCrowd("", 1, "loner")]);
+    expect(grown).toEqual([]);
+    expect(tracker.activeRaids()).toEqual([{ label: "a pickup group", count: 21, peak: 21 }]);
+  });
+
+  it("still opens a separate cohort for a fresh guild bloc arriving alongside an active pickup", () => {
+    const tracker = new RaidTracker(15, "auto", 5);
+    tracker.update(scattered(16)); // pickup active
+    const events = tracker.update([...scattered(16), ...guildCrowd("Ascend", 16)]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "raid-forming" });
+    expect(events[0]?.cohort.label).toBe("<Ascend>"); // concurrency preserved
+  });
+
+  it("lets an unguilded newcomer join the active pickup instead of forming anything", () => {
+    const tracker = new RaidTracker(15, "auto", 5);
+    tracker.update(scattered(15)); // pickup active at 15
+    expect(tracker.update([...scattered(15), ...guildCrowd("", 3, "walkup")])).toEqual([]);
+    expect(tracker.activeRaids()[0]?.count).toBe(18);
+  });
+
+  it("keeps a member in their cohort across a poll they briefly vanish from", () => {
+    const tracker = new RaidTracker(15, "auto", 5);
+    tracker.update(scattered(20)); // pickup active, pug0..19 assigned to pickup
+    // A guild bloc of the SAME names would otherwise be re-grouped; being sticky, a returning
+    // member rejoins pickup rather than seeding a split. 19 present, then all 20 back.
+    expect(tracker.update(scattered(19))).toEqual([]); // one flickered out, 19 >= 5, silent
+    expect(tracker.update(scattered(20))).toEqual([]); // back to 20, still one pickup
+    expect(tracker.activeRaids()).toEqual([{ label: "a pickup group", count: 20, peak: 20 }]);
+  });
 });
 
 describe("RaidTracker (guild mode)", () => {

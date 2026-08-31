@@ -90,6 +90,10 @@ export class RaidTracker {
   readonly #leaveAt: number;
   readonly #mode: GroupingMode;
   readonly #cohorts = new Map<string, CohortState>();
+  // Which cohort each tracked player belongs to (auto mode), so an ACTIVE raid keeps its
+  // members instead of shedding them to a newly-forming cohort. Rebuilt every poll from
+  // who is present; a player of an active cohort is sticky, everyone else is regrouped.
+  #assignmentByName = new Map<string, string>();
   #firstPoll = true;
 
   /**
@@ -180,30 +184,58 @@ export class RaidTracker {
     if (this.#mode === "lair") {
       return players.length > 0 ? new Map([[LAIR_KEY, [...players]]]) : new Map();
     }
+    if (this.#mode === "guild") {
+      const byGuild = new Map<string, WhoPlayer[]>();
+      for (const player of players) pushTo(byGuild, player.guild.trim() || PICKUP_KEY, player);
+      return byGuild;
+    }
+    return this.#assignAuto(players);
+  }
 
-    const byGuild = new Map<string, WhoPlayer[]>();
+  /**
+   * "auto" (sticky): a member of an ACTIVE cohort keeps it, so a raid never sheds members to
+   * a newly-forming cohort — which is what made a guild crossing the strength line empty the
+   * pickup it grew inside and fire a false "left". Newcomers join their guild's active cohort
+   * if it has one, else pool with the other unassigned players; from that pool a guild bloc at
+   * strength opens its OWN cohort and everyone else forms or joins pickup. A not-yet-formed
+   * pickup is regrouped fresh each poll, so a guild reaching strength before any raid is active
+   * is still named at formation.
+   */
+  #assignAuto(players: readonly WhoPlayer[]): Map<string, WhoPlayer[]> {
+    const result = new Map<string, WhoPlayer[]>();
+    const nextAssignment = new Map<string, string>();
+    const place = (key: string, player: WhoPlayer): void => {
+      pushTo(result, key, player);
+      nextAssignment.set(player.name, key);
+    };
+    const isActive = (key: string): boolean => this.#cohorts.get(key)?.active ?? false;
+
+    // 1. Members of an active cohort stay put.
+    const unassigned: WhoPlayer[] = [];
     for (const player of players) {
-      const key = player.guild.trim() || PICKUP_KEY;
-      const bucket = byGuild.get(key);
-      if (bucket) bucket.push(player);
-      else byGuild.set(key, [player]);
+      const prior = this.#assignmentByName.get(player.name);
+      if (prior !== undefined && isActive(prior)) place(prior, player);
+      else unassigned.push(player);
     }
 
-    if (this.#mode === "guild") return byGuild;
+    // 2. A newcomer whose guild already runs an active cohort joins it; the rest form a pool.
+    const pool: WhoPlayer[] = [];
+    for (const player of unassigned) {
+      const guild = player.guild.trim();
+      if (guild && isActive(guild)) place(guild, player);
+      else pool.push(player);
+    }
 
-    // "auto": a guild at strength (or already an active raid) is its own cohort;
-    // every other player pools into the pickup cohort.
-    const cohorts = new Map<string, WhoPlayer[]>();
-    const pickup: WhoPlayer[] = [];
+    // 3. In the pool, a guild bloc at strength opens its own cohort; everyone else pickups.
+    const byGuild = new Map<string, WhoPlayer[]>();
+    for (const player of pool) pushTo(byGuild, player.guild.trim() || PICKUP_KEY, player);
     for (const [key, members] of byGuild) {
-      const namedRaid =
-        key !== PICKUP_KEY &&
-        (members.length >= this.#formAt || (this.#cohorts.get(key)?.active ?? false));
-      if (namedRaid) cohorts.set(key, members);
-      else pickup.push(...members);
+      const ownCohort = key !== PICKUP_KEY && members.length >= this.#formAt;
+      for (const player of members) place(ownCohort ? key : PICKUP_KEY, player);
     }
-    if (pickup.length > 0) cohorts.set(PICKUP_KEY, pickup);
-    return cohorts;
+
+    this.#assignmentByName = nextAssignment;
+    return result;
   }
 
   #labelFor(key: string, members: readonly WhoPlayer[]): string {
@@ -214,6 +246,13 @@ export class RaidTracker {
     if (key === PICKUP_KEY) return "a pickup group";
     return `<${key}>`;
   }
+}
+
+/** Append a value to the array under `key`, creating the array on first use. */
+function pushTo<T>(map: Map<string, T[]>, key: string, value: T): void {
+  const bucket = map.get(key);
+  if (bucket) bucket.push(value);
+  else map.set(key, [value]);
 }
 
 function snapshot(key: string, state: CohortState, members: readonly WhoPlayer[]): RaidCohortSnapshot {
