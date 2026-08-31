@@ -1,6 +1,7 @@
 import {
   DEFAULT_ALERTS,
   DEFAULT_DELIVERY,
+  DEFAULT_FACTIONS,
   type Subscriber,
   type SubscriberStore,
   type SubscriberUpdate,
@@ -19,6 +20,7 @@ export class InMemorySubscriberStore implements SubscriberStore {
       discordId: null,
       delivery: DEFAULT_DELIVERY,
       alerts: [...DEFAULT_ALERTS],
+      factions: [...DEFAULT_FACTIONS],
       subscribedAt: new Date(),
     });
     return true;
@@ -44,6 +46,7 @@ export class InMemorySubscriberStore implements SubscriberStore {
       ...(changes.discordId !== undefined ? { discordId: changes.discordId } : {}),
       ...(changes.delivery !== undefined ? { delivery: changes.delivery } : {}),
       ...(changes.alerts !== undefined ? { alerts: [...changes.alerts] } : {}),
+      ...(changes.factions !== undefined ? { factions: [...changes.factions] } : {}),
     });
     return true;
   }

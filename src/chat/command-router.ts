@@ -1,13 +1,25 @@
 import {
   ALL_ALERT_TYPES,
+  DEFAULT_FACTIONS,
   isAlertType,
+  isFaction,
   type AlertType,
   type DeliveryMode,
+  type Faction,
   type SubscriberStore,
 } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
 import type { DiscordLinker } from "./discord-linker.js";
 import { parseIntent, type Intent } from "./intent.js";
+
+/** A reader-friendly name for a set of subscribed sides. */
+export function factionLabel(factions: readonly Faction[]): string {
+  const set = new Set(factions);
+  if (set.has("alliance") && set.has("horde")) return "both Stormwind & Orgrimmar";
+  if (set.has("alliance")) return "Stormwind (Alliance)";
+  if (set.has("horde")) return "Orgrimmar (Horde)";
+  return "no";
+}
 
 /**
  * Routes a whisper from a player to a command and produces the reply line(s) to
@@ -57,6 +69,9 @@ export class CommandRouter {
   // Guild invites can only be sent by the connected watcher, which registers this
   // when it reaches world and clears it on disconnect. Null = can't invite right now.
   #guildInvite: ((name: string) => void) | null = null;
+  // The watcher registers a /who-based faction detector; fired (fire-and-forget) when a
+  // new subscriber is added, to auto-set their side. Null = detection unavailable.
+  #factionLookup: ((name: string) => void) | null = null;
 
   constructor(deps: CommandDeps) {
     this.#deps = deps;
@@ -65,6 +80,11 @@ export class CommandRouter {
   /** The watcher offers/withdraws its guild-invite capability as it connects/drops. */
   setGuildInvite(fn: ((name: string) => void) | null): void {
     this.#guildInvite = fn;
+  }
+
+  /** The watcher offers/withdraws /who-based faction detection as it connects/drops. */
+  setFactionLookup(fn: ((name: string) => void) | null): void {
+    this.#factionLookup = fn;
   }
 
   async handle(sender: string, text: string): Promise<string[]> {
@@ -78,6 +98,7 @@ export class CommandRouter {
       case "sub":
       case "start": {
         const added = await store.add(sender);
+        if (added) this.#factionLookup?.(sender); // auto-detect their side in the background
         return [
           added
             ? `You're subscribed! I'll whisper you when a raid clears and the buff is about to drop. Want it even when you're offline? Whisper "discord" to link, then "mode offline" for DMs while you're logged out.`
@@ -104,6 +125,13 @@ export class CommandRouter {
       case "invite":
       case "join":
         return this.#invite(sender);
+      case "alliance":
+      case "horde":
+      case "both":
+        return this.#setFaction(sender, command);
+      case "faction":
+      case "side":
+        return this.#setFaction(sender, arg);
       case "mode":
         return this.#mode(sender, arg);
       case "notify":
@@ -116,7 +144,9 @@ export class CommandRouter {
           ? `Discord linked, delivery "${sub.delivery}"`
           : `no Discord linked`;
         const alerts = sub.alerts.length ? sub.alerts.join(", ") : "none";
-        return [`Subscribed to ${areaName} alerts — ${discord}. Alerts: ${alerts}.`];
+        return [
+          `Subscribed — ${factionLabel(sub.factions)} buffs; ${discord}. Alerts: ${alerts}. ("alliance"/"horde"/"both" to change your side.)`,
+        ];
       }
       case "status": {
         const raids = activeRaids();
@@ -129,6 +159,7 @@ export class CommandRouter {
         return [
           `I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me:`,
           `subscribe — start getting alerts (unsubscribe anytime to stop)`,
+          `alliance / horde / both — which side's buff you want (I try to detect it; default both)`,
           `discord — link Discord for DMs. Best combo: link it, then "mode offline" and I'll DM you ONLY when you're logged out — so you never miss a buff, even away from the game.`,
           `invite — join <${this.#deps.guildName}>, the guild that runs me (we're recruiting!)`,
           `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), me (your settings).`,
@@ -142,6 +173,30 @@ export class CommandRouter {
         return [`Sorry, I didn't get that. Whisper "help" for what I can do.`];
       }
     }
+  }
+
+  /** Choose which side's buffs to get: "alliance", "horde", or "both". Empty shows current. */
+  async #setFaction(sender: string, side: string): Promise<string[]> {
+    const { store } = this.#deps;
+    const sub = await store.get(sender);
+    if (!sub) return [`You're not subscribed. Whisper "subscribe" first.`];
+
+    const s = side.trim().toLowerCase();
+    if (s === "") {
+      return [
+        `You get ${factionLabel(sub.factions)} buff alerts. Whisper "alliance", "horde", or "both" to change.`,
+      ];
+    }
+    let factions: readonly Faction[] | null = null;
+    if (s === "both" || s === "all") factions = DEFAULT_FACTIONS;
+    else if (isFaction(s)) factions = [s];
+    else if (["alli", "ally", "aly", "a"].includes(s)) factions = ["alliance"];
+    else if (["h"].includes(s)) factions = ["horde"];
+    if (!factions) {
+      return [`Whisper "alliance", "horde", or "both". You're on ${factionLabel(sub.factions)}.`];
+    }
+    await store.update(sender, { factions: [...factions] });
+    return [`Done — I'll alert you for ${factionLabel(factions)} buffs.`];
   }
 
   #linkedLine(): string {

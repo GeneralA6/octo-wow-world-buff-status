@@ -11,11 +11,17 @@ import { DiscordGateway } from "./notify/discord-gateway.js";
 import { registerLinkCommand, replyToInteraction } from "./notify/discord-commands.js";
 import { DiscordInvites } from "./notify/discord-invites.js";
 import { InviteLinker } from "./notify/invite-linker.js";
-import { formatBuffAlert, formatBuffDropped, formatBuffWhisper } from "./notify/format.js";
+import {
+  formatBuffAlert,
+  formatBuffDropped,
+  formatBuffDroppedWhisper,
+  formatBuffWhisper,
+} from "./notify/format.js";
+import { groupByRelevantCities } from "./notify/faction-routing.js";
 import type { RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
-import type { WhoPlayer } from "./protocol/who.js";
+import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
 import {
@@ -34,7 +40,7 @@ import {
   type DurationStore,
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
-import { splitByFaction, type FactionSplit } from "./watcher/faction.js";
+import { factionOfRace, splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { shouldAlertForRaid } from "./watcher/buff-gate.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
@@ -43,7 +49,7 @@ import { WhisperQueue } from "./chat/whisper-queue.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
 import { PendingLinks } from "./subscribers/pending-links.js";
-import type { AlertType, Subscriber, SubscriberStore } from "./subscribers/store.js";
+import { subscriberKey, type AlertType, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 
 /** Client identity values that self-heal from the CDN across OctoWoW patches. */
@@ -139,6 +145,12 @@ interface DetectionLane {
   players(split: FactionSplit): readonly WhoPlayer[];
 }
 
+/** A buff drop is heard on a listener but must be whispered from the watcher — the
+ *  watcher fills this sink when in world so the listener's recordBuff can reach it. */
+interface BuffDropSink {
+  notify: ((faction: Faction, appliedAt: Date) => void) | null;
+}
+
 /** Everything a connection needs beyond config: shared state and the alert sinks. */
 interface ConnectionServices {
   readonly lanes: readonly DetectionLane[];
@@ -149,6 +161,7 @@ interface ConnectionServices {
   readonly router: CommandRouter;
   readonly dm: DiscordDmSender;
   readonly outreach: Outreach;
+  readonly buffDropSink: BuffDropSink;
   readonly push: (message: NotifyMessage) => Promise<void>;
   readonly client: ClientValues;
 }
@@ -181,7 +194,8 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, buffStore, durationStore, snapshots, store, router, dm, outreach, push, client } = services;
+  const { lanes, buffStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, push, client } =
+    services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -218,6 +232,8 @@ async function runConnection(
       whisperQueue?.stop();
       outreach.setChannel(null, null); // watcher going away — stop greeting through it
       router.setGuildInvite(null); // and stop offering guild invites until reconnected
+      router.setFactionLookup(null); // and stop the /who-based faction detection
+      buffDropSink.notify = null; // and stop routing buff-drop whispers until reconnected
       clearOfflinePending();
       if (error) reject(error);
       else resolve();
@@ -255,21 +271,48 @@ async function runConnection(
       subscribers = subscribers.filter((subscriber) => subscriber.alerts.includes(alertType));
       if (subscribers.length === 0) return;
 
-      const line = formatBuffWhisper(event, cities, config.watchAreaName);
-      // "discord"-mode subscribers get no whisper; everyone else does.
-      const whisperNames = subscribers
-        .filter((subscriber) => subscriber.delivery !== "discord")
-        .map((subscriber) => subscriber.name);
-      whisperQueue?.enqueueAll(whisperNames, line);
-
-      for (const subscriber of subscribers) {
-        if (!subscriber.discordId) continue;
-        if (subscriber.delivery === "both" || subscriber.delivery === "discord") {
-          void dm.send(subscriber.discordId, line); // Discord every time
-        } else if (subscriber.delivery === "offline") {
-          armOfflineFallback(subscriber.name, subscriber.discordId, line); // DM only if the whisper bounces
+      // Group by which of the open cities each subscriber cares about, so each hears one
+      // message naming only their own side (alliance → Stormwind, horde → Orgrimmar).
+      for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, cities)) {
+        const line = formatBuffWhisper(event, groupCities, config.watchAreaName);
+        // "discord"-mode subscribers get no whisper; everyone else does.
+        const whisperNames = members.filter((s) => s.delivery !== "discord").map((s) => s.name);
+        whisperQueue?.enqueueAll(whisperNames, line);
+        for (const subscriber of members) {
+          if (!subscriber.discordId) continue;
+          if (subscriber.delivery === "both" || subscriber.delivery === "discord") {
+            void dm.send(subscriber.discordId, line); // Discord every time
+          } else if (subscriber.delivery === "offline") {
+            armOfflineFallback(subscriber.name, subscriber.discordId, line); // DM only if the whisper bounces
+          }
+          // "ingame": no Discord DM
         }
-        // "ingame": no Discord DM
+      }
+    };
+
+    // A buff DROP (heard on a listener, routed here via the sink): whisper/DM only that
+    // side's subscribers — the payoff event finally reaches people in-game, not just the
+    // Discord channel. Gated on wanting alerts at all (notify none = silence).
+    const announceBuffDrop = async (faction: Faction, appliedAt: Date): Promise<void> => {
+      if (!config.whispersEnabled) return;
+      let subscribers: Subscriber[] = [];
+      try {
+        subscribers = await store.all();
+      } catch (error) {
+        logger.error(`subscribers: ${describeError(error)}`);
+        return;
+      }
+      subscribers = subscribers.filter((s) => s.factions.includes(faction) && s.alerts.length > 0);
+      if (subscribers.length === 0) return;
+
+      const line = formatBuffDroppedWhisper(faction, appliedAt, config.buffDurationMs);
+      const dmLine = formatBuffDropped(faction, appliedAt, config.buffDurationMs).body;
+      const whisperNames = subscribers.filter((s) => s.delivery !== "discord").map((s) => s.name);
+      whisperQueue?.enqueueAll(whisperNames, line);
+      for (const s of subscribers) {
+        if (!s.discordId) continue;
+        if (s.delivery === "both" || s.delivery === "discord") void dm.send(s.discordId, dmLine);
+        else if (s.delivery === "offline") armOfflineFallback(s.name, s.discordId, dmLine);
       }
     };
 
@@ -433,6 +476,35 @@ async function runConnection(
       })();
     };
 
+    // One /who at a time on this socket: the poll (sliced into several) and the subscribe
+    // faction lookups all queue here so they never collide (world.whoOnce allows one).
+    let whoChain: Promise<unknown> = Promise.resolve();
+    const queuedWho = (query: WhoQuery): Promise<WhoResult> => {
+      const run = (): Promise<WhoResult> => world.whoOnce(query, config.whoTimeoutMs);
+      const result = whoChain.then(run, run);
+      whoChain = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result;
+    };
+
+    // Detect a new subscriber's side with a targeted /who — they're online, having just
+    // whispered. Best-effort: they stay on "both" if it can't run or their race is custom.
+    const lookupFaction = async (name: string): Promise<void> => {
+      try {
+        const result = await queuedWho({ minLevel: 0, maxLevel: 100, playerName: name });
+        const player = result.players.find((p) => subscriberKey(p.name) === subscriberKey(name));
+        const faction = player ? factionOfRace(player.raceId) : null;
+        if (!faction) return; // offline, not found, or a custom race — leave them on "both"
+        if (await store.update(name, { factions: [faction] })) {
+          logger.info(`faction: detected ${name} as ${faction}`);
+        }
+      } catch (error) {
+        logger.debug(`faction lookup for ${name}: ${describeError(error)}`);
+      }
+    };
+
     const world = new WorldClient({
       socket,
       account: config.account,
@@ -455,13 +527,16 @@ async function runConnection(
               (nameTo) => world.guildInvite(nameTo),
             );
             router.setGuildInvite((nameTo) => world.guildInvite(nameTo));
+            // The watcher can now whisper, so route listener-heard buff drops through it.
+            buffDropSink.notify = (faction, appliedAt) =>
+              void announceBuffDrop(faction, appliedAt).catch((error) =>
+                logger.error(`buff-drop announce: ${describeError(error)}`),
+              );
           }
+          router.setFactionLookup((name) => void lookupFaction(name));
           const poll = async (): Promise<void> => {
             try {
-              const roster = await fetchRoster(
-                (q) => world.whoOnce(q, config.whoTimeoutMs),
-                config.watchAreaId,
-              );
+              const roster = await fetchRoster(queuedWho, config.watchAreaId);
               if (!settled) await processRoster(roster);
             } catch (error) {
               logger.warn(`who failed: ${describeError(error)}`);
@@ -772,14 +847,18 @@ async function main(): Promise<void> {
     }
   }
 
+  // The watcher fills this once in world, so a listener-heard buff drop can be whispered.
+  const buffDropSink: BuffDropSink = { notify: null };
+
   const recordBuff = (faction: Faction, sourceName: string, text: string, detectedBy: string): void => {
     const appliedAt = new Date();
     logger.info(`buff drop: ${faction} buff is up — ${detectedBy} heard "${text}" from ${sourceName}`);
     void buffStore
       .record({ faction, appliedAt })
       .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
-    // Announce it: the buff is up, and when the next one becomes possible (expiry).
+    // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
     void push(formatBuffDropped(faction, appliedAt, config.buffDurationMs));
+    buffDropSink.notify?.(faction, appliedAt);
   };
 
   // Discord DM delivery + linking (only when a bot token is configured).
@@ -824,6 +903,7 @@ async function main(): Promise<void> {
     router,
     dm,
     outreach,
+    buffDropSink,
     push,
     client,
   };

@@ -1,9 +1,13 @@
+import { FACTIONS, type Faction } from "../watcher/buff-store.js";
+
 /**
  * Persistence for who wants raid alerts, and how they want them delivered. The rest
  * of the bot depends only on this interface, so the Mongo-backed store and the
  * in-memory test fake are interchangeable. Character names are the identity (unique
  * per realm), matched case-insensitively; the display casing from subscribe is kept.
  */
+
+export type { Faction };
 
 /**
  * Where a subscriber is reached on a raid event:
@@ -29,11 +33,24 @@ export function isAlertType(value: string): value is AlertType {
   return ALL_ALERT_TYPES.some((type) => type === value);
 }
 
+/**
+ * Which side(s) a subscriber wants alerts for — the Rallying Cry drops per capital
+ * (Stormwind = alliance, Orgrimmar = horde), and a subscriber only cares about their
+ * own. Defaults to BOTH until we learn their side (a `/who` at subscribe, or a manual
+ * alliance/horde command), so nobody silently misses a buff.
+ */
+export const DEFAULT_FACTIONS: readonly Faction[] = FACTIONS;
+
+export function isFaction(value: string): value is Faction {
+  return FACTIONS.some((faction) => faction === value);
+}
+
 export interface Subscriber {
   readonly name: string;
   readonly discordId: string | null;
   readonly delivery: DeliveryMode;
   readonly alerts: readonly AlertType[];
+  readonly factions: readonly Faction[];
   readonly subscribedAt: Date;
 }
 
@@ -42,6 +59,7 @@ export interface SubscriberUpdate {
   readonly discordId?: string | null;
   readonly delivery?: DeliveryMode;
   readonly alerts?: readonly AlertType[];
+  readonly factions?: readonly Faction[];
 }
 
 export interface SubscriberStore {

@@ -137,6 +137,25 @@ describe("CommandRouter", () => {
     expect((await store.get("Raider"))?.alerts).toEqual(["forming", "cleared"]);
   });
 
+  it("sets the subscriber's side with alliance / horde / both", async () => {
+    const { store, router } = deps();
+    await router.handle("Raider", "subscribe");
+    expect((await store.get("Raider"))?.factions).toEqual(["alliance", "horde"]); // default both
+    expect((await router.handle("Raider", "horde"))[0]).toMatch(/Orgrimmar/i);
+    expect((await store.get("Raider"))?.factions).toEqual(["horde"]);
+    expect((await router.handle("Raider", "alliance"))[0]).toMatch(/Stormwind/i);
+    expect((await store.get("Raider"))?.factions).toEqual(["alliance"]);
+    expect((await router.handle("Raider", "both"))[0]).toMatch(/both/i);
+    expect((await store.get("Raider"))?.factions).toEqual(["alliance", "horde"]);
+  });
+
+  it("the faction command needs a subscription and rejects gibberish", async () => {
+    const { router } = deps();
+    expect((await router.handle("Ghost", "alliance"))[0]).toMatch(/not subscribed/i);
+    await router.handle("Raider", "subscribe");
+    expect((await router.handle("Raider", "faction wat"))[0]).toMatch(/alliance.*horde.*both/i);
+  });
+
   it("notify rejects an unknown type and nudges an unsubscribed player", async () => {
     const { store, router } = deps();
     await store.add("Raider");

@@ -2,8 +2,10 @@ import { MongoClient } from "mongodb";
 import {
   DEFAULT_ALERTS,
   DEFAULT_DELIVERY,
+  DEFAULT_FACTIONS,
   type AlertType,
   type DeliveryMode,
+  type Faction,
   type Subscriber,
   type SubscriberStore,
   type SubscriberUpdate,
@@ -18,6 +20,8 @@ export interface SubscriberDoc {
   readonly delivery: DeliveryMode;
   /** Optional: docs predating alert prefs have none, and default to all. */
   readonly alerts?: readonly AlertType[];
+  /** Optional: docs predating faction prefs have none, and default to both. */
+  readonly factions?: readonly Faction[];
   readonly subscribedAt: Date;
 }
 
@@ -41,7 +45,10 @@ export interface SubscriberDb {
   deleteByKey(key: string): Promise<DeleteOutcome>;
   countByKey(key: string): Promise<number>;
   getByKey(key: string): Promise<SubscriberDoc | null>;
-  setFields(key: string, fields: Partial<Pick<SubscriberDoc, "discordId" | "delivery" | "alerts">>): Promise<UpdateOutcome>;
+  setFields(
+    key: string,
+    fields: Partial<Pick<SubscriberDoc, "discordId" | "delivery" | "alerts" | "factions">>,
+  ): Promise<UpdateOutcome>;
   list(): Promise<SubscriberDoc[]>;
   close(): Promise<void>;
 }
@@ -55,6 +62,7 @@ function toSubscriber(doc: SubscriberDoc): Subscriber {
     discordId: doc.discordId,
     delivery: doc.delivery,
     alerts: doc.alerts ? [...doc.alerts] : [...DEFAULT_ALERTS],
+    factions: doc.factions ? [...doc.factions] : [...DEFAULT_FACTIONS],
     subscribedAt: doc.subscribedAt,
   };
 }
@@ -94,6 +102,7 @@ export class MongoSubscriberStore implements SubscriberStore {
       discordId: null,
       delivery: DEFAULT_DELIVERY,
       alerts: [...DEFAULT_ALERTS],
+      factions: [...DEFAULT_FACTIONS],
       subscribedAt: new Date(),
     });
     return result.upsertedCount === 1;
@@ -121,10 +130,16 @@ export class MongoSubscriberStore implements SubscriberStore {
   async update(name: string, changes: SubscriberUpdate): Promise<boolean> {
     const key = subscriberKey(name);
     if (!key) return false;
-    const fields: { discordId?: string | null; delivery?: DeliveryMode; alerts?: readonly AlertType[] } = {};
+    const fields: {
+      discordId?: string | null;
+      delivery?: DeliveryMode;
+      alerts?: readonly AlertType[];
+      factions?: readonly Faction[];
+    } = {};
     if (changes.discordId !== undefined) fields.discordId = changes.discordId;
     if (changes.delivery !== undefined) fields.delivery = changes.delivery;
     if (changes.alerts !== undefined) fields.alerts = changes.alerts;
+    if (changes.factions !== undefined) fields.factions = changes.factions;
     if (Object.keys(fields).length === 0) return this.has(name);
     return (await this.#db.setFields(key, fields)).matchedCount === 1;
   }
