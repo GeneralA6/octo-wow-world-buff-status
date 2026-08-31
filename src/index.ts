@@ -794,47 +794,51 @@ async function runListener(
           }
           if (listener.onLogin === "sit") world.sit();
           else if (listener.onLogin === "interact") {
-            // The object burst trickles in over several seconds, so poll: as soon as the
-            // target object is within reach, `use` it. With WOW_INTERACT_ENTRY set we only
-            // consider that entry (the stone bench), ignoring closer clutter; otherwise the
-            // nearest object. The nearby list is logged so the bench's entry can be found.
+            // The object burst trickles in over several seconds, so we WAIT for it to settle
+            // (accumulate the whole window) before picking, then `use` the target and dump the
+            // full list. With WOW_INTERACT_ENTRY set we only consider that entry (the bench),
+            // ignoring clutter; otherwise the nearest. Dumping everything is how the bench's
+            // real entry is found when it isn't simply the closest object.
             let attempts = 0;
             const distTo = (go: WorldGameObject): number =>
               selfPos ? Math.hypot(go.pos.x - selfPos.x, go.pos.y - selfPos.y, go.pos.z - selfPos.z) : Infinity;
-            const nearbyList = (): string =>
+            const fullList = (): string =>
               [...nearby]
                 .sort((a, b) => distTo(a) - distTo(b))
-                .slice(0, 10)
+                .slice(0, 20)
                 .map((go) => `${go.entry}@${distTo(go).toFixed(1)}`)
                 .join(", ");
             const tryInteract = (): void => {
               attempts += 1;
+              if (attempts < OBJECT_POLL_MAX) {
+                // Still gathering the object burst — wait so we pick from the full set.
+                interactTimer = setTimeout(tryInteract, OBJECT_POLL_MS);
+                interactTimer.unref?.();
+                return;
+              }
+              interacted = true;
+              const sp = selfPos;
               const pool =
                 config.interactEntry !== null ? nearby.filter((go) => go.entry === config.interactEntry) : nearby;
-              const target = selfPos ? nearestGameObject(pool, selfPos) : null;
+              const target = sp ? nearestGameObject(pool, sp) : null;
               const dist = target ? distTo(target) : Infinity;
+              logger.info(
+                `${listener.characterName}: interact settled — ` +
+                  `self=${sp ? `(${sp.x.toFixed(0)},${sp.y.toFixed(0)},${sp.z.toFixed(0)})` : "no"}, ` +
+                  `objects=${nearby.length}, all=[${fullList()}]`,
+              );
               if (target && dist <= config.interactMaxYd) {
-                interacted = true;
                 logger.info(
-                  `${listener.characterName}: using object entry=${target.entry} (~${dist.toFixed(1)} yd)` +
-                    `${config.interactEntry !== null ? " [targeted]" : ""} — check in-game if seated. nearby=[${nearbyList()}]`,
+                  `${listener.characterName}: using entry=${target.entry} (~${dist.toFixed(1)} yd)` +
+                    `${config.interactEntry !== null ? " [targeted]" : ""} — check in-game if seated`,
                 );
                 world.useGameObject(target.guid);
-                return;
-              }
-              if (attempts >= OBJECT_POLL_MAX) {
-                interacted = true;
-                const sp = selfPos;
+              } else {
                 logger.warn(
                   `${listener.characterName}: no ${config.interactEntry !== null ? `entry-${config.interactEntry} ` : ""}` +
-                    `object within ${config.interactMaxYd}yd after ${attempts} tries ` +
-                    `(self=${sp ? `(${sp.x.toFixed(0)},${sp.y.toFixed(0)},${sp.z.toFixed(0)})` : "no"}, ` +
-                    `objects=${nearby.length}, nearby=[${nearbyList()}])`,
+                    `object within ${config.interactMaxYd}yd`,
                 );
-                return;
               }
-              interactTimer = setTimeout(tryInteract, OBJECT_POLL_MS);
-              interactTimer.unref?.();
             };
             interactTimer = setTimeout(tryInteract, OBJECT_POLL_MS);
             interactTimer.unref?.();
