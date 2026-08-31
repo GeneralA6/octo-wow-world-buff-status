@@ -68,6 +68,16 @@ export interface ActiveRaid {
   readonly peak: number;
 }
 
+/**
+ * A synthetic "raid-left" event for a clear confirmed by the ClearTracker, so the
+ * park-now alert runs through the same buff-gate + dedup + announce path as a detector
+ * event. The ClearTracker is lair-granular and boss-blind, so the label is generic — and
+ * the cleared alert's wording uses only the peak and the cities anyway, never the label.
+ */
+export function clearedRaidEvent(peak: number): RaidEvent {
+  return { kind: "raid-left", cohort: { key: LAIR_KEY, label: "a raid", count: 0, peak, members: [] } };
+}
+
 interface CohortState {
   active: boolean;
   peak: number;

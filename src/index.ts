@@ -20,7 +20,7 @@ import {
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
 import { groupByRelevantCities } from "./notify/faction-routing.js";
-import type { RaidEvent } from "./watcher/raid-tracker.js";
+import { clearedRaidEvent, type RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
@@ -403,15 +403,18 @@ async function runConnection(
         logger.info(`census ${lane.label}: ${obs.change.present} in zone${arrPart}${depPart}${truncPart}`);
       }
 
-      // The configured detector drives alerts; the other is shadow-logged for validation.
+      // The configured detector drives the FORMING alert; the other is shadow-logged.
       const useTemporal = config.raidDetector === "temporal";
       const events = useTemporal ? obs.temporalEvents : obs.countEvents;
       const shadow = useTemporal ? obs.countEvents : obs.temporalEvents;
-      for (const event of events) {
+
+      // Gate an event against the candidate cities' buff state and the per-cycle dedup, then
+      // announce it (channel post + that side's subscribers + a city yell) and record it.
+      const gateAndAnnounce = async (event: RaidEvent): Promise<void> => {
         const open = await openCitiesFor(event, lane.cities, buffStore, now, raidDurationMs);
         if (open.length === 0) {
           logger.info(`${lane.label} ${event.kind} suppressed — every candidate city still has an active buff`);
-          continue;
+          return;
         }
         // Second gate: drop any city we've already broadcast this kind for in the current
         // buff cycle. Keyed to the cycle (persisted in Mongo), so a redeploy, a wipe or
@@ -424,7 +427,7 @@ async function runConnection(
           if (shouldBroadcast(last, lastBuffDropAt, now, config.broadcastDedupMs)) fresh.push(city);
           else logger.info(`${lane.label} ${event.kind} for ${city} suppressed — already broadcast this cycle`);
         }
-        if (fresh.length === 0) continue;
+        if (fresh.length === 0) return;
         await announceBuff(event, fresh);
         for (const city of fresh) {
           await broadcasts
@@ -437,6 +440,17 @@ async function runConnection(
             })
             .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
         }
+      };
+
+      // Only the FORMING alert comes from the count/temporal detector. Its per-cohort
+      // "raid-left" is prone to false clears — a guild crossing the 15-member split line
+      // empties the cohort it left (nobody actually leaves the lair), a flickery /who dips
+      // the count, a wipe drops it below the floor. The "cleared, park now" alert instead
+      // comes from the ClearTracker's roster-based confirmed clear (obs.clear, below), which
+      // survives all three, so a detector "raid-left" no longer alerts.
+      for (const event of events) {
+        if (event.kind === "raid-left") continue;
+        await gateAndAnnounce(event);
       }
       for (const event of shadow) {
         logger.info(
@@ -459,7 +473,11 @@ async function runConnection(
         } else if (ms > CEILING_MS) {
           logger.info(`raid clear ignored: ~${mins(ms)}m exceeds the ${mins(CEILING_MS)}m ceiling — likely a merge`);
         } else {
-          // A real, completed clear — post the recap (with the raid # and how long it took).
+          // A real, completed clear — the reliable signal (roster-based, so immune to the
+          // cohort-reassignment / flicker / wipe false clears the detector's raid-left has).
+          // It drives the park-now alert as well as the recap and the duration sample.
+          await gateAndAnnounce(clearedRaidEvent(clear.peak));
+          // Post the recap (with the raid # and how long it took).
           void push(formatRaidFinished(clear.number, ms, config.watchAreaName));
           void (async () => {
             await durationStore.record({ ms, ts: new Date(now) });

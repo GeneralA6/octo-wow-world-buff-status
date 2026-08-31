@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WhoPlayer } from "../protocol/who.js";
-import { dominantGuild, RaidTracker } from "./raid-tracker.js";
+import { clearedRaidEvent, dominantGuild, RaidTracker } from "./raid-tracker.js";
 
 const AREA = 2159;
 
@@ -153,6 +153,15 @@ describe("RaidTracker (guild mode)", () => {
   it("does not pool a scattered pickup raid, so it can stay silent", () => {
     const tracker = new RaidTracker(15, "guild");
     expect(tracker.update(scattered(16))).toEqual([]);
+  });
+});
+
+describe("clearedRaidEvent", () => {
+  it("builds a raid-left event carrying the clear's peak (the wording uses peak, not label)", () => {
+    const event = clearedRaidEvent(28);
+    expect(event.kind).toBe("raid-left");
+    expect(event.cohort.peak).toBe(28);
+    expect(event.cohort.count).toBe(0);
   });
 });
 
