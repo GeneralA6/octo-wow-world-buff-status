@@ -5,7 +5,7 @@ import { DiscordDmSender, type DiscordFetch, type DiscordResponse } from "../not
 import { RaidTracker } from "../watcher/raid-tracker.js";
 import type { WhoPlayer } from "../protocol/who.js";
 import { DiscordLinker } from "./discord-linker.js";
-import { CommandRouter } from "./command-router.js";
+import { CommandRouter, type BuffCooldown } from "./command-router.js";
 
 function res(ok: boolean, status: number, body: unknown = { id: "chan" }): DiscordResponse {
   return { ok, status, json: () => Promise.resolve(body), text: () => Promise.resolve("") };
@@ -17,6 +17,8 @@ function deps(
     fetch?: DiscordFetch;
     mintInvite?: (character: string) => Promise<string | null>;
     withFeedback?: boolean;
+    raidElapsed?: () => number | null;
+    buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
   } = {},
 ) {
   const store = new InMemorySubscriberStore();
@@ -31,6 +33,8 @@ function deps(
   const router = new CommandRouter({
     store,
     activeRaids: () => tracker.activeRaids(),
+    raidElapsed: opts.raidElapsed,
+    buffCooldowns: opts.buffCooldowns,
     areaName: "Onyxia's Lair",
     guildName: "Rage Quit",
     community: "OctoWoW",
@@ -143,12 +147,31 @@ describe("CommandRouter", () => {
     });
   });
 
-  it("reports the active raid on status", async () => {
-    const { tracker, router } = deps();
+  it("reports the active raid, how long it's been in, and the buff cooldown on status", async () => {
+    const { tracker, router } = deps({
+      raidElapsed: () => 42 * 60_000,
+      buffCooldowns: async () => [
+        { faction: "alliance", activeMsLeft: null }, // ready now
+        { faction: "horde", activeMsLeft: 72 * 60_000 }, // up, 1h12m left
+      ],
+    });
     tracker.update(crowd("Nightfall", 20));
-    const reply = (await router.handle("Raider", "status"))[0];
-    expect(reply).toContain("<Nightfall>");
-    expect(reply).toContain("20");
+    const reply = await router.handle("Raider", "status");
+    expect(reply[0]).toMatch(/<Nightfall> 20.*in for ~42m/);
+    expect(reply[1]).toContain("Stormwind: a fresh buff can drop now");
+    expect(reply[1]).toMatch(/Orgrimmar: buff up, ~1h12m/);
+  });
+
+  it("status without a raid still reports the buff cooldowns", async () => {
+    const { router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", activeMsLeft: null },
+        { faction: "horde", activeMsLeft: null },
+      ],
+    });
+    const reply = await router.handle("Raider", "status");
+    expect(reply[0]).toMatch(/No raid in Onyxia's Lair/);
+    expect(reply[1]).toContain("a fresh buff can drop now");
   });
 
   it("understands natural phrasing: 'sign me up' subscribes", async () => {

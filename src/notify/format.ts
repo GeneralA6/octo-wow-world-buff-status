@@ -3,7 +3,7 @@ import type { Faction } from "../watcher/buff-store.js";
 import type { NotifyMessage } from "./notifier.js";
 
 /** The capital whose buff a faction's turn-in drops. */
-const CITY_FOR: Record<Faction, string> = { alliance: "Stormwind", horde: "Orgrimmar" };
+export const CITY_FOR: Record<Faction, string> = { alliance: "Stormwind", horde: "Orgrimmar" };
 
 /** "2h" for whole hours, else "90 min". */
 function humanDuration(ms: number): string {

@@ -1044,6 +1044,22 @@ async function main(): Promise<void> {
   const router = new CommandRouter({
     store,
     activeRaids: () => lanes.flatMap((lane) => lane.watch.activeRaids()),
+    raidElapsed: () => {
+      const now = Date.now();
+      const elapsed = lanes
+        .map((lane) => lane.watch.raidElapsedMs(now))
+        .filter((ms): ms is number => ms !== null);
+      return elapsed.length > 0 ? Math.max(...elapsed) : null;
+    },
+    buffCooldowns: async () => {
+      const now = new Date();
+      return Promise.all(
+        FACTIONS.map(async (faction) => {
+          const state = await buffStore.current(faction, now);
+          return { faction, activeMsLeft: state?.active ? state.expiresAt.getTime() - now.getTime() : null };
+        }),
+      );
+    },
     areaName: config.watchAreaName,
     guildName: config.guildName,
     community: config.community,

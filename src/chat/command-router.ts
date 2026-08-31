@@ -9,9 +9,25 @@ import {
   type SubscriberStore,
 } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
-import { FACTION_FILTER_HINT } from "../notify/format.js";
+import { CITY_FOR, FACTION_FILTER_HINT } from "../notify/format.js";
 import type { DiscordLinker } from "./discord-linker.js";
 import { parseIntent, type Intent } from "./intent.js";
+
+/** Per-faction buff cooldown for the status query. */
+export interface BuffCooldown {
+  readonly faction: Faction;
+  /** ms until the active buff wears off and a fresh one can drop, or null if one can drop now. */
+  readonly activeMsLeft: number | null;
+}
+
+/** Compact duration for a whisper: "42m", "1h12m", "2h". */
+function humanMins(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem === 0 ? `${h}h` : `${h}h${rem}m`;
+}
 
 /** A reader-friendly name for a set of subscribed sides. */
 export function factionLabel(factions: readonly Faction[]): string {
@@ -53,6 +69,10 @@ export interface CommandDeps {
   /** Receives a player's "feedback"/"suggest" message (sender + text). Fire-and-forget:
    *  the caller persists it and posts it to the feedback channel. Undefined = no-op. */
   readonly onFeedback?: (from: string, text: string) => void;
+  /** How long the raid in progress has been in the lair (form → now), or null if none — for status. */
+  readonly raidElapsed?: () => number | null;
+  /** Per-faction buff cooldown for status — how long until a fresh Rallying Cry can drop. */
+  readonly buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
 }
 
 const DISCORD_ID = /^\d{17,20}$/;
@@ -158,11 +178,8 @@ export class CommandRouter {
           `Subscribed - ${factionLabel(sub.factions)} buffs; ${discord}. Alerts: ${alerts}. ("alliance"/"horde"/"both" to change your side.)`,
         ];
       }
-      case "status": {
-        const raids = activeRaids();
-        if (raids.length === 0) return [`No raid in ${areaName} right now.`];
-        return [`${areaName} now: ${raids.map((raid) => `${raid.label} ${raid.count}`).join(", ")}.`];
-      }
+      case "status":
+        return this.#status();
       case "help":
       case "commands":
       case "?":
@@ -211,6 +228,32 @@ export class CommandRouter {
       ];
     }
     return this.handle(linked[0].name, text);
+  }
+
+  /** Live-state query: what's raiding the lair now (and how long they've been in), and how
+   *  long until a fresh Rallying Cry can drop in each capital. */
+  async #status(): Promise<string[]> {
+    const { activeRaids, areaName, raidElapsed, buffCooldowns } = this.#deps;
+    const raids = activeRaids();
+    const elapsed = raidElapsed?.() ?? null;
+    const lines: string[] = [];
+    if (raids.length === 0) {
+      lines.push(`No raid in ${areaName} right now.`);
+    } else {
+      const roster = raids.map((raid) => `${raid.label} ${raid.count}`).join(", ");
+      lines.push(`${areaName} now: ${roster}${elapsed !== null ? ` (in for ~${humanMins(elapsed)})` : ""}.`);
+    }
+    if (buffCooldowns) {
+      const part = (await buffCooldowns())
+        .map((cd) =>
+          cd.activeMsLeft === null
+            ? `${CITY_FOR[cd.faction]}: a fresh buff can drop now`
+            : `${CITY_FOR[cd.faction]}: buff up, ~${humanMins(cd.activeMsLeft)} until the next can drop`,
+        )
+        .join(" | ");
+      lines.push(`Rallying Cry - ${part}.`);
+    }
+    return lines;
   }
 
   /** Choose which side's buffs to get: "alliance", "horde", or "both". Empty shows current. */
