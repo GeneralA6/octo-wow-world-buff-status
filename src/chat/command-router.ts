@@ -240,7 +240,7 @@ export class CommandRouter {
     if (raids.length === 0) {
       lines.push(`No raid in ${areaName} right now.`);
     } else {
-      const roster = raids.map((raid) => `${raid.label} ${raid.count}`).join(", ");
+      const roster = raids.map((raid) => raid.label).join(", ");
       lines.push(`${areaName} now: ${roster}${elapsed !== null ? ` (in for ~${humanMins(elapsed)})` : ""}.`);
     }
     if (buffCooldowns) {

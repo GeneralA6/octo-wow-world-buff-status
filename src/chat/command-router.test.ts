@@ -157,7 +157,8 @@ describe("CommandRouter", () => {
     });
     tracker.update(crowd("Nightfall", 20));
     const reply = await router.handle("Raider", "status");
-    expect(reply[0]).toMatch(/<Nightfall> 20.*in for ~42m/);
+    expect(reply[0]).toMatch(/<Nightfall>.*in for ~42m/);
+    expect(reply[0]).not.toMatch(/\b20\b/); // player count is redundant to a user — omitted
     expect(reply[1]).toContain("Stormwind: a fresh buff can drop now");
     expect(reply[1]).toMatch(/Orgrimmar: buff up, ~1h12m/);
   });
