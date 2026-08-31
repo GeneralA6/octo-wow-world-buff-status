@@ -78,13 +78,26 @@ export function parseMonsterChat(body: Buffer): MonsterChat {
   return { type, senderGuid, senderName, text };
 }
 
+/**
+ * WoW treats '|' as the chat escape/formatting prefix — colour codes (|cff...|r) and
+ * hyperlinks (|Hitem:...|h) all begin with it. A bare '|' in outgoing text is a
+ * malformed escape that the client drops or mangles, so the whole line silently fails
+ * to display. (This is exactly how the "mode ingame|both|offline|discord" help reply
+ * vanished while the pipe-free greeting arrived fine.) Doubling it is how vanilla emits
+ * a literal pipe. We send only plain text, never real escapes, so escaping every '|'
+ * is always correct.
+ */
+export function escapeChatText(message: string): string {
+  return message.replace(/\|/g, "||");
+}
+
 /** Build a CMSG_MESSAGECHAT whisper to `target`. */
 export function buildWhisper(target: string, message: string, language: number = LANG_UNIVERSAL): Buffer {
   return new PacketWriter()
     .u32LE(ChatType.Whisper)
     .u32LE(language)
     .cString(target)
-    .cString(message)
+    .cString(escapeChatText(message))
     .toBuffer();
 }
 

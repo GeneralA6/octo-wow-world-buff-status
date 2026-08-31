@@ -3,6 +3,7 @@ import { PacketReader, PacketWriter } from "../net/byte-buffer.js";
 import { ChatType, LANG_UNIVERSAL } from "./opcodes.js";
 import {
   buildWhisper,
+  escapeChatText,
   isMonsterChatType,
   parseMonsterChat,
   parsePlayerNotFound,
@@ -116,6 +117,24 @@ describe("buildWhisper", () => {
     const reader = new PacketReader(frame);
     reader.u32LE();
     expect(reader.u32LE()).toBe(7);
+  });
+
+  it("escapes '|' so a message with pipes isn't dropped as a bad escape sequence", () => {
+    const frame = buildWhisper("Raider", "mode ingame|both|offline");
+    const reader = new PacketReader(frame);
+    reader.u32LE();
+    reader.u32LE();
+    reader.cString();
+    expect(reader.cString()).toBe("mode ingame||both||offline");
+  });
+});
+
+describe("escapeChatText", () => {
+  it("doubles every pipe and leaves other text untouched", () => {
+    expect(escapeChatText("on|off")).toBe("on||off");
+    expect(escapeChatText("a|b|c")).toBe("a||b||c");
+    expect(escapeChatText("no pipes <here> [ok]")).toBe("no pipes <here> [ok]");
+    expect(escapeChatText("")).toBe("");
   });
 });
 
