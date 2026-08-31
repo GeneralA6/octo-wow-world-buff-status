@@ -100,6 +100,9 @@ export interface BotConfig {
   /** Channel the "feedback" command posts player suggestions to (via the bot). Null = not set,
    *  and feedback is still saved + acknowledged, just not posted to Discord. */
   readonly discordFeedbackChannelId: string | null;
+  /** Discord user id that operational notices (auth failures, store outages, self-heal, "bot
+   *  stopped") are DM'd to, instead of the public channel. Null = log them only. */
+  readonly discordAdminId: string | null;
   /** MongoDB connection string for the subscriber store; null keeps subscribers in memory. */
   readonly mongodbUri: string | null;
   /** MongoDB database name for the subscriber store. */
@@ -265,6 +268,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordGuildId = env.DISCORD_GUILD_ID?.trim() || null;
   const discordInviteChannelId = env.DISCORD_INVITE_CHANNEL_ID?.trim() || null;
   const discordFeedbackChannelId = env.DISCORD_FEEDBACK_CHANNEL_ID?.trim() || null;
+  const discordAdminId = env.DISCORD_ADMIN_ID?.trim() || null;
   const mongodbUri = env.MONGODB_URI?.trim() || null;
   const mongodbDb = env.MONGODB_DB?.trim() || "onyxiabot";
 
@@ -331,6 +335,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordGuildId,
     discordInviteChannelId,
     discordFeedbackChannelId,
+    discordAdminId,
     mongodbUri,
     mongodbDb,
     pollIntervalMs,

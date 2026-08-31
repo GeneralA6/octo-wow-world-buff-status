@@ -291,6 +291,7 @@ describe("loadConfig", () => {
     expect(bare.community).toBe("OctoWoW");
     expect(bare.author).toBe("Gibom");
     expect(bare.discordFeedbackChannelId).toBeNull();
+    expect(bare.discordAdminId).toBeNull();
     expect(bare.guildInviteEnabled).toBe(false);
     const configured = loadConfig({
       ...minimalEnv,
@@ -299,11 +300,13 @@ describe("loadConfig", () => {
       WOW_AUTHOR: "Someone",
       WOW_GUILD_INVITE: "true",
       DISCORD_FEEDBACK_CHANNEL_ID: "1543926066907844729",
+      DISCORD_ADMIN_ID: "219142840696045568",
     });
     expect(configured.guildName).toBe("Late Night");
     expect(configured.community).toBe("Turtle");
     expect(configured.author).toBe("Someone");
     expect(configured.discordFeedbackChannelId).toBe("1543926066907844729");
+    expect(configured.discordAdminId).toBe("219142840696045568");
     expect(configured.guildInviteEnabled).toBe(true);
   });
 

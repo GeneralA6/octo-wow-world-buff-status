@@ -835,7 +835,7 @@ async function runListener(
 async function openStore(
   config: BotConfig,
   logger: Logger,
-  push: (message: NotifyMessage) => Promise<void>,
+  notifyAdmin: (title: string, body: string) => Promise<void>,
 ): Promise<SubscriberStore> {
   if (!config.mongodbUri) {
     logger.warn("subscribers: no MONGODB_URI — keeping subscribers in memory (lost on restart)");
@@ -847,11 +847,10 @@ async function openStore(
     return store;
   } catch (error) {
     logger.error(`subscribers: MongoDB connect failed (${describeError(error)}); using memory`);
-    await push({
-      kind: "error",
-      title: "⚠️ Subscriber store offline",
-      body: "MongoDB is unreachable — in-game subscriptions are in memory until restart.",
-    });
+    await notifyAdmin(
+      "⚠️ Subscriber store offline",
+      "MongoDB is unreachable — in-game subscriptions are in memory until restart.",
+    );
     return new InMemorySubscriberStore();
   }
 }
@@ -919,8 +918,22 @@ async function main(): Promise<void> {
     }
   };
 
+  // Discord DM delivery + linking (only when a bot token is configured). Created early so
+  // operational notices can reach the admin before the stores are even up.
+  const dm = new DiscordDmSender(config.discordBotToken);
+  // Operational/error notices (auth failures, store outages, self-heal, "bot stopped") go
+  // to the admin's DM, not the public channel — the channel is for buff content only.
+  const notifyAdmin = async (title: string, body: string): Promise<void> => {
+    if (!config.discordAdminId) {
+      logger.warn(`[ops] ${title} - ${body} (set DISCORD_ADMIN_ID to DM these)`);
+      return;
+    }
+    const result = await dm.send(config.discordAdminId, `**${title}**\n${body}`);
+    if (!result.ok) logger.error(`admin DM failed (${result.kind}): ${title} - ${body}`);
+  };
+
   const store = config.whispersEnabled
-    ? await openStore(config, logger, push)
+    ? await openStore(config, logger, notifyAdmin)
     : new InMemorySubscriberStore();
 
   // Raw /who snapshots for offline replay/stats — Mongo when configured, else memory.
@@ -993,8 +1006,7 @@ async function main(): Promise<void> {
     buffDropSink.notify?.(faction, appliedAt);
   };
 
-  // Discord DM delivery + linking (only when a bot token is configured).
-  const dm = new DiscordDmSender(config.discordBotToken);
+  // Discord DM linking (dm itself was created early, above, for admin notices).
   const linker = new DiscordLinker({
     store,
     pending: new PendingLinks(),
@@ -1021,7 +1033,7 @@ async function main(): Promise<void> {
       .record({ from, text, at: new Date() })
       .catch((error) => logger.error(`feedback-store: ${describeError(error)}`));
     if (config.discordFeedbackChannelId) {
-      void dm.postToChannel(config.discordFeedbackChannelId, formatFeedbackPost(from, text)).then((result) => {
+      void dm.postToChannel(config.discordFeedbackChannelId, formatFeedbackPost(from, text, config.realm)).then((result) => {
         if (!result.ok) logger.error(`feedback: couldn't post to channel (${result.kind}${result.status ? ` ${result.status}` : ""})`);
       });
     }
@@ -1196,7 +1208,7 @@ async function main(): Promise<void> {
         heal.alertedStuck = false; // a clean run clears the "stuck" latch
       } catch (error) {
         if (error instanceof VersionMismatchError) {
-          if (await selfHeal(error, config, logger, client, push, heal)) {
+          if (await selfHeal(error, config, logger, client, notifyAdmin, heal)) {
             backoffMs = 5_000; // resolved — retry promptly with the new build
           } else if (!config.autoResolve) {
             process.exit(1); // can't self-heal and it's disabled: stop
@@ -1206,7 +1218,7 @@ async function main(): Promise<void> {
           }
         } else if (error instanceof FatalError) {
           logger.error(error.message);
-          await push({ kind: "error", title: "Bot stopped", body: error.message });
+          await notifyAdmin("Bot stopped", error.message);
           process.exit(1);
         } else {
           watcherLog.warn(`connection error: ${describeError(error)}; retrying in ${backoffMs / 1000}s`);
@@ -1264,16 +1276,15 @@ async function selfHeal(
   config: BotConfig,
   logger: Logger,
   client: ClientValues,
-  push: (message: NotifyMessage) => Promise<void>,
+  notifyAdmin: (title: string, body: string) => Promise<void>,
   heal: HealState,
 ): Promise<boolean> {
   if (!config.autoResolve) {
     logger.error(`${error.message} (auto-resolve disabled)`);
-    await push({
-      kind: "error",
-      title: "Bot stopped — client version rejected",
-      body: `${error.message}. Update WOW_BUILD, or set WOW_AUTO_RESOLVE=1.`,
-    });
+    await notifyAdmin(
+      "Bot stopped — client version rejected",
+      `${error.message}. Update WOW_BUILD, or set WOW_AUTO_RESOLVE=1.`,
+    );
     return false;
   }
 
@@ -1293,11 +1304,10 @@ async function selfHeal(
     logger.error(`CDN build check failed: ${describeError(resolveError)}`);
     if (!heal.alertedStuck) {
       heal.alertedStuck = true;
-      await push({
-        kind: "error",
-        title: "⚠️ Auth rejected",
-        body: `Client version rejected and the CDN is unreachable (${describeError(resolveError)}). Retrying quietly.`,
-      });
+      await notifyAdmin(
+        "⚠️ Auth rejected",
+        `Client version rejected and the CDN is unreachable (${describeError(resolveError)}). Retrying quietly.`,
+      );
     }
     return false;
   }
@@ -1308,11 +1318,10 @@ async function selfHeal(
     logger.error(`server rejected build ${build}, which is current on the CDN`);
     if (!heal.alertedStuck) {
       heal.alertedStuck = true;
-      await push({
-        kind: "error",
-        title: "⚠️ Auth rejected",
-        body: `Build ${build} is current on the CDN but the server rejected it — a re-capture may be needed. Retrying quietly.`,
-      });
+      await notifyAdmin(
+        "⚠️ Auth rejected",
+        `Build ${build} is current on the CDN but the server rejected it — a re-capture may be needed. Retrying quietly.`,
+      );
     }
     return false;
   }
@@ -1320,11 +1329,7 @@ async function selfHeal(
   logger.info(`build ${client.build} → ${build}; self-healed from the CDN`);
   client.build = build;
   heal.alertedStuck = false;
-  await push({
-    kind: "info",
-    title: "🔧 Client patch — self-healed",
-    body: `Logon build updated to ${build}. Reconnecting.`,
-  });
+  await notifyAdmin("🔧 Client patch — self-healed", `Logon build updated to ${build}. Reconnecting.`);
   return true;
 }
 
