@@ -418,7 +418,7 @@ async function runConnection(
     };
 
     const onWhisper = (sender: string, text: string): void => {
-      logger.debug(`whisper command from ${sender}: ${JSON.stringify(text)}`);
+      logger.info(`whisper from ${sender}: ${JSON.stringify(text)}`);
       void (async () => {
         try {
           const replies = await router.handle(sender, text);
@@ -606,8 +606,13 @@ async function runListener(
           logger.info(`heard yell from ${senderName}: ${JSON.stringify(text)}${faction ? ` -> BUFF ${faction}` : ""}`);
           if (faction) onBuffApplied(faction, senderName, text);
         },
-        // A player whispered this parked character → Bufftracker greets them.
-        onWhisper: (sender) => outreach.onListenerContact(sender),
+        // A player whispered this parked character → log it (tagged with this
+        // listener's name) and have Bufftracker greet them. The listener itself does
+        // not answer commands — that's Bufftracker — so this is a greet-only surface.
+        onWhisper: (sender, text) => {
+          logger.info(`whisper from ${sender}: ${JSON.stringify(text)} (greet-only; commands go to ${config.characterName})`);
+          outreach.onListenerContact(sender);
+        },
         onWorldObjects:
           listener.onLogin === "interact"
             ? (raw) => {
@@ -761,9 +766,9 @@ async function main(): Promise<void> {
     }
   }
 
-  const recordBuff = (faction: Faction, sourceName: string, text: string): void => {
+  const recordBuff = (faction: Faction, sourceName: string, text: string, detectedBy: string): void => {
     const appliedAt = new Date();
-    logger.info(`buff drop: ${faction} buff is up (heard "${text}" from ${sourceName})`);
+    logger.info(`buff drop: ${faction} buff is up — ${detectedBy} heard "${text}" from ${sourceName}`);
     void buffStore
       .record({ faction, appliedAt })
       .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
@@ -848,13 +853,14 @@ async function main(): Promise<void> {
 
   // The watcher does /who + alerts + whispers; each listener only forwards buff yells.
   // They run concurrently, each with its own self-reconnecting supervisor.
+  const watcherLog = prefixed(logger, config.characterName);
   const runWatcher = async (): Promise<void> => {
     const heal: HealState = { lastCheckMs: 0, alertedStuck: false };
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runConnection(config, logger, services);
-        logger.warn("connection closed; reconnecting shortly");
+        await runConnection(config, watcherLog, services);
+        watcherLog.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
         heal.alertedStuck = false; // a clean run clears the "stuck" latch
       } catch (error) {
@@ -872,7 +878,7 @@ async function main(): Promise<void> {
           await push({ kind: "error", title: "Bot stopped", body: error.message });
           process.exit(1);
         } else {
-          logger.warn(`connection error: ${describeError(error)}; retrying in ${backoffMs / 1000}s`);
+          watcherLog.warn(`connection error: ${describeError(error)}; retrying in ${backoffMs / 1000}s`);
           await delay(backoffMs);
           backoffMs = Math.min(backoffMs * 2, 60_000);
         }
@@ -883,10 +889,14 @@ async function main(): Promise<void> {
 
   const runListenerLoop = async (listener: ListenerConfig): Promise<void> => {
     const log = prefixed(logger, listener.characterName);
+    // Tag each buff detection with the listener that heard it, so the notification
+    // line names its source even when the three characters' logs interleave.
+    const onBuff = (faction: Faction, source: string, text: string): void =>
+      recordBuff(faction, source, text, listener.characterName);
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runListener(config, listener, log, client, recordBuff, outreach);
+        await runListener(config, listener, log, client, onBuff, outreach);
         log.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
       } catch (error) {

@@ -164,7 +164,9 @@ export class WorldClient {
   /** Whisper a player by character name. */
   whisper(target: string, message: string): void {
     if (!this.#ready) throw new Error("cannot whisper before the character is in world");
-    this.#logger.debug(`world: whisper -> ${target}: ${JSON.stringify(message)}`);
+    // INFO, not debug: an outgoing whisper is a message this character sent, and we
+    // want it visible in the logs (the logger is per-character, so it's already tagged).
+    this.#logger.info(`whisper -> ${target}: ${JSON.stringify(message)}`);
     this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildWhisper(target, message));
   }
 
