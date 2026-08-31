@@ -17,8 +17,7 @@ export type GuildInviteFn = (target: string) => void;
  *  message now). */
 export function introLines(config: OutreachConfig): string[] {
   return [
-    `I'm the ${config.community}-Community World Buff Tracker - I alert you before the Onyxia Rallying Cry world buff drops. Whisper "subscribe" and I'll ping you in-game when it's coming.`,
-    `Every drop also posts in Discord - whisper "discord" for the link. "help" for what else I can do.`,
+    `I'm the ${config.community}-Community World Buff Tracker - I alert you before the Onyxia Rallying Cry world buff drops. Whisper "subscribe" and I'll ping you in-game when it's coming, or "help" for more.`,
   ];
 }
 

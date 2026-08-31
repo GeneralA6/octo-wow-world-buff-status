@@ -14,12 +14,12 @@ describe("introLines", () => {
     expect(lines).toMatch(/subscribe/i);
   });
 
-  it("points at the Discord and help — plain 'Discord', no alliance/horde detail", () => {
-    const lines = introLines(config).join(" ");
-    expect(lines).toMatch(/posts in Discord/);
-    expect(lines).not.toMatch(/OctoWoW Discord/); // not tied to a named server
-    expect(lines).toMatch(/"help"/);
-    expect(lines).not.toMatch(/alliance|horde|@/i);
+  it("is a single line pointing only at 'help' for more — no Discord in the onboarding", () => {
+    const lines = introLines(config);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/"help" for more/);
+    expect(lines[0]).not.toMatch(/discord/i);
+    expect(lines[0]).not.toMatch(/alliance|horde|@/i);
   });
 
   it("is stripped of attribution, recruiting, tips, and the park-fluff", () => {
@@ -27,7 +27,7 @@ describe("introLines", () => {
     expect(lines).not.toMatch(/made by|Rage Quit|recruit/i);
     expect(lines).not.toMatch(/gold|tip/i);
     expect(lines).not.toMatch(/park|grab it/i);
-    expect(lines).not.toMatch(/DM you|link Discord/i); // and still no removed DM-linking
+    expect(lines).not.toMatch(/DM you|link Discord/i);
   });
 });
 
@@ -46,9 +46,9 @@ describe("Outreach", () => {
   it("greets a player once and not again", async () => {
     const { outreach, whispers } = make();
     await outreach.onListenerContact("Raider");
-    expect(whispers.length).toBe(2); // the two intro lines
+    expect(whispers.length).toBe(1); // the single intro line
     await outreach.onListenerContact("RAIDER"); // case-insensitive repeat
-    expect(whispers.length).toBe(2); // unchanged
+    expect(whispers.length).toBe(1); // unchanged
   });
 
   it("does not greet while the watcher channel is unavailable, then greets once it is", async () => {
@@ -58,7 +58,7 @@ describe("Outreach", () => {
     expect(whispers).toEqual([]);
     outreach.setChannel((to) => whispers.push(to), null);
     await outreach.onListenerContact("Raider");
-    expect(whispers).toEqual(["Raider", "Raider"]);
+    expect(whispers).toEqual(["Raider"]);
   });
 
   it("guild-invites and congratulates when enabled", async () => {
