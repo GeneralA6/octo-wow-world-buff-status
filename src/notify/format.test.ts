@@ -44,7 +44,7 @@ describe("formatBuffDropped", () => {
   it("names the city and the exact earliest-next time (drop + duration)", () => {
     const appliedAt = new Date("2026-08-30T20:00:00Z");
     const twoHours = 120 * 60_000;
-    const message = formatBuffDropped("alliance", appliedAt, twoHours);
+    const message = formatBuffDropped("alliance", appliedAt, twoHours, "Gibom");
     expect(message.title).toContain("Stormwind");
     expect(message.body).toContain("just dropped in Stormwind");
     expect(message.body).toContain("~2h");
@@ -55,15 +55,23 @@ describe("formatBuffDropped", () => {
   });
 
   it("renders a non-round window as minutes", () => {
-    const message = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), 90 * 60_000);
+    const message = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), 90 * 60_000, "Gibom");
     expect(message.title).toContain("Orgrimmar");
     expect(message.body).toContain("~90 min");
+  });
+
+  it("carries the same tips line as the whisper (consistent everywhere the drop reaches)", () => {
+    const body = formatBuffDropped("alliance", new Date("2026-08-30T20:00:00Z"), 120 * 60_000, "Gibom").body;
+    const whisper = formatBuffDroppedWhisper("alliance", 120 * 60_000, "Gibom");
+    const tip = "Free to use - a gold tip to Gibom is welcome, never expected.";
+    expect(body).toContain(tip);
+    expect(whisper).toContain(tip);
   });
 });
 
 describe("formatBuffDroppedWhisper", () => {
   it("names the city and the next-window floor, with NO absolute clock time (the bot's clock isn't the player's)", () => {
-    const line = formatBuffDroppedWhisper("alliance", 120 * 60_000);
+    const line = formatBuffDroppedWhisper("alliance", 120 * 60_000, "Gibom");
     expect(line).toContain("Stormwind");
     expect(line).toMatch(/at least 2h/);
     expect(line).not.toMatch(/\d{1,2}:\d{2}/); // no HH:MM
@@ -71,14 +79,14 @@ describe("formatBuffDroppedWhisper", () => {
   });
 
   it("doesn't overpromise: no 'go grab it', and the next window is a floor ('at least', 'usually longer')", () => {
-    const line = formatBuffDroppedWhisper("alliance", 120 * 60_000);
+    const line = formatBuffDroppedWhisper("alliance", 120 * 60_000, "Gibom");
     expect(line).not.toMatch(/go grab/i);
     expect(line).toMatch(/at least/i);
     expect(line).toMatch(/usually longer/i);
   });
 
   it("names the buff in full, so a reader knows which buff it is", () => {
-    expect(formatBuffDroppedWhisper("horde", 120 * 60_000)).toContain("Rallying Cry of the Dragonslayer");
+    expect(formatBuffDroppedWhisper("horde", 120 * 60_000, "Gibom")).toContain("Rallying Cry of the Dragonslayer");
   });
 });
 

@@ -6,37 +6,27 @@ import { InMemoryGreetLedger } from "./greet-ledger.js";
 const config = { guildName: "Rage Quit", community: "OctoWoW", guildInviteEnabled: false, author: "Gibom" };
 
 describe("introLines", () => {
-  it("names the guild, the community, and mentions recruiting", () => {
+  it("identifies as the community world buff tracker and says, concisely, what it does", () => {
     const lines = introLines(config).join(" ");
-    expect(lines).toContain("Rage Quit");
-    expect(lines).toContain("OctoWoW");
-    expect(lines).toMatch(/recruit/i);
+    expect(lines).toContain("OctoWoW-Community World Buff Tracker");
+    expect(lines).toMatch(/alert you before/i); // "alert", not "warn"
+    expect(lines).toContain("Onyxia Rallying Cry");
+    expect(lines).toMatch(/subscribe/i);
   });
 
-  it("credits the author and invites optional gold tips to them", () => {
+  it("points at the Discord and help — without the alliance/horde detail", () => {
     const lines = introLines(config).join(" ");
-    expect(lines).toContain("made by Gibom");
-    expect(lines).toMatch(/gold tips/i);
-    // The tip line frames it as optional, never demanded.
-    expect(lines).toMatch(/never expected/i);
+    expect(lines).toMatch(/OctoWoW Discord/);
+    expect(lines).toMatch(/"help"/);
+    expect(lines).not.toMatch(/alliance|horde|@/i);
   });
 
-  it("directs tips to the author by name", () => {
-    const tip = introLines(config).find((l) => /gold tips/i.test(l)) ?? "";
-    expect(tip).toMatch(/mail them to Gibom/i);
-  });
-
-  it("threads the configured author through both the credit and the tip line", () => {
-    const lines = introLines({ ...config, author: "Someone" });
-    expect(lines.join(" ")).not.toContain("Gibom");
-    expect(lines.filter((l) => l.includes("Someone")).length).toBe(2);
-  });
-
-  it("points at the Discord invite command but no longer promises DM linking", () => {
+  it("is stripped of attribution, recruiting, tips, and the park-fluff", () => {
     const lines = introLines(config).join(" ");
-    expect(lines).toMatch(/discord/i); // the "discord" command that shares the invite link
-    // The removed per-user Discord DM linking must not be advertised any more.
-    expect(lines).not.toMatch(/DM you|link Discord|offline/i);
+    expect(lines).not.toMatch(/made by|Rage Quit|recruit/i);
+    expect(lines).not.toMatch(/gold|tip/i);
+    expect(lines).not.toMatch(/park|grab it/i);
+    expect(lines).not.toMatch(/DM you|link Discord/i); // and still no removed DM-linking
   });
 });
 
@@ -55,9 +45,9 @@ describe("Outreach", () => {
   it("greets a player once and not again", async () => {
     const { outreach, whispers } = make();
     await outreach.onListenerContact("Raider");
-    expect(whispers.length).toBe(3); // the three intro lines
+    expect(whispers.length).toBe(2); // the two intro lines
     await outreach.onListenerContact("RAIDER"); // case-insensitive repeat
-    expect(whispers.length).toBe(3); // unchanged
+    expect(whispers.length).toBe(2); // unchanged
   });
 
   it("does not greet while the watcher channel is unavailable, then greets once it is", async () => {
@@ -67,7 +57,7 @@ describe("Outreach", () => {
     expect(whispers).toEqual([]);
     outreach.setChannel((to) => whispers.push(to), null);
     await outreach.onListenerContact("Raider");
-    expect(whispers).toEqual(["Raider", "Raider", "Raider"]);
+    expect(whispers).toEqual(["Raider", "Raider"]);
   });
 
   it("guild-invites and congratulates when enabled", async () => {

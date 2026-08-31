@@ -302,7 +302,7 @@ async function runConnection(
 
     // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
     const announceBuffDrop = (faction: Faction): Promise<void> =>
-      notifyFactionSubscribers(faction, formatBuffDroppedWhisper(faction, config.buffDurationMs));
+      notifyFactionSubscribers(faction, formatBuffDroppedWhisper(faction, config.buffDurationMs, config.author));
 
     // When a buff's window elapses, a fresh one can drop — announce the cooldown is up to
     // the Discord channel, that side's subscribers, and via a /yell in that capital.
@@ -1076,7 +1076,7 @@ async function main(): Promise<void> {
       .record({ faction, appliedAt })
       .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
-    void push(formatBuffDropped(faction, appliedAt, config.buffDurationMs), [faction]); // channel, pinging that side's role
+    void push(formatBuffDropped(faction, appliedAt, config.buffDurationMs, config.author), [faction]); // channel, pinging that side's role
     buffDropSink.notify?.(faction, appliedAt);
   };
 

@@ -12,12 +12,13 @@ export interface OutreachConfig {
 export type WhisperFn = (target: string, message: string) => void;
 export type GuildInviteFn = (target: string) => void;
 
-/** The lines Bufftracker whispers to a player who first contacts a listener. */
+/** The lines Bufftracker whispers to a player who first contacts a listener. Concise: what
+ *  it does and how to opt in — no attribution, no recruiting, no tips (those ride the buff-drop
+ *  message now). */
 export function introLines(config: OutreachConfig): string[] {
   return [
-    `Hi! I'm Bufftracker, made by ${config.author} of <${config.guildName}> - I warn you before the Onyxia Rallying Cry world buff drops, so you can park in a capital and grab it. Whisper me "subscribe" and I'll ping you in-game when it's time.`,
-    `Every drop also goes out in the ${config.community} Discord (with @Alliance/@Horde pings) - whisper "discord" for the link. <${config.guildName}> is recruiting for the ${config.community} community - whisper "invite" to join! "help" for more.`,
-    `Bufftracker is free and always will be. If it's saved you a buff or two, gold tips are welcome - never expected! Please mail them to ${config.author}.`,
+    `I'm the ${config.community}-Community World Buff Tracker - I alert you before the Onyxia Rallying Cry world buff drops. Whisper "subscribe" and I'll ping you in-game when it's coming.`,
+    `Every drop also posts in the ${config.community} Discord - whisper "discord" for the link. "help" for what else I can do.`,
   ];
 }
 

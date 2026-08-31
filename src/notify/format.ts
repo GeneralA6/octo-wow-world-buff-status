@@ -37,7 +37,13 @@ export function formatRaidFinished(raidNumber: number | null, durationMs: number
  * off, since a hanging head blocks the next turn-in. Discord dynamic timestamps
  * (`<t:unix:t>` / `<t:unix:R>`) render in each viewer's own timezone and stay live.
  */
-export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs: number): NotifyMessage {
+/** The tips line — identical on the channel post and the in-game whisper, so a reader sees
+ *  the same words wherever the drop reaches them. Gold is mailed in-game to `author`. */
+function tipsLine(author: string): string {
+  return `Free to use - a gold tip to ${author} is welcome, never expected.`;
+}
+
+export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs: number, author: string): NotifyMessage {
   const city = CITY_FOR[faction];
   const expiresUnix = Math.floor((appliedAt.getTime() + durationMs) / 1000);
   return {
@@ -46,18 +52,19 @@ export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs:
     body:
       `The Rallying Cry of the Dragonslayer just dropped in ${city} - good for ~${humanDuration(durationMs)}, ` +
       `until <t:${expiresUnix}:t> (<t:${expiresUnix}:R>). ` +
-      `That's also the earliest a fresh one can drop, so start watching again then.`,
+      `That's also the earliest a fresh one can drop, so start watching again then. ${tipsLine(author)}`,
   };
 }
 
 /** Plain-text in-game whisper of a buff drop — no absolute time (the bot's clock isn't
  *  the player's, and WoW can't render Discord timestamps), a duration instead. Sent to
  *  that side's subscribers when the yell fires. */
-export function formatBuffDroppedWhisper(faction: Faction, durationMs: number): string {
+export function formatBuffDroppedWhisper(faction: Faction, durationMs: number, author: string): string {
   const city = CITY_FOR[faction];
   return (
     `The Rallying Cry of the Dragonslayer just dropped in ${city}! ` +
-    `The next can't drop for at least ${humanDuration(durationMs)}, usually longer - I'll warn you before it does.`
+    `The next can't drop for at least ${humanDuration(durationMs)}, usually longer - I'll warn you before it does. ` +
+    tipsLine(author)
   );
 }
 
