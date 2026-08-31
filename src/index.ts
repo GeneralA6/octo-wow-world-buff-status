@@ -452,7 +452,10 @@ async function runConnection(
           }
           const poll = async (): Promise<void> => {
             try {
-              const roster = await fetchRoster((q) => world.whoOnce(q), config.watchAreaId);
+              const roster = await fetchRoster(
+                (q) => world.whoOnce(q, config.whoTimeoutMs),
+                config.watchAreaId,
+              );
               if (!settled) await processRoster(roster);
             } catch (error) {
               logger.warn(`who failed: ${describeError(error)}`);

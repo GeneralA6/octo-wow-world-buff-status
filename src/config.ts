@@ -90,6 +90,9 @@ export interface BotConfig {
   /** MongoDB database name for the subscriber store. */
   readonly mongodbDb: string;
   readonly pollIntervalMs: number;
+  /** How long to wait for a /who reply before giving up. Under peak server load /who
+   *  can be slow, so this is tunable — raise it if the watcher logs repeated timeouts. */
+  readonly whoTimeoutMs: number;
   readonly discordWebhookUrl: string;
   /** Role to ping on raid enter/leave so only opted-in members are notified. */
   readonly discordMentionRoleId: string | null;
@@ -239,6 +242,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const mongodbDb = env.MONGODB_DB?.trim() || "onyxiabot";
 
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
+  const whoTimeoutMs = intWithDefault("WOW_WHO_TIMEOUT_MS", 8_000, 1_000);
 
   const discordWebhookUrl = required("DISCORD_WEBHOOK_URL");
 
@@ -298,6 +302,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     mongodbUri,
     mongodbDb,
     pollIntervalMs,
+    whoTimeoutMs,
     discordWebhookUrl,
     discordMentionRoleId,
     guildName,

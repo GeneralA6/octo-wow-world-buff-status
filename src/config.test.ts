@@ -149,6 +149,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_MIN_CLEAR_MINUTES: "8" }).raidMinClearMs).toBe(8 * 60_000);
   });
 
+  it("defaults the /who timeout to 8s and accepts an override for slow peak load", () => {
+    expect(loadConfig({ ...minimalEnv }).whoTimeoutMs).toBe(8_000);
+    expect(loadConfig({ ...minimalEnv, WOW_WHO_TIMEOUT_MS: "15000" }).whoTimeoutMs).toBe(15_000);
+  });
+
   it("defaults the realm type to crossfaction and accepts faction", () => {
     expect(loadConfig({ ...minimalEnv }).realmType).toBe("crossfaction");
     expect(loadConfig({ ...minimalEnv, WOW_REALM_TYPE: "faction" }).realmType).toBe("faction");

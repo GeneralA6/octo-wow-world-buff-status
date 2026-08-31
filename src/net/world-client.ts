@@ -134,12 +134,21 @@ export class WorldClient {
     if (!this.#ready) return Promise.reject(new Error("cannot /who before the character is in world"));
     if (this.#whoPending) return Promise.reject(new Error("a /who is already in flight"));
     return new Promise<WhoResult>((resolve, reject) => {
+      const started = Date.now();
       const timer = setTimeout(() => {
         this.#whoPending = null;
-        reject(new Error("/who timed out"));
+        reject(new Error(`/who timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       timer.unref?.();
-      this.#whoPending = { resolve, reject, timer };
+      // Surface the round-trip so a creep toward the timeout is visible BEFORE it starts
+      // failing — under peak load /who slows down, and a silent timeout hides why.
+      const timedResolve = (result: WhoResult): void => {
+        const elapsed = Date.now() - started;
+        if (elapsed > timeoutMs / 2) this.#logger.warn(`/who slow: ${elapsed}ms (timeout ${timeoutMs}ms)`);
+        else this.#logger.debug(`/who replied in ${elapsed}ms`);
+        resolve(result);
+      };
+      this.#whoPending = { resolve: timedResolve, reject, timer };
       this.#send(WorldOpcode.CMSG_WHO, buildWhoRequestBody(query));
     });
   }
