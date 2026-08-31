@@ -6,6 +6,7 @@ import { AUTH_OK, ChatType, CLIENT_BUILD, WorldOpcode } from "../protocol/opcode
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
 import {
   buildWhisper,
+  buildYell,
   isMonsterChatType,
   parseMonsterChat,
   parsePlayerNotFound,
@@ -168,6 +169,13 @@ export class WorldClient {
     // want it visible in the logs (the logger is per-character, so it's already tagged).
     this.#logger.info(`whisper -> ${target}: ${JSON.stringify(message)}`);
     this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildWhisper(target, message));
+  }
+
+  /** /yell — heard by everyone nearby in the zone (used to broadcast in a capital). */
+  yell(message: string): void {
+    if (!this.#ready) throw new Error("cannot yell before the character is in world");
+    this.#logger.info(`yell: ${JSON.stringify(message)}`);
+    this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildYell(message));
   }
 
   /** Sit the character down (the /sit stand-state) — used to look parked in a city. */

@@ -3,6 +3,7 @@ import { PacketReader, PacketWriter } from "../net/byte-buffer.js";
 import { ChatType, LANG_UNIVERSAL } from "./opcodes.js";
 import {
   buildWhisper,
+  buildYell,
   escapeChatText,
   isMonsterChatType,
   parseMonsterChat,
@@ -126,6 +127,32 @@ describe("buildWhisper", () => {
     reader.u32LE();
     reader.cString();
     expect(reader.cString()).toBe("mode ingame||both||offline");
+  });
+});
+
+describe("buildYell", () => {
+  it("encodes a universal-language yell with no target (heard by everyone nearby)", () => {
+    const frame = buildYell("A raid just cleared - park in Stormwind!");
+    const reader = new PacketReader(frame);
+    expect(reader.u32LE()).toBe(ChatType.Yell);
+    expect(reader.u32LE()).toBe(LANG_UNIVERSAL);
+    expect(reader.cString()).toBe("A raid just cleared - park in Stormwind!");
+    expect(reader.remaining).toBe(0);
+  });
+
+  it("accepts an explicit language", () => {
+    const frame = buildYell("hi", 7);
+    const reader = new PacketReader(frame);
+    reader.u32LE();
+    expect(reader.u32LE()).toBe(7);
+  });
+
+  it("escapes '|' so a pipe doesn't drop the yell as a bad escape sequence", () => {
+    const frame = buildYell("a|b");
+    const reader = new PacketReader(frame);
+    reader.u32LE();
+    reader.u32LE();
+    expect(reader.cString()).toBe("a||b");
   });
 });
 

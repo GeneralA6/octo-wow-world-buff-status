@@ -101,6 +101,15 @@ export function buildWhisper(target: string, message: string, language: number =
     .toBuffer();
 }
 
+/** Build a CMSG_MESSAGECHAT /yell — heard by everyone nearby in the zone, no target. */
+export function buildYell(message: string, language: number = LANG_UNIVERSAL): Buffer {
+  return new PacketWriter()
+    .u32LE(ChatType.Yell)
+    .u32LE(language)
+    .cString(escapeChatText(message))
+    .toBuffer();
+}
+
 /** SMSG_CHAT_PLAYER_NOT_FOUND body is the offline target's name as a CString. */
 export function parsePlayerNotFound(body: Buffer): string {
   return new PacketReader(body).cString();
