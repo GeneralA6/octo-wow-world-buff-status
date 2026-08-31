@@ -318,7 +318,7 @@ async function runConnection(
     const notifyFactionSubscribers = async (
       faction: Faction,
       whisperLine: string,
-      dmLine: string,
+      dmLineFor: (subscriber: Subscriber) => string,
     ): Promise<void> => {
       if (!config.whispersEnabled) return;
       let subscribers: Subscriber[] = [];
@@ -334,8 +334,8 @@ async function runConnection(
       whisperQueue?.enqueueAll(whisperNames, whisperLine);
       for (const s of subscribers) {
         if (!s.discordId) continue;
-        if (s.delivery === "both" || s.delivery === "discord") void dm.send(s.discordId, dmLine);
-        else if (s.delivery === "offline") armOfflineFallback(s.name, s.discordId, dmLine);
+        if (s.delivery === "both" || s.delivery === "discord") void dm.send(s.discordId, dmLineFor(s));
+        else if (s.delivery === "offline") armOfflineFallback(s.name, s.discordId, dmLineFor(s));
       }
     };
 
@@ -344,7 +344,7 @@ async function runConnection(
       notifyFactionSubscribers(
         faction,
         formatBuffDroppedWhisper(faction, config.buffDurationMs),
-        formatBuffDropped(faction, appliedAt, config.buffDurationMs).body,
+        () => formatBuffDropped(faction, appliedAt, config.buffDurationMs).body,
       );
 
     // When a buff's window elapses, a fresh one can drop — announce the cooldown is up to
@@ -366,8 +366,14 @@ async function runConnection(
         if (was === true && !active) {
           logger.info(`Onyxia Rallying Cry cooldown refreshed for ${faction} (${faction === "alliance" ? "Stormwind" : "Orgrimmar"}) - a fresh one can drop again`);
           const whisperLine = formatBuffCooldownRefreshedWhisper(faction);
-          void push(formatBuffCooldownRefreshed(faction));
-          void notifyFactionSubscribers(faction, whisperLine, formatBuffCooldownRefreshed(faction).body);
+          void push(formatBuffCooldownRefreshed(faction)); // channel: always shows the filter hint
+          // DM: append the "pick a side" hint only for subscribers still on "both" — someone
+          // who already chose a single faction shouldn't be told how to do it again.
+          void notifyFactionSubscribers(
+            faction,
+            whisperLine,
+            (s) => formatBuffCooldownRefreshed(faction, s.factions.length > 1).body,
+          );
           yellSink[faction]?.(whisperLine); // broadcast to the capital (task: yell)
         }
       }
@@ -1067,9 +1073,25 @@ async function main(): Promise<void> {
         void (async () => {
           try {
             const character = await linker.confirmFromDm(authorId, content);
-            if (character) logger.info(`discord: linked ${character} via DM`);
+            if (character) {
+              logger.info(`discord: linked ${character} via DM`);
+              return;
+            }
+            // Not a link code — let a DM subscriber unsubscribe from the Discord side,
+            // so they can stop without logging into WoW to whisper the bot.
+            const cmd = content.trim().replace(/^[!./]+/, "").toLowerCase();
+            if (cmd === "unsubscribe" || cmd === "unsub" || cmd === "stop") {
+              const removed = await store.removeByDiscordId(authorId);
+              logger.info(`discord: unsubscribe DM from ${authorId} removed [${removed.join(", ") || "nothing"}]`);
+              await dm.send(
+                authorId,
+                removed.length > 0
+                  ? `Unsubscribed ${removed.join(", ")} - no more ${config.watchAreaName} alerts. Whisper "subscribe" in-game to opt back in.`
+                  : `No ${config.watchAreaName} subscription is linked to this Discord account.`,
+              );
+            }
           } catch (error) {
-            logger.error(`discord link: ${describeError(error)}`);
+            logger.error(`discord dm: ${describeError(error)}`);
           }
         })();
       },
