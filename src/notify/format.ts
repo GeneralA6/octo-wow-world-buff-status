@@ -41,6 +41,22 @@ export function formatBuffDroppedWhisper(faction: Faction, durationMs: number): 
   );
 }
 
+/** The buff's window just elapsed, so a fresh one can drop again. Discord channel post. */
+export function formatBuffCooldownRefreshed(faction: Faction): NotifyMessage {
+  const city = CITY_FOR[faction];
+  return {
+    kind: "info",
+    title: `🔄 Rallying Cry ready in ${city}`,
+    body: `The ${city} Rallying Cry has worn off - a fresh one can drop now, so park up if you want to catch it.`,
+  };
+}
+
+/** Plain in-game line (whisper or yell) that the cooldown is up. */
+export function formatBuffCooldownRefreshedWhisper(faction: Faction): string {
+  const city = CITY_FOR[faction];
+  return `The ${city} Rallying Cry has worn off - a fresh one can drop now. Park up to catch it!`;
+}
+
 /** Human list of the capitals where a fresh buff is possible ("Stormwind or Orgrimmar"). */
 function cityList(cities: readonly Faction[]): string {
   const names = cities.map((faction) => CITY_FOR[faction]);
