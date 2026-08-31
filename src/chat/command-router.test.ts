@@ -169,9 +169,12 @@ describe("CommandRouter", () => {
     expect((await again.router.handle("Raider", "CODE01"))[0]).toMatch(/linked/i);
   });
 
-  it("rejects a non-id and points at the DM flow", async () => {
+  it("explains a username isn't the numeric id and points at the DM flow", async () => {
     const { router } = deps();
-    expect((await router.handle("Raider", "discord 42"))[0]).toMatch(/isn't a Discord id/);
+    const reply = (await router.handle("Raider", "discord General_A6#6266")).join(" ");
+    expect(reply).toContain("General_A6#6266"); // echoes what they sent
+    expect(reply).toMatch(/18-digit|numeric/i); // explains the real id
+    expect(reply).toMatch(/no ID needed|link you with a code/i); // offers the no-id path
   });
 
   it("unlinks with 'discord off'", async () => {

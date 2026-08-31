@@ -153,12 +153,10 @@ export class CommandRouter {
 
     if (arg === "") {
       const code = await linker.startDmLink(sender);
-      const alt = invite
-        ? `Or join our server ${invite} and send our bot the code ${code} in a DM there instead.`
-        : `Or send our bot a direct message on Discord with the code ${code} instead.`;
+      const join = invite ? `join our server ${invite}, then ` : "";
       return [
-        `Want the buff alerts on Discord too? Grab your Discord ID from your profile and whisper me "discord <that id>" — I'll DM you a code to whisper straight back here, and you're linked.`,
-        `${alt} Either way the code expires in ~15 min.`,
+        `Want the buff alerts on Discord too? Easiest way, no ID needed: ${join}send our bot a DM on Discord with the code ${code}, and I'll know it's you.`,
+        `Or, whisper me your numeric Discord ID — an 18-digit number (Developer Mode on, right-click your name, Copy User ID) — and I'll DM you a code to whisper back. Codes expire ~15 min.`,
       ];
     }
     if (["off", "clear", "none", "remove"].includes(arg.toLowerCase())) {
@@ -166,7 +164,10 @@ export class CommandRouter {
       return [ok ? `Discord unlinked — in-game whispers only.` : `You're not subscribed.`];
     }
     if (!DISCORD_ID.test(arg)) {
-      return [`That isn't a Discord id. Whisper just "discord" to link by DMing me a code instead.`];
+      return [
+        `"${arg}" looks like a username, not your ID. I need your numeric Discord ID — an 18-digit number (Developer Mode on in Discord, right-click your name, Copy User ID).`,
+        `Or skip the ID entirely: whisper just "discord" and I'll link you with a code — no ID needed.`,
+      ];
     }
     switch (await linker.startIdLink(sender, arg)) {
       case "sent":
