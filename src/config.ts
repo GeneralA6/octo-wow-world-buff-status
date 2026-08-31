@@ -58,8 +58,17 @@ export interface BotConfig {
   readonly clientCdn: string;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
-  /** Members a cohort must reach for a raid to count as forming ("about to start"). */
+  /** Members a cohort must reach for a raid to count as forming ("about to start") — when the
+   *  "get ready to park" alert fires. Kept below the true raid strength for lead time. */
   readonly minRaidSize: number;
+  /** Members the raid must reach to be "at strength" — when the duration clock starts and the
+   *  clear tracker begins following it. The forming alert fires earlier (at minRaidSize), so
+   *  the measured form→clear excludes the fill-up. Defaults to minRaidSize (single-point). */
+  readonly raidStrengthSize: number;
+  /** Below this many of the raid's ROSTER present, the raid is "leaving" — the clear floor.
+   *  Held below the plateau so normal churn (repairs, DCs) isn't read as a departure.
+   *  Defaults to minRaidSize. */
+  readonly raidLeftFloor: number;
   /** Hysteresis floor: an active raid clears (and re-arms) when it drops below this. */
   readonly raidClearSize: number;
   /** How long the Rallying Cry buff lasts, and blocks the next drop (the head window). */
@@ -235,6 +244,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   if (raidClearSize >= minRaidSize) {
     errors.push("WOW_RAID_CLEAR_SIZE must be less than WOW_MIN_RAID_SIZE");
   }
+  // "At strength": the duration clock starts here (>= forming, so the alert stays early).
+  const raidStrengthSize = intWithDefault("WOW_RAID_STRENGTH_SIZE", minRaidSize, 1);
+  if (raidStrengthSize < minRaidSize) {
+    errors.push("WOW_RAID_STRENGTH_SIZE must be >= WOW_MIN_RAID_SIZE");
+  }
+  // The "leaving" floor for clear detection — held below the plateau, so it can't exceed strength.
+  const raidLeftFloor = intWithDefault("WOW_RAID_LEFT_FLOOR", minRaidSize, 1);
+  if (raidLeftFloor > raidStrengthSize) {
+    errors.push("WOW_RAID_LEFT_FLOOR must be <= WOW_RAID_STRENGTH_SIZE");
+  }
 
   const buffDurationMs = intWithDefault("WOW_BUFF_DURATION_MINUTES", 120, 1) * 60_000;
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
@@ -325,6 +344,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     watchAreaId,
     watchAreaName,
     minRaidSize,
+    raidStrengthSize,
+    raidLeftFloor,
     raidClearSize,
     buffDurationMs,
     raidDurationEstimateMs,

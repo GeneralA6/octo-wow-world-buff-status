@@ -120,6 +120,36 @@ describe("loadConfig", () => {
     );
   });
 
+  it("defaults the strength size and left floor to the forming size (single-point)", () => {
+    const config = loadConfig({ ...minimalEnv, WOW_MIN_RAID_SIZE: "20" });
+    expect(config.raidStrengthSize).toBe(20);
+    expect(config.raidLeftFloor).toBe(20);
+  });
+
+  it("reads a two-point setup: form early, start the clock at strength, leave below the floor", () => {
+    const config = loadConfig({
+      ...minimalEnv,
+      WOW_MIN_RAID_SIZE: "20",
+      WOW_RAID_STRENGTH_SIZE: "23",
+      WOW_RAID_LEFT_FLOOR: "15",
+    });
+    expect(config.minRaidSize).toBe(20);
+    expect(config.raidStrengthSize).toBe(23);
+    expect(config.raidLeftFloor).toBe(15);
+  });
+
+  it("rejects a strength size below the forming size", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_MIN_RAID_SIZE: "20", WOW_RAID_STRENGTH_SIZE: "18" })).toThrow(
+      /WOW_RAID_STRENGTH_SIZE must be >= WOW_MIN_RAID_SIZE/,
+    );
+  });
+
+  it("rejects a left floor above the strength size", () => {
+    expect(() =>
+      loadConfig({ ...minimalEnv, WOW_MIN_RAID_SIZE: "20", WOW_RAID_STRENGTH_SIZE: "23", WOW_RAID_LEFT_FLOOR: "24" }),
+    ).toThrow(/WOW_RAID_LEFT_FLOOR must be <= WOW_RAID_STRENGTH_SIZE/);
+  });
+
   it("defaults the buff duration to 2h and accepts an override in minutes", () => {
     expect(loadConfig({ ...minimalEnv }).buffDurationMs).toBe(120 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_BUFF_DURATION_MINUTES: "90" }).buffDurationMs).toBe(90 * 60_000);

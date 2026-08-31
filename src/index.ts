@@ -936,6 +936,8 @@ async function main(): Promise<void> {
     minRaidSize: config.minRaidSize,
     grouping: config.raidGrouping,
     clearSize: config.raidClearSize,
+    strengthSize: config.raidStrengthSize,
+    leftFloor: config.raidLeftFloor,
     clearSustainedMs: config.raidClearSustainedMs,
     nextRaidNumber,
   };

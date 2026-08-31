@@ -70,4 +70,46 @@ describe("RaidWatch", () => {
     watch.observe(raid(20, "Nightfall", 1), 1_000, true);
     expect(watch.raidNumber()).toBe(834);
   });
+
+  describe("two-point start (forming early, clock at strength, leave below the floor)", () => {
+    const opts = {
+      minRaidSize: 20,
+      strengthSize: 23,
+      leftFloor: 15,
+      grouping: "auto" as const,
+      clearSize: 6,
+      clearSustainedMs: 5 * 60_000,
+    };
+
+    const M = 60_000; // steps stay <= the 3-min blackout gap
+
+    it("fires forming at the forming size but does NOT start the clock until strength", () => {
+      const watch = new RaidWatch(opts);
+      const forming = watch.observe(raid(20, "Nightfall", 1), M, true);
+      expect(forming.countEvents.map((e) => e.kind)).toEqual(["raid-forming"]); // alert at 20
+      expect(watch.raidElapsedMs(M)).toBeNull(); // clock not started (< 23)
+      watch.observe(raid(23, "Nightfall", 1), 2 * M, true); // reaches strength
+      expect(watch.raidElapsedMs(2 * M)).toBe(0); // clock started here
+    });
+
+    it("does not read normal churn above the left floor as leaving", () => {
+      const watch = new RaidWatch(opts);
+      watch.observe(raid(25, "Nightfall", 1), M, true); // at strength
+      // Dips to 18 (lost 7 to repairs/DCs) — above the 15 floor, so still present, no clear.
+      watch.observe(raid(18, "Nightfall", 1), 2 * M, true);
+      expect(watch.observe(raid(18, "Nightfall", 1), 3 * M, true).clear).toBeNull();
+    });
+
+    it("confirms a clear below the floor, timed from strength not forming", () => {
+      const watch = new RaidWatch(opts);
+      watch.observe(raid(20, "Nightfall", 1), 1 * M, true); // forming — clock NOT started
+      watch.observe(raid(23, "Nightfall", 1), 2 * M, true); // strength — clock starts at 2M
+      watch.observe(raid(10, "Nightfall", 1), 3 * M, true); // below 15 → belowSince = 3M
+      watch.observe(raid(10, "Nightfall", 1), 5 * M, true); // 2 min gone, not yet sustained
+      const after = watch.observe(raid(10, "Nightfall", 1), 8 * M, true); // 5 min sustained → clear
+      expect(after.clear).not.toBeNull();
+      // form→clear = belowSince(3M) − strength(2M) = 1M; from forming(1M) it would be 2M.
+      expect(after.clear?.durationMs).toBe(1 * M);
+    });
+  });
 });

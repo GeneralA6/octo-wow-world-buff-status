@@ -16,6 +16,12 @@ export interface RaidWatchOptions {
   readonly minRaidSize: number;
   readonly grouping: GroupingMode;
   readonly clearSize: number;
+  /** Members the raid must reach for the clear tracker to start following it (the duration
+   *  clock's start). The forming alert fires earlier, at minRaidSize. Defaults to minRaidSize. */
+  readonly strengthSize?: number;
+  /** Below this many of the roster present, the raid is "leaving" (the clear floor). Held below
+   *  the plateau so churn isn't read as a departure. Defaults to minRaidSize. */
+  readonly leftFloor?: number;
   /** How long the roster must stay gone for a departure to count as a real clear (not a wipe). */
   readonly clearSustainedMs: number;
   /** Assigns the next raid reference number when a raid forms. Omit to leave raids unnumbered. */
@@ -40,7 +46,10 @@ export class RaidWatch {
     this.#tracker = new RaidTracker(options.minRaidSize, options.grouping, options.clearSize);
     this.#sessions = new RaidSessions({ formAt: options.minRaidSize });
     this.#clears = new ClearTracker({
-      formAt: options.minRaidSize,
+      // The clock/tracking starts at "strength" (>= forming); the clear floor is the "leaving"
+      // level, held below the plateau. Both default to minRaidSize (the original single-point).
+      formAt: options.strengthSize ?? options.minRaidSize,
+      clearFloor: options.leftFloor ?? options.minRaidSize,
       sustainedMs: options.clearSustainedMs,
       nextNumber: options.nextRaidNumber,
     });
