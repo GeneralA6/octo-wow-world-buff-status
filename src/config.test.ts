@@ -203,8 +203,8 @@ describe("loadConfig", () => {
     });
     // Sorted by label: ONYXIABUFFOG before ONYXIABUFFSW.
     expect(config.listeners).toEqual([
-      { account: "ONYXIABUFFOG", password: "pw2", characterName: "Onyxiabuffog", onLogin: "none" },
-      { account: "ONYXIABUFFSW", password: "pw1", characterName: "Onyxiabuffsw", onLogin: "none" },
+      { account: "ONYXIABUFFOG", password: "pw2", characterName: "Onyxiabuffog", onLogin: "none", faction: null },
+      { account: "ONYXIABUFFSW", password: "pw1", characterName: "Onyxiabuffsw", onLogin: "none", faction: null },
     ]);
   });
 
@@ -219,6 +219,26 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...base, WOW_LISTENER_SW_ONLOGIN: "SIT" }).listeners[0]?.onLogin).toBe("sit");
     expect(loadConfig({ ...base }).listeners[0]?.onLogin).toBe("none");
     expect(() => loadConfig({ ...base, WOW_LISTENER_SW_ONLOGIN: "dance" })).toThrow(/must be "sit", "interact", or "none"/);
+  });
+
+  it("reads a per-listener faction (its capital) and rejects a bad one", () => {
+    const base = {
+      ...minimalEnv,
+      WOW_LISTENER_SW_ACCOUNT: "A",
+      WOW_LISTENER_SW_PASSWORD: "p",
+      WOW_LISTENER_SW_CHARACTER: "Sw",
+    };
+    expect(loadConfig({ ...base }).listeners[0]?.faction).toBeNull();
+    expect(loadConfig({ ...base, WOW_LISTENER_SW_FACTION: "alliance" }).listeners[0]?.faction).toBe("alliance");
+    expect(loadConfig({ ...base, WOW_LISTENER_SW_FACTION: "HORDE" }).listeners[0]?.faction).toBe("horde");
+    expect(() => loadConfig({ ...base, WOW_LISTENER_SW_FACTION: "pandaren" })).toThrow(
+      /WOW_LISTENER_SW_FACTION must be "alliance" or "horde"/,
+    );
+  });
+
+  it("defaults the broadcast-dedup window to the buff window (120m) and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).broadcastDedupMs).toBe(120 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_BROADCAST_DEDUP_MINUTES: "30" }).broadcastDedupMs).toBe(30 * 60_000);
   });
 
   it("errors when a discovered listener is missing its password or character", () => {

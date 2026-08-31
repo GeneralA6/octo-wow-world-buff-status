@@ -3,6 +3,7 @@ import { DEFAULT_INTEGRITY_CHECKSUM } from "./crypto/integrity.js";
 import { CLIENT_BUILD } from "./protocol/opcodes.js";
 import { OCTOWOW_CDN } from "./net/client-resolver.js";
 import type { GroupingMode } from "./watcher/raid-tracker.js";
+import type { Faction } from "./watcher/buff-store.js";
 
 const GROUPING_MODES: readonly GroupingMode[] = ["auto", "guild", "lair"];
 
@@ -26,6 +27,9 @@ export interface ListenerConfig {
   readonly password: string;
   readonly characterName: string;
   readonly onLogin: OnLoginAction;
+  /** Which capital this listener stands in, so its /yell reaches that side's crowd. Null
+   *  when unset — the listener still hears buff yells, it just can't be a yell mouthpiece. */
+  readonly faction: Faction | null;
 }
 
 export interface BotConfig {
@@ -67,6 +71,10 @@ export interface BotConfig {
   /** Floor on a plausible clear: shorter form→clear samples are churn, not a real raid,
    *  and are dropped so they can't poison the learned median downward. */
   readonly raidMinClearMs: number;
+  /** How long a sent park-alert suppresses a repeat for the same city+kind, so a redeploy,
+   *  a wipe (count dipping and recovering) or roster churn can't re-broadcast the same
+   *  cycle. Reset early when a fresh buff actually drops for that city. */
+  readonly broadcastDedupMs: number;
   /** crossfaction (Octo: /who is mixed, gate both cities) or faction (split per side). */
   readonly realmType: RealmType;
   /** How to tell concurrent raids apart: auto (guild raids + a pickup pool), guild, or lair. */
@@ -165,11 +173,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     } else if (onLoginRaw) {
       errors.push(`${prefix}_ONLOGIN must be "sit", "interact", or "none"`);
     }
+    const factionRaw = env[`${prefix}_FACTION`]?.trim().toLowerCase();
+    let faction: Faction | null = null;
+    if (factionRaw === "alliance" || factionRaw === "horde") faction = factionRaw;
+    else if (factionRaw) errors.push(`${prefix}_FACTION must be "alliance" or "horde"`);
     listeners.push({
       account: required(`${prefix}_ACCOUNT`),
       password: required(`${prefix}_PASSWORD`),
       characterName: required(`${prefix}_CHARACTER`),
       onLogin,
+      faction,
     });
   }
 
@@ -213,6 +226,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
   const raidLearnMinSamples = intWithDefault("WOW_RAID_LEARN_MIN_SAMPLES", 15, 1);
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
+  // Default to the buff window: within one head-block cycle we should speak once.
+  const broadcastDedupMs = intWithDefault("WOW_BROADCAST_DEDUP_MINUTES", 120, 1) * 60_000;
 
   const realmRaw = env.WOW_REALM_TYPE?.trim().toLowerCase();
   const realmType: RealmType = realmRaw === "faction" ? "faction" : "crossfaction";
@@ -296,6 +311,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidDurationEstimateMs,
     raidLearnMinSamples,
     raidMinClearMs,
+    broadcastDedupMs,
     realmType,
     raidGrouping,
     raidDetector,
