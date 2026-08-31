@@ -69,8 +69,8 @@ export class CommandRouter {
         const added = await store.add(sender);
         return [
           added
-            ? `Subscribed — I'll whisper you when a raid forms or clears in ${areaName}. Whisper "discord" to also get Discord DMs. "help" for more.`
-            : `You're already subscribed to ${areaName} alerts.`,
+            ? `You're subscribed! I'll whisper you when a raid clears and the buff is about to drop. Want it even when you're offline? Whisper "discord" to link, then "mode offline" for DMs while you're logged out.`
+            : `You're already subscribed to ${areaName} alerts. Whisper "me" for your settings, or "help" for what I can do.`,
         ];
       }
       case "unsubscribe":
@@ -113,9 +113,10 @@ export class CommandRouter {
       case "commands":
       case "?":
         return [
-          `I watch ${areaName}. Commands: subscribe, unsubscribe, discord [<id>], ` +
-            `mode ingame|both|offline|discord, notify <type> on|off, status, me. ` +
-            `Alert types: ${ALL_ALERT_TYPES.join(", ")}.`,
+          `I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me:`,
+          `subscribe — start getting alerts (unsubscribe anytime to stop)`,
+          `discord — link Discord for DMs. Best combo: link it, then "mode offline" and I'll DM you ONLY when you're logged out — so you never miss a buff, even away from the game.`,
+          `also: mode (ingame / both / offline / discord), notify which alerts (e.g. "notify cleared off"), status (raids now), me (your settings).`,
         ];
       default: {
         // A bare confirmation code from a flow-B link.

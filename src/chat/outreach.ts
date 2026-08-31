@@ -12,8 +12,8 @@ export type GuildInviteFn = (target: string) => void;
 /** The lines Bufftracker whispers to a player who first contacts a listener. */
 export function introLines(config: OutreachConfig): string[] {
   return [
-    `Hi! I'm Bufftracker — I watch Onyxia's Lair and call out world-buff drops for the ${config.community} community.`,
-    `I'm run by the <${config.guildName}> guild, and we're recruiting! Whisper me "help" to see what I can do.`,
+    `Hi! I'm Bufftracker — I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me "subscribe" and I'll ping you in-game when it's time.`,
+    `Best part: link Discord ("discord") and I'll DM you even when you're offline — never miss a buff. Made by <${config.guildName}> for the ${config.community} community, and we're recruiting! "help" for more.`,
   ];
 }
 

@@ -40,7 +40,7 @@ function crowd(guild: string, count: number): WhoPlayer[] {
 describe("CommandRouter", () => {
   it("subscribes a player and is idempotent", async () => {
     const { store, router } = deps();
-    expect((await router.handle("Raider", "subscribe"))[0]).toMatch(/Subscribed/);
+    expect((await router.handle("Raider", "subscribe"))[0]).toMatch(/subscribed/i);
     expect(await store.has("Raider")).toBe(true);
     expect((await router.handle("Raider", "subscribe"))[0]).toMatch(/already subscribed/);
   });
@@ -204,6 +204,13 @@ describe("CommandRouter", () => {
     await router.handle("Raider", "subscribe");
     expect((await router.handle("Raider", "me"))[0]).toMatch(/no Discord linked/);
     expect((await router.handle("Raider", "flibber"))[0]).toMatch(/didn't get that/);
-    expect((await router.handle("Raider", "help"))[0]).toMatch(/Commands:/);
+  });
+
+  it("help leads with subscribe and surfaces the offline-Discord feature", async () => {
+    const { router } = deps();
+    const help = (await router.handle("Raider", "help")).join(" ");
+    expect(help).toMatch(/subscribe/i);
+    expect(help).toMatch(/offline/i);
+    expect(help).toMatch(/discord/i);
   });
 });
