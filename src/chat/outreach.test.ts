@@ -14,9 +14,10 @@ describe("introLines", () => {
     expect(lines).toMatch(/subscribe/i);
   });
 
-  it("points at the Discord and help — without the alliance/horde detail", () => {
+  it("points at the Discord and help — plain 'Discord', no alliance/horde detail", () => {
     const lines = introLines(config).join(" ");
-    expect(lines).toMatch(/OctoWoW Discord/);
+    expect(lines).toMatch(/posts in Discord/);
+    expect(lines).not.toMatch(/OctoWoW Discord/); // not tied to a named server
     expect(lines).toMatch(/"help"/);
     expect(lines).not.toMatch(/alliance|horde|@/i);
   });
