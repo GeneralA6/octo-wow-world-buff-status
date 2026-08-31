@@ -128,24 +128,23 @@ export function formatCapitalStatusYell(
   buffPossible: boolean,
 ): string {
   const city = CITY_FOR[faction];
-  // Idle (no buff, no raid): one concise line — the composable pieces double up on "raid".
-  if (cooldownActiveMsLeft === null && !raid) {
-    return (
-      `[Onyxia] All quiet in ${city} - no Rallying Cry up, no raid in the lair. ` +
-      `Whisper Bufftracker "subscribe" (or "discord") and I'll ping you when one's coming.`
+  const parts: string[] = [];
+  // Cooldown: state the timer only while a buff is UP. Ready needs no mention (it's the norm).
+  if (cooldownActiveMsLeft !== null) {
+    parts.push(`Rallying Cry cooldown in ${city}: ~${humanClock(cooldownActiveMsLeft)} until a fresh one can drop.`);
+  }
+  // Raid: only when one is in the lair, with a park nudge when a fresh buff is genuinely possible.
+  if (raid) {
+    const id = raid.number !== null ? `raid #${raid.number}, ` : "";
+    parts.push(
+      buffPossible
+        ? `A raid's in the lair (${id}in for ~${humanClock(raid.elapsedMs)}) - one may drop when they clear, park here!`
+        : `A raid's in the lair (${id}in for ~${humanClock(raid.elapsedMs)}).`,
     );
   }
-  const cooldown =
-    cooldownActiveMsLeft !== null
-      ? `Rallying Cry cooldown in ${city}: ~${humanClock(cooldownActiveMsLeft)} until a fresh one can drop`
-      : raid
-        ? `A fresh Rallying Cry can drop in ${city} now`
-        : `A fresh Rallying Cry can drop in ${city} as soon as a raid clears Onyxia`;
-  const raidPart = raid
-    ? `A raid's in the lair (${raid.number !== null ? `raid #${raid.number}, ` : ""}in for ~${humanClock(raid.elapsedMs)})`
-    : `No raid in the lair`;
-  const raidSentence = raid && buffPossible ? `${raidPart} - one may drop when they clear, park here!` : `${raidPart}.`;
-  return `[Onyxia] ${cooldown}. ${raidSentence} Whisper Bufftracker "subscribe" (or "discord" for Discord pings).`;
+  // Always: the self-promotion.
+  parts.push(`Whisper Bufftracker "subscribe" for Onyxia buff pings ("discord" for Discord).`);
+  return `[Onyxia] ${parts.join(" ")}`;
 }
 
 /** Human list of the capitals where a fresh buff is possible ("Stormwind or Orgrimmar"). */
