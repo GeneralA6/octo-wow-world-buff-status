@@ -13,6 +13,8 @@ import { DiscordInvites } from "./notify/discord-invites.js";
 import { InviteLinker } from "./notify/invite-linker.js";
 import {
   formatBuffAlert,
+  formatBuffCooldownRefreshed,
+  formatBuffCooldownRefreshedWhisper,
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
@@ -42,6 +44,12 @@ import {
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
 import { factionOfRace, splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { shouldAlertForRaid } from "./watcher/buff-gate.js";
+import {
+  InMemoryBroadcastLedger,
+  MongoBroadcastLedger,
+  shouldBroadcast,
+  type BroadcastLedger,
+} from "./watcher/broadcast-ledger.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
 import { DiscordLinker } from "./chat/discord-linker.js";
@@ -151,10 +159,15 @@ interface BuffDropSink {
   notify: ((faction: Faction, appliedAt: Date) => void) | null;
 }
 
+/** Each listener (parked in its capital) registers a /yell function for its own side once
+ *  it knows it; the watcher yells through it to broadcast to everyone nearby in the city. */
+type YellSink = Partial<Record<Faction, (message: string) => void>>;
+
 /** Everything a connection needs beyond config: shared state and the alert sinks. */
 interface ConnectionServices {
   readonly lanes: readonly DetectionLane[];
   readonly buffStore: BuffStore;
+  readonly broadcasts: BroadcastLedger;
   readonly durationStore: DurationStore;
   readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
@@ -162,6 +175,7 @@ interface ConnectionServices {
   readonly dm: DiscordDmSender;
   readonly outreach: Outreach;
   readonly buffDropSink: BuffDropSink;
+  readonly yellSink: YellSink;
   readonly push: (message: NotifyMessage) => Promise<void>;
   readonly client: ClientValues;
 }
@@ -194,7 +208,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, buffStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, push, client } =
+  const { lanes, buffStore, broadcasts, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, client } =
     services;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
@@ -210,6 +224,7 @@ async function runConnection(
 
   await new Promise<void>((resolve, reject) => {
     let pollTimer: NodeJS.Timeout | null = null;
+    let cooldownTimer: NodeJS.Timeout | null = null;
     let whisperQueue: WhisperQueue | null = null;
     // The world server can accept the TCP connection but stall the handshake, and
     // there's no other timeout past connect — so bound the time to reach in-world.
@@ -228,6 +243,7 @@ async function runConnection(
       if (settled) return;
       settled = true;
       if (pollTimer) clearTimeout(pollTimer);
+      if (cooldownTimer) clearInterval(cooldownTimer);
       if (readyTimer) clearTimeout(readyTimer);
       whisperQueue?.stop();
       outreach.setChannel(null, null); // watcher going away — stop greeting through it
@@ -250,13 +266,18 @@ async function runConnection(
       offlinePending.set(key, { discordId, message, timer });
     };
 
-    // A buff-parking alert: post to the Discord channel, whisper every subscriber
-    // in-game, DM "both"-mode subscribers, arm the DM fallback for "offline"-mode ones.
+    // A buff-parking alert: post to the Discord channel, whisper subscribers of that side,
+    // DM "both"-mode ones, arm the DM fallback for "offline"-mode ones, and yell in the city.
+    // The caller has already deduped `cities` against the broadcast ledger, so this fires at
+    // most once per (city, kind) per buff cycle — hence the yell can go out unthrottled.
     const announceBuff = async (event: RaidEvent, cities: readonly Faction[]): Promise<void> => {
       const message = formatBuffAlert(event, cities, config.watchAreaName);
       logger.info(`ALERT ${event.kind} (${cities.join("/")}): ${message.body}`);
       await push(message);
       if (!config.whispersEnabled) return;
+
+      // Yell in each open capital via its listener, so everyone standing there hears it.
+      for (const city of cities) yellSink[city]?.(formatBuffWhisper(event, [city], config.watchAreaName));
 
       // Only whisper/DM subscribers who want this alert type (the Discord channel
       // post above went to everyone regardless).
@@ -290,10 +311,13 @@ async function runConnection(
       }
     };
 
-    // A buff DROP (heard on a listener, routed here via the sink): whisper/DM only that
-    // side's subscribers — the payoff event finally reaches people in-game, not just the
-    // Discord channel. Gated on wanting alerts at all (notify none = silence).
-    const announceBuffDrop = async (faction: Faction, appliedAt: Date): Promise<void> => {
+    // Whisper/DM only one side's subscribers (used by both buff drops and cooldown
+    // refreshes). Gated on wanting alerts at all (notify none = silence).
+    const notifyFactionSubscribers = async (
+      faction: Faction,
+      whisperLine: string,
+      dmLine: string,
+    ): Promise<void> => {
       if (!config.whispersEnabled) return;
       let subscribers: Subscriber[] = [];
       try {
@@ -304,15 +328,46 @@ async function runConnection(
       }
       subscribers = subscribers.filter((s) => s.factions.includes(faction) && s.alerts.length > 0);
       if (subscribers.length === 0) return;
-
-      const line = formatBuffDroppedWhisper(faction, config.buffDurationMs);
-      const dmLine = formatBuffDropped(faction, appliedAt, config.buffDurationMs).body;
       const whisperNames = subscribers.filter((s) => s.delivery !== "discord").map((s) => s.name);
-      whisperQueue?.enqueueAll(whisperNames, line);
+      whisperQueue?.enqueueAll(whisperNames, whisperLine);
       for (const s of subscribers) {
         if (!s.discordId) continue;
         if (s.delivery === "both" || s.delivery === "discord") void dm.send(s.discordId, dmLine);
         else if (s.delivery === "offline") armOfflineFallback(s.name, s.discordId, dmLine);
+      }
+    };
+
+    // A buff DROP (heard on a listener, routed here via the sink): notify that side's subs.
+    const announceBuffDrop = (faction: Faction, appliedAt: Date): Promise<void> =>
+      notifyFactionSubscribers(
+        faction,
+        formatBuffDroppedWhisper(faction, config.buffDurationMs),
+        formatBuffDropped(faction, appliedAt, config.buffDurationMs).body,
+      );
+
+    // When a buff's window elapses, a fresh one can drop — announce the cooldown is up to
+    // the Discord channel, that side's subscribers, and via a /yell in that capital.
+    // Per-connection baseline; a refresh during a reconnect window is missed (minor — 2h buff).
+    const lastBuffActive = new Map<Faction, boolean>();
+    const checkCooldowns = async (): Promise<void> => {
+      const now = new Date();
+      for (const faction of FACTIONS) {
+        let active = false;
+        try {
+          active = (await buffStore.current(faction, now))?.active ?? false;
+        } catch (error) {
+          logger.debug(`cooldown check ${faction}: ${describeError(error)}`);
+          continue;
+        }
+        const was = lastBuffActive.get(faction);
+        lastBuffActive.set(faction, active);
+        if (was === true && !active) {
+          logger.info(`buff cooldown refreshed: ${faction}`);
+          const whisperLine = formatBuffCooldownRefreshedWhisper(faction);
+          void push(formatBuffCooldownRefreshed(faction));
+          void notifyFactionSubscribers(faction, whisperLine, formatBuffCooldownRefreshed(faction).body);
+          yellSink[faction]?.(whisperLine); // broadcast to the capital (task: yell)
+        }
       }
     };
 
@@ -360,8 +415,34 @@ async function runConnection(
       const shadow = useTemporal ? obs.countEvents : obs.temporalEvents;
       for (const event of events) {
         const open = await openCitiesFor(event, lane.cities, buffStore, now, raidDurationMs);
-        if (open.length > 0) await announceBuff(event, open);
-        else logger.info(`${lane.label} ${event.kind} suppressed — every candidate city still has an active buff`);
+        if (open.length === 0) {
+          logger.info(`${lane.label} ${event.kind} suppressed — every candidate city still has an active buff`);
+          continue;
+        }
+        // Second gate: drop any city we've already broadcast this kind for in the current
+        // buff cycle. Keyed to the cycle (persisted in Mongo), so a redeploy, a wipe or
+        // roster churn re-emitting the same event doesn't re-alert. A fresh drop for the
+        // city, or a stale record, reopens it.
+        const fresh: Faction[] = [];
+        for (const city of open) {
+          const last = await broadcasts.last(city, event.kind);
+          const lastBuffDropAt = (await buffStore.current(city, new Date(now)))?.appliedAt ?? null;
+          if (shouldBroadcast(last, lastBuffDropAt, now, config.broadcastDedupMs)) fresh.push(city);
+          else logger.info(`${lane.label} ${event.kind} for ${city} suppressed — already broadcast this cycle`);
+        }
+        if (fresh.length === 0) continue;
+        await announceBuff(event, fresh);
+        for (const city of fresh) {
+          await broadcasts
+            .record({
+              city,
+              kind: event.kind,
+              cohortLabel: event.cohort.label,
+              peak: event.cohort.peak,
+              lastBroadcastAt: new Date(now),
+            })
+            .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
+        }
       }
       for (const event of shadow) {
         logger.info(
@@ -546,6 +627,11 @@ async function runConnection(
             pollTimer.unref?.();
           };
           void poll();
+          // Watch for buff windows elapsing (cooldown refreshed), independent of /who.
+          cooldownTimer = setInterval(() => {
+            if (!settled) void checkCooldowns().catch((e) => logger.debug(`cooldown: ${describeError(e)}`));
+          }, 60_000);
+          cooldownTimer.unref?.();
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
         onWhisperUndelivered: config.whispersEnabled ? onWhisperUndelivered : undefined,
@@ -587,6 +673,7 @@ async function runListener(
   client: ClientValues,
   onBuffApplied: (faction: Faction, sourceName: string, text: string) => void,
   outreach: Outreach,
+  yellSink: YellSink,
 ): Promise<void> {
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
@@ -608,11 +695,17 @@ async function runListener(
     const nearby: WorldGameObject[] = [];
     let selfPos: WorldPoint | null = null;
     let interacted = false;
+    // Our /yell mouthpiece registration, so we only retract it on disconnect if it's still
+    // ours (a reconnect may have already replaced it with the new connection's).
+    let registeredYell: ((message: string) => void) | null = null;
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
       if (readyTimer) clearTimeout(readyTimer);
       if (interactTimer) clearTimeout(interactTimer);
+      if (listener.faction && registeredYell && yellSink[listener.faction] === registeredYell) {
+        delete yellSink[listener.faction];
+      }
       if (error) reject(error);
       else resolve();
     };
@@ -629,6 +722,13 @@ async function runListener(
           if (readyTimer) clearTimeout(readyTimer);
           readyTimer = null;
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
+          // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone
+          // standing in this capital. Only when the listener's faction is configured.
+          if (listener.faction) {
+            registeredYell = (message: string): void => world.yell(message);
+            yellSink[listener.faction] = registeredYell;
+            logger.info(`${listener.characterName}: registered as ${listener.faction} yell mouthpiece`);
+          }
           if (listener.onLogin === "sit") world.sit();
           else if (listener.onLogin === "interact") {
             // The object burst trickles in over several seconds, so poll: as soon as a
@@ -836,6 +936,17 @@ async function main(): Promise<void> {
       logger.error(`buffs: MongoDB connect failed (${describeError(error)}); recording in memory`);
     }
   }
+  // Per-cycle park-alert dedup, so a redeploy/wipe/churn can't re-broadcast — Mongo when
+  // configured, else in memory (which resets on restart, i.e. no cross-deploy dedup).
+  let broadcasts: BroadcastLedger = new InMemoryBroadcastLedger();
+  if (config.mongodbUri) {
+    try {
+      broadcasts = await MongoBroadcastLedger.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("broadcasts: recording park-alert times to MongoDB");
+    } catch (error) {
+      logger.error(`broadcasts: MongoDB connect failed (${describeError(error)}); deduping in memory`);
+    }
+  }
   // Learned raid clear-times for the self-improving forming heads-up.
   let durationStore: DurationStore = new InMemoryDurationStore();
   if (config.mongodbUri) {
@@ -849,6 +960,9 @@ async function main(): Promise<void> {
 
   // The watcher fills this once in world, so a listener-heard buff drop can be whispered.
   const buffDropSink: BuffDropSink = { notify: null };
+  // Each city listener registers its /yell here on login (and clears it on disconnect), so
+  // an alert can be shouted to everyone standing in that capital, not only to subscribers.
+  const yellSink: YellSink = {};
 
   const recordBuff = (faction: Faction, sourceName: string, text: string, detectedBy: string): void => {
     const appliedAt = new Date();
@@ -897,6 +1011,7 @@ async function main(): Promise<void> {
   const services: ConnectionServices = {
     lanes,
     buffStore,
+    broadcasts,
     durationStore,
     snapshots,
     store,
@@ -904,6 +1019,7 @@ async function main(): Promise<void> {
     dm,
     outreach,
     buffDropSink,
+    yellSink,
     push,
     client,
   };
@@ -1005,6 +1121,7 @@ async function main(): Promise<void> {
       store.close(),
       snapshots.close(),
       buffStore.close(),
+      broadcasts.close(),
       durationStore.close(),
     ]).finally(() => process.exit(0));
   };
@@ -1056,7 +1173,7 @@ async function main(): Promise<void> {
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runListener(config, listener, log, client, onBuff, outreach);
+        await runListener(config, listener, log, client, onBuff, outreach, yellSink);
         log.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
       } catch (error) {
