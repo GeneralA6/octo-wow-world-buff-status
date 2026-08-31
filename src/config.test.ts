@@ -169,6 +169,12 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_INTERACT_MAX_YD: "5" }).interactMaxYd).toBe(5);
   });
 
+  it("has no interact-entry target by default, and reads a numeric one", () => {
+    expect(loadConfig({ ...minimalEnv }).interactEntry).toBeNull();
+    expect(loadConfig({ ...minimalEnv, WOW_INTERACT_ENTRY: "25329" }).interactEntry).toBe(25329);
+    expect(loadConfig({ ...minimalEnv, WOW_INTERACT_ENTRY: "notanumber" }).interactEntry).toBeNull();
+  });
+
   it("defaults the realm type to crossfaction and accepts faction", () => {
     expect(loadConfig({ ...minimalEnv }).realmType).toBe("crossfaction");
     expect(loadConfig({ ...minimalEnv, WOW_REALM_TYPE: "faction" }).realmType).toBe("faction");

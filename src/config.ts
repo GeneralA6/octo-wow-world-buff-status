@@ -120,6 +120,9 @@ export interface BotConfig {
    *  the bench). Tunable because the server range-checks the use, so it needs the character
    *  parked within reach of the bench. */
   readonly interactMaxYd: number;
+  /** If set, an "interact" listener only `use`s a GameObject of THIS entry (the stone bench),
+   *  ignoring closer non-bench clutter. Null = use whatever object is nearest. */
+  readonly interactEntry: number | null;
   readonly discordWebhookUrl: string;
   /** Role to ping on raid enter/leave so only opted-in members are notified. */
   readonly discordMentionRoleId: string | null;
@@ -286,6 +289,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
   const whoTimeoutMs = intWithDefault("WOW_WHO_TIMEOUT_MS", 8_000, 1_000);
   const interactMaxYd = intWithDefault("WOW_INTERACT_MAX_YD", 8, 1);
+  const interactEntryRaw = env.WOW_INTERACT_ENTRY?.trim();
+  const interactEntry = interactEntryRaw && /^\d+$/.test(interactEntryRaw) ? Number(interactEntryRaw) : null;
 
   const discordWebhookUrl = required("DISCORD_WEBHOOK_URL");
 
@@ -355,6 +360,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     pollIntervalMs,
     whoTimeoutMs,
     interactMaxYd,
+    interactEntry,
     discordWebhookUrl,
     discordMentionRoleId,
     guildName,

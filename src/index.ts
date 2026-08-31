@@ -794,22 +794,30 @@ async function runListener(
           }
           if (listener.onLogin === "sit") world.sit();
           else if (listener.onLogin === "interact") {
-            // The object burst trickles in over several seconds, so poll: as soon as a
-            // GameObject is within reach (the one she's parked on), use it. Only a close
-            // object counts — a far transport is never what she's sitting on.
+            // The object burst trickles in over several seconds, so poll: as soon as the
+            // target object is within reach, `use` it. With WOW_INTERACT_ENTRY set we only
+            // consider that entry (the stone bench), ignoring closer clutter; otherwise the
+            // nearest object. The nearby list is logged so the bench's entry can be found.
             let attempts = 0;
+            const distTo = (go: WorldGameObject): number =>
+              selfPos ? Math.hypot(go.pos.x - selfPos.x, go.pos.y - selfPos.y, go.pos.z - selfPos.z) : Infinity;
+            const nearbyList = (): string =>
+              [...nearby]
+                .sort((a, b) => distTo(a) - distTo(b))
+                .slice(0, 10)
+                .map((go) => `${go.entry}@${distTo(go).toFixed(1)}`)
+                .join(", ");
             const tryInteract = (): void => {
               attempts += 1;
-              const target = selfPos ? nearestGameObject(nearby, selfPos) : null;
-              const dist =
-                target && selfPos
-                  ? Math.hypot(target.pos.x - selfPos.x, target.pos.y - selfPos.y, target.pos.z - selfPos.z)
-                  : Infinity;
+              const pool =
+                config.interactEntry !== null ? nearby.filter((go) => go.entry === config.interactEntry) : nearby;
+              const target = selfPos ? nearestGameObject(pool, selfPos) : null;
+              const dist = target ? distTo(target) : Infinity;
               if (target && dist <= config.interactMaxYd) {
                 interacted = true;
                 logger.info(
-                  `${listener.characterName}: using nearest object entry=${target.entry} (~${dist.toFixed(1)} yd) — ` +
-                    `check in-game whether ${listener.characterName} is now seated; if not, the server likely refused the use at that range (park closer to the bench)`,
+                  `${listener.characterName}: using object entry=${target.entry} (~${dist.toFixed(1)} yd)` +
+                    `${config.interactEntry !== null ? " [targeted]" : ""} — check in-game if seated. nearby=[${nearbyList()}]`,
                 );
                 world.useGameObject(target.guid);
                 return;
@@ -817,21 +825,11 @@ async function runListener(
               if (attempts >= OBJECT_POLL_MAX) {
                 interacted = true;
                 const sp = selfPos;
-                const closest = sp
-                  ? [...nearby]
-                      .map((go) => ({
-                        entry: go.entry,
-                        d: Math.hypot(go.pos.x - sp.x, go.pos.y - sp.y, go.pos.z - sp.z),
-                      }))
-                      .sort((a, b) => a.d - b.d)
-                      .slice(0, 5)
-                      .map((c) => `${c.entry}@${c.d.toFixed(1)}`)
-                      .join(", ")
-                  : "n/a";
                 logger.warn(
-                  `${listener.characterName}: no object within ${config.interactMaxYd}yd after ${attempts} tries ` +
+                  `${listener.characterName}: no ${config.interactEntry !== null ? `entry-${config.interactEntry} ` : ""}` +
+                    `object within ${config.interactMaxYd}yd after ${attempts} tries ` +
                     `(self=${sp ? `(${sp.x.toFixed(0)},${sp.y.toFixed(0)},${sp.z.toFixed(0)})` : "no"}, ` +
-                    `objects=${nearby.length}, closest=[${closest}])`,
+                    `objects=${nearby.length}, nearby=[${nearbyList()}])`,
                 );
                 return;
               }
