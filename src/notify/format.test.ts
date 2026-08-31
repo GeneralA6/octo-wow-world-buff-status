@@ -59,19 +59,19 @@ describe("formatBuffDropped", () => {
 });
 
 describe("formatBuffDroppedWhisper", () => {
-  it("names the city and the duration, with NO absolute clock time (the bot's clock isn't the player's)", () => {
+  it("names the city and the next-window floor, with NO absolute clock time (the bot's clock isn't the player's)", () => {
     const line = formatBuffDroppedWhisper("alliance", 120 * 60_000);
     expect(line).toContain("Stormwind");
-    expect(line).toContain("~2h");
+    expect(line).toMatch(/at least 2h/);
     expect(line).not.toMatch(/\d{1,2}:\d{2}/); // no HH:MM
     expect(line).not.toMatch(/<t:/); // no Discord timestamp (WoW can't render it)
   });
 
-  it("doesn't tell someone who missed it to grab it; points to the next one instead", () => {
+  it("doesn't overpromise: no 'go grab it', and the next window is a floor ('at least', 'usually longer')", () => {
     const line = formatBuffDroppedWhisper("alliance", 120 * 60_000);
     expect(line).not.toMatch(/go grab/i);
-    expect(line).toMatch(/next one will be available/i);
-    expect(line).toMatch(/missed it/i);
+    expect(line).toMatch(/at least/i);
+    expect(line).toMatch(/usually longer/i);
   });
 
   it("names the buff in full, so a reader knows which buff it is", () => {

@@ -36,8 +36,8 @@ export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs:
 export function formatBuffDroppedWhisper(faction: Faction, durationMs: number): string {
   const city = CITY_FOR[faction];
   return (
-    `The Rallying Cry of the Dragonslayer just dropped in ${city}! It hits everyone parked there as it lands - if you missed it, there's nothing to grab. ` +
-    `The next one will be available in ~${humanDuration(durationMs)}, and I'll warn you before then.`
+    `The Rallying Cry of the Dragonslayer just dropped in ${city}! ` +
+    `The next can't drop for at least ${humanDuration(durationMs)}, usually longer - I'll warn you before it does.`
   );
 }
 
