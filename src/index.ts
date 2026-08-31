@@ -1087,24 +1087,16 @@ async function main(): Promise<void> {
       onDirectMessage: (authorId, content) => {
         void (async () => {
           try {
+            // A pending link code takes precedence (it completes the Discord link).
             const character = await linker.confirmFromDm(authorId, content);
             if (character) {
               logger.info(`discord: linked ${character} via DM`);
               return;
             }
-            // Not a link code — let a DM subscriber unsubscribe from the Discord side,
-            // so they can stop without logging into WoW to whisper the bot.
-            const cmd = content.trim().replace(/^[!./]+/, "").toLowerCase();
-            if (cmd === "unsubscribe" || cmd === "unsub" || cmd === "stop") {
-              const removed = await store.removeByDiscordId(authorId);
-              logger.info(`discord: unsubscribe DM from ${authorId} removed [${removed.join(", ") || "nothing"}]`);
-              await dm.send(
-                authorId,
-                removed.length > 0
-                  ? `Unsubscribed ${removed.join(", ")} - no more ${config.watchAreaName} alerts. Whisper "subscribe" in-game to opt back in.`
-                  : `No ${config.watchAreaName} subscription is linked to this Discord account.`,
-              );
-            }
+            // Otherwise it's a command — route it through the same engine as in-game,
+            // resolved to this account's linked character.
+            const replies = await router.handleFromDiscord(authorId, content);
+            if (replies.length > 0) await dm.send(authorId, replies.join("\n"));
           } catch (error) {
             logger.error(`discord dm: ${describeError(error)}`);
           }

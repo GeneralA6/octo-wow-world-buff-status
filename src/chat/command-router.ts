@@ -185,6 +185,33 @@ export class CommandRouter {
     }
   }
 
+  /**
+   * Route a Discord DM through the same command engine, so everything that works in-game
+   * works from Discord too. Identity there is the Discord id, so it's resolved to the linked
+   * character first. "unsubscribe" stops ALL of the account's characters; every other command
+   * acts on the primary (first-linked) one. An unlinked account can still get "help".
+   */
+  async handleFromDiscord(discordId: string, text: string): Promise<string[]> {
+    const { store, areaName } = this.#deps;
+    const command = (text.trim().replace(/^[!./]+/, "").split(/\s+/)[0] ?? "").toLowerCase();
+    if (command === "unsubscribe" || command === "unsub" || command === "stop") {
+      const removed = await store.removeByDiscordId(discordId);
+      return [
+        removed.length > 0
+          ? `Unsubscribed ${removed.join(", ")} - no more ${areaName} alerts. Whisper "subscribe" in-game to opt back in.`
+          : `No ${areaName} subscription is linked to this Discord account.`,
+      ];
+    }
+    const linked = await store.findByDiscordId(discordId);
+    if (linked.length === 0) {
+      if (command === "help" || command === "commands" || command === "?") return this.handle("", text);
+      return [
+        `You're not linked to a character yet. In-game, whisper the bot "discord" (or use "/link <character>") to connect this Discord account - then you can manage everything from here.`,
+      ];
+    }
+    return this.handle(linked[0].name, text);
+  }
+
   /** Choose which side's buffs to get: "alliance", "horde", or "both". Empty shows current. */
   async #setFaction(sender: string, side: string): Promise<string[]> {
     const { store } = this.#deps;

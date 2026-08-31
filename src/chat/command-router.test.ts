@@ -100,6 +100,49 @@ describe("CommandRouter", () => {
     expect(reply[0]).toMatch(/isn't set up/i);
   });
 
+  describe("handleFromDiscord", () => {
+    async function withLinkedChar() {
+      const d = deps();
+      await d.store.add("Raider");
+      await d.store.update("raider", { discordId: "42" });
+      return d;
+    }
+
+    it("routes a command to the account's linked character", async () => {
+      const { store, router } = await withLinkedChar();
+      const reply = await router.handleFromDiscord("42", "alliance");
+      expect(reply[0]).toMatch(/Stormwind/i);
+      expect((await store.get("raider"))?.factions).toEqual(["alliance"]); // it actually changed
+    });
+
+    it("feedback from Discord is attributed to the linked character", async () => {
+      const { router, feedback } = await withLinkedChar();
+      await router.handleFromDiscord("42", "feedback the timer is off");
+      expect(feedback[0]).toEqual({ from: "Raider", text: "the timer is off" });
+    });
+
+    it("guides an unlinked account to link first", async () => {
+      const { router } = deps();
+      expect((await router.handleFromDiscord("999", "me"))[0]).toMatch(/not linked/i);
+    });
+
+    it("still gives help to an unlinked account", async () => {
+      const { router } = deps();
+      expect((await router.handleFromDiscord("999", "help")).join(" ")).toMatch(/subscribe/i);
+    });
+
+    it("unsubscribe from Discord stops every character on the account", async () => {
+      const { store, router } = deps();
+      await store.add("Main");
+      await store.update("main", { discordId: "42" });
+      await store.add("Alt");
+      await store.update("alt", { discordId: "42" });
+      expect((await router.handleFromDiscord("42", "unsubscribe"))[0]).toMatch(/Unsubscribed/);
+      expect(await store.has("Main")).toBe(false);
+      expect(await store.has("Alt")).toBe(false);
+    });
+  });
+
   it("reports the active raid on status", async () => {
     const { tracker, router } = deps();
     tracker.update(crowd("Nightfall", 20));
