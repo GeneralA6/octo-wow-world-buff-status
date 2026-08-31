@@ -312,6 +312,9 @@ describe("loadConfig", () => {
     expect(bare.community).toBe("OctoWoW");
     expect(bare.author).toBe("Gibom");
     expect(bare.discordFeedbackChannelId).toBeNull();
+    expect(bare.discordOnyxiaChannelId).toBeNull();
+    expect(bare.discordAllianceRoleId).toBeNull();
+    expect(bare.discordHordeRoleId).toBeNull();
     expect(bare.discordAdminId).toBeNull();
     expect(bare.guildInviteEnabled).toBe(false);
     const configured = loadConfig({
@@ -321,12 +324,18 @@ describe("loadConfig", () => {
       WOW_AUTHOR: "Someone",
       WOW_GUILD_INVITE: "true",
       DISCORD_FEEDBACK_CHANNEL_ID: "1543926066907844729",
+      DISCORD_ONYXIA_CHANNEL_ID: "1544021433720635392",
+      DISCORD_ALLIANCE_ROLE_ID: "111",
+      DISCORD_HORDE_ROLE_ID: "222",
       DISCORD_ADMIN_ID: "219142840696045568",
     });
     expect(configured.guildName).toBe("Late Night");
     expect(configured.community).toBe("Turtle");
     expect(configured.author).toBe("Someone");
     expect(configured.discordFeedbackChannelId).toBe("1543926066907844729");
+    expect(configured.discordOnyxiaChannelId).toBe("1544021433720635392");
+    expect(configured.discordAllianceRoleId).toBe("111");
+    expect(configured.discordHordeRoleId).toBe("222");
     expect(configured.discordAdminId).toBe("219142840696045568");
     expect(configured.guildInviteEnabled).toBe(true);
   });

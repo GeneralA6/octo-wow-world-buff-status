@@ -54,15 +54,20 @@ export class DiscordDmSender {
     return { Authorization: `Bot ${token}`, "Content-Type": "application/json" };
   }
 
-  /** Post a plain message to a channel the bot can see (by id). Used for the feedback
-   *  channel; the DM flow reuses it after opening the recipient's DM channel. */
-  async postToChannel(channelId: string, content: string): Promise<DmResult> {
+  /** Post a plain message to a channel the bot can see (by id). `roleMentions` are role ids
+   *  to actually ping — they must be repeated in `allowed_mentions` or Discord suppresses the
+   *  ping. Used for the Onyxia notification channel (with @alliance/@horde) and feedback. */
+  async postToChannel(channelId: string, content: string, roleMentions: readonly string[] = []): Promise<DmResult> {
     if (!this.#botToken) return { ok: false, kind: "not-configured" };
+    const payload =
+      roleMentions.length > 0
+        ? { content, allowed_mentions: { roles: [...roleMentions] } }
+        : { content };
     try {
       const response = await this.#fetch(`${API}/channels/${channelId}/messages`, {
         method: "POST",
         headers: this.#headers(this.#botToken),
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(payload),
       });
       return response.ok ? { ok: true } : classify(response.status);
     } catch {

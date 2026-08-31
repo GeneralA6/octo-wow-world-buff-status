@@ -5,7 +5,7 @@ import { describeError, FatalError, VersionMismatchError } from "./errors.js";
 import { AuthClient } from "./net/auth-client.js";
 import { WorldClient } from "./net/world-client.js";
 import { resolveBuild } from "./net/client-resolver.js";
-import { DiscordWebhookNotifier, type Notifier, type NotifyMessage } from "./notify/notifier.js";
+import type { NotifyMessage } from "./notify/notifier.js";
 import { DiscordDmSender } from "./notify/discord-dm.js";
 import { DiscordGateway } from "./notify/discord-gateway.js";
 import { registerLinkCommand, replyToInteraction } from "./notify/discord-commands.js";
@@ -188,7 +188,7 @@ interface ConnectionServices {
   readonly outreach: Outreach;
   readonly buffDropSink: BuffDropSink;
   readonly yellSink: YellSink;
-  readonly push: (message: NotifyMessage) => Promise<void>;
+  readonly push: (message: NotifyMessage, factions?: readonly Faction[]) => Promise<void>;
   readonly client: ClientValues;
 }
 
@@ -269,32 +269,19 @@ async function runConnection(
       else resolve();
     };
 
-    // Arm a Discord DM for an offline-mode subscriber; delivered if their whisper
-    // bounces, else it expires quietly (they were online, got it in-game).
-    const armOfflineFallback = (name: string, discordId: string, message: string): void => {
-      const key = name.toLowerCase();
-      const existing = offlinePending.get(key);
-      if (existing) clearTimeout(existing.timer);
-      const timer = setTimeout(() => offlinePending.delete(key), OFFLINE_FALLBACK_TTL_MS);
-      timer.unref?.();
-      offlinePending.set(key, { discordId, message, timer });
-    };
-
-    // A buff-parking alert: post to the Discord channel, whisper subscribers of that side,
-    // DM "both"-mode ones, arm the DM fallback for "offline"-mode ones, and yell in the city.
-    // The caller has already deduped `cities` against the broadcast ledger, so this fires at
-    // most once per (city, kind) per buff cycle — hence the yell can go out unthrottled.
+    // A buff-parking alert: post to the Onyxia channel (pinging @alliance/@horde per open
+    // city), yell in each open capital, and whisper in-game subscribers of that side. The
+    // caller already deduped `cities` against the ledger, so this fires at most once per cycle.
     const announceBuff = async (event: RaidEvent, cities: readonly Faction[]): Promise<void> => {
       const message = formatBuffAlert(event, cities, config.watchAreaName);
       logger.info(`ALERT ${event.kind} (${cities.join("/")}): ${message.body}`);
-      await push(message);
+      await push(message, cities);
       if (!config.whispersEnabled) return;
 
       // Yell in each open capital via its listener, so everyone standing there hears it.
       for (const city of cities) yellSink[city]?.(formatBuffWhisper(event, [city], config.watchAreaName));
 
-      // Only whisper/DM subscribers who want this alert type (the Discord channel
-      // post above went to everyone regardless).
+      // Whisper the in-game subscribers who want this alert type, each hearing only their side.
       const alertType: AlertType = event.kind === "raid-forming" ? "forming" : "cleared";
       let subscribers: Subscriber[] = [];
       try {
@@ -305,33 +292,14 @@ async function runConnection(
       }
       subscribers = subscribers.filter((subscriber) => subscriber.alerts.includes(alertType));
       if (subscribers.length === 0) return;
-
-      // Group by which of the open cities each subscriber cares about, so each hears one
-      // message naming only their own side (alliance → Stormwind, horde → Orgrimmar).
       for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, cities)) {
         const line = formatBuffWhisper(event, groupCities, config.watchAreaName);
-        // "discord"-mode subscribers get no whisper; everyone else does.
-        const whisperNames = members.filter((s) => s.delivery !== "discord").map((s) => s.name);
-        whisperQueue?.enqueueAll(whisperNames, line);
-        for (const subscriber of members) {
-          if (!subscriber.discordId) continue;
-          if (subscriber.delivery === "both" || subscriber.delivery === "discord") {
-            void dm.send(subscriber.discordId, line); // Discord every time
-          } else if (subscriber.delivery === "offline") {
-            armOfflineFallback(subscriber.name, subscriber.discordId, line); // DM only if the whisper bounces
-          }
-          // "ingame": no Discord DM
-        }
+        whisperQueue?.enqueueAll(members.map((s) => s.name), line);
       }
     };
 
-    // Whisper/DM only one side's subscribers (used by both buff drops and cooldown
-    // refreshes). Gated on wanting alerts at all (notify none = silence).
-    const notifyFactionSubscribers = async (
-      faction: Faction,
-      whisperLine: string,
-      dmLineFor: (subscriber: Subscriber) => string,
-    ): Promise<void> => {
+    // Whisper one side's in-game subscribers (used by buff drops and cooldown refreshes).
+    const notifyFactionSubscribers = async (faction: Faction, whisperLine: string): Promise<void> => {
       if (!config.whispersEnabled) return;
       let subscribers: Subscriber[] = [];
       try {
@@ -342,22 +310,12 @@ async function runConnection(
       }
       subscribers = subscribers.filter((s) => s.factions.includes(faction) && s.alerts.length > 0);
       if (subscribers.length === 0) return;
-      const whisperNames = subscribers.filter((s) => s.delivery !== "discord").map((s) => s.name);
-      whisperQueue?.enqueueAll(whisperNames, whisperLine);
-      for (const s of subscribers) {
-        if (!s.discordId) continue;
-        if (s.delivery === "both" || s.delivery === "discord") void dm.send(s.discordId, dmLineFor(s));
-        else if (s.delivery === "offline") armOfflineFallback(s.name, s.discordId, dmLineFor(s));
-      }
+      whisperQueue?.enqueueAll(subscribers.map((s) => s.name), whisperLine);
     };
 
-    // A buff DROP (heard on a listener, routed here via the sink): notify that side's subs.
-    const announceBuffDrop = (faction: Faction, appliedAt: Date): Promise<void> =>
-      notifyFactionSubscribers(
-        faction,
-        formatBuffDroppedWhisper(faction, config.buffDurationMs),
-        () => formatBuffDropped(faction, appliedAt, config.buffDurationMs).body,
-      );
+    // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
+    const announceBuffDrop = (faction: Faction): Promise<void> =>
+      notifyFactionSubscribers(faction, formatBuffDroppedWhisper(faction, config.buffDurationMs));
 
     // When a buff's window elapses, a fresh one can drop — announce the cooldown is up to
     // the Discord channel, that side's subscribers, and via a /yell in that capital.
@@ -378,14 +336,8 @@ async function runConnection(
         if (was === true && !active) {
           logger.info(`Onyxia Rallying Cry cooldown refreshed for ${faction} (${faction === "alliance" ? "Stormwind" : "Orgrimmar"}) - a fresh one can drop again`);
           const whisperLine = formatBuffCooldownRefreshedWhisper(faction);
-          void push(formatBuffCooldownRefreshed(faction)); // channel: always shows the filter hint
-          // DM: append the "pick a side" hint only for subscribers still on "both" — someone
-          // who already chose a single faction shouldn't be told how to do it again.
-          void notifyFactionSubscribers(
-            faction,
-            whisperLine,
-            (s) => formatBuffCooldownRefreshed(faction, s.factions.length > 1).body,
-          );
+          void push(formatBuffCooldownRefreshed(faction, false), [faction]); // channel, pinging that side's role
+          void notifyFactionSubscribers(faction, whisperLine); // in-game subscribers of that side
           yellSink[faction]?.(whisperLine); // broadcast to the capital (task: yell)
         }
       }
@@ -678,8 +630,8 @@ async function runConnection(
             );
             router.setGuildInvite((nameTo) => world.guildInvite(nameTo));
             // The watcher can now whisper, so route listener-heard buff drops through it.
-            buffDropSink.notify = (faction, appliedAt) =>
-              void announceBuffDrop(faction, appliedAt).catch((error) =>
+            buffDropSink.notify = (faction) =>
+              void announceBuffDrop(faction).catch((error) =>
                 logger.error(`buff-drop announce: ${describeError(error)}`),
               );
           }
@@ -950,9 +902,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  const notifier: Notifier = new DiscordWebhookNotifier(config.discordWebhookUrl, {
-    mentionRoleId: config.discordMentionRoleId,
-  });
 
   // Monotonic raid reference number (#834) — persisted so it climbs across restarts. Seeded
   // once, bumped in memory when a raid forms, saved as it goes.
@@ -1020,26 +969,26 @@ async function main(): Promise<void> {
     integrityChecksum: config.integrityChecksum,
   };
 
-  const push = async (message: NotifyMessage): Promise<void> => {
-    try {
-      await notifier.notify(message);
-    } catch (error) {
-      logger.error(`discord: ${(error as Error).message}`);
-    }
-  };
-
-  // Discord DM delivery + linking (only when a bot token is configured). Created early so
-  // operational notices can reach the admin before the stores are even up.
+  // The bot posts to a single Onyxia notification channel (no DMs, no webhook). Faction alerts
+  // ping @alliance / @horde — a Discord-side opt-in, unrelated to any in-game character's side.
   const dm = new DiscordDmSender(config.discordBotToken);
-  // Operational/error notices (auth failures, store outages, self-heal, "bot stopped") go
-  // to the admin's DM, not the public channel — the channel is for buff content only.
-  const notifyAdmin = async (title: string, body: string): Promise<void> => {
-    if (!config.discordAdminId) {
-      logger.warn(`[ops] ${title} - ${body} (set DISCORD_ADMIN_ID to DM these)`);
+  const push = async (message: NotifyMessage, factions: readonly Faction[] = []): Promise<void> => {
+    if (!config.discordOnyxiaChannelId) {
+      logger.debug(`onyxia notify (no channel set): ${message.title}`);
       return;
     }
-    const result = await dm.send(config.discordAdminId, `**${title}**\n${body}`);
-    if (!result.ok) logger.error(`admin DM failed (${result.kind}): ${title} - ${body}`);
+    const roleIds = factions
+      .map((faction) => (faction === "alliance" ? config.discordAllianceRoleId : config.discordHordeRoleId))
+      .filter((id): id is string => id !== null);
+    const mention = roleIds.map((id) => `<@&${id}>`).join(" ");
+    const content = `${mention ? mention + " " : ""}**${message.title}**\n${message.body}`;
+    const result = await dm.postToChannel(config.discordOnyxiaChannelId, content, roleIds);
+    if (!result.ok) logger.error(`onyxia notify failed (${result.kind}): ${message.title}`);
+  };
+  // Operational/error notices (auth failures, store outages, self-heal, "bot stopped") are
+  // logged only now — no DMs, and the public channel is for buff content, not errors.
+  const notifyAdmin = async (title: string, body: string): Promise<void> => {
+    logger.warn(`[ops] ${title} - ${body}`);
   };
 
   const store = config.whispersEnabled
@@ -1112,7 +1061,7 @@ async function main(): Promise<void> {
       .record({ faction, appliedAt })
       .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
-    void push(formatBuffDropped(faction, appliedAt, config.buffDurationMs));
+    void push(formatBuffDropped(faction, appliedAt, config.buffDurationMs), [faction]); // channel, pinging that side's role
     buffDropSink.notify?.(faction, appliedAt);
   };
 

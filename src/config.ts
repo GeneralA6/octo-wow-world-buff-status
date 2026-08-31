@@ -105,6 +105,12 @@ export interface BotConfig {
   /** Channel the "feedback" command posts player suggestions to (via the bot). Null = not set,
    *  and feedback is still saved + acknowledged, just not posted to Discord. */
   readonly discordFeedbackChannelId: string | null;
+  /** Channel the bot posts Onyxia buff notifications to (via the bot token). */
+  readonly discordOnyxiaChannelId: string | null;
+  /** Role pinged for alliance (Stormwind) notifications, and horde (Orgrimmar) notifications —
+   *  a Discord-side opt-in, unrelated to any in-game character's chosen side. */
+  readonly discordAllianceRoleId: string | null;
+  readonly discordHordeRoleId: string | null;
   /** Discord user id that operational notices (auth failures, store outages, self-heal, "bot
    *  stopped") are DM'd to, instead of the public channel. Null = log them only. */
   readonly discordAdminId: string | null;
@@ -282,6 +288,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordGuildId = env.DISCORD_GUILD_ID?.trim() || null;
   const discordInviteChannelId = env.DISCORD_INVITE_CHANNEL_ID?.trim() || null;
   const discordFeedbackChannelId = env.DISCORD_FEEDBACK_CHANNEL_ID?.trim() || null;
+  const discordOnyxiaChannelId = env.DISCORD_ONYXIA_CHANNEL_ID?.trim() || null;
+  const discordAllianceRoleId = env.DISCORD_ALLIANCE_ROLE_ID?.trim() || null;
+  const discordHordeRoleId = env.DISCORD_HORDE_ROLE_ID?.trim() || null;
   const discordAdminId = env.DISCORD_ADMIN_ID?.trim() || null;
   const mongodbUri = env.MONGODB_URI?.trim() || null;
   const mongodbDb = env.MONGODB_DB?.trim() || "onyxiabot";
@@ -354,6 +363,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordGuildId,
     discordInviteChannelId,
     discordFeedbackChannelId,
+    discordOnyxiaChannelId,
+    discordAllianceRoleId,
+    discordHordeRoleId,
     discordAdminId,
     mongodbUri,
     mongodbDb,
