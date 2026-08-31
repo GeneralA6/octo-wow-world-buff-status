@@ -599,6 +599,11 @@ async function runListener(
         },
         onMonsterYell: (senderName, text) => {
           const faction = matchBuffYell(text);
+          // Log EVERY yell heard so a real buff yell that doesn't match the pattern is
+          // visible rather than silently dropped. buff-yell.test.ts proves the matcher
+          // against the EXPECTED string; only a real yell validates it against the
+          // ACTUAL server text. Also confirms the listener receives MonsterYell at all.
+          logger.info(`heard yell from ${senderName}: ${JSON.stringify(text)}${faction ? ` -> BUFF ${faction}` : ""}`);
           if (faction) onBuffApplied(faction, senderName, text);
         },
         // A player whispered this parked character → Bufftracker greets them.
