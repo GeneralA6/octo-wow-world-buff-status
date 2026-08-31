@@ -305,7 +305,7 @@ async function runConnection(
       subscribers = subscribers.filter((s) => s.factions.includes(faction) && s.alerts.length > 0);
       if (subscribers.length === 0) return;
 
-      const line = formatBuffDroppedWhisper(faction, appliedAt, config.buffDurationMs);
+      const line = formatBuffDroppedWhisper(faction, config.buffDurationMs);
       const dmLine = formatBuffDropped(faction, appliedAt, config.buffDurationMs).body;
       const whisperNames = subscribers.filter((s) => s.delivery !== "discord").map((s) => s.name);
       whisperQueue?.enqueueAll(whisperNames, line);

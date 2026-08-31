@@ -30,15 +30,14 @@ export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs:
   };
 }
 
-/** Plain-text in-game whisper of a buff drop — no Discord timestamps (WoW can't render
- *  them), a clock time instead. Sent to that side's subscribers when the yell fires. */
-export function formatBuffDroppedWhisper(faction: Faction, appliedAt: Date, durationMs: number): string {
+/** Plain-text in-game whisper of a buff drop — no absolute time (the bot's clock isn't
+ *  the player's, and WoW can't render Discord timestamps), a duration instead. Sent to
+ *  that side's subscribers when the yell fires. */
+export function formatBuffDroppedWhisper(faction: Faction, durationMs: number): string {
   const city = CITY_FOR[faction];
-  const expires = new Date(appliedAt.getTime() + durationMs);
-  const hhmm = `${expires.getHours().toString().padStart(2, "0")}:${expires.getMinutes().toString().padStart(2, "0")}`;
   return (
-    `The Rallying Cry just dropped in ${city}! Good for ~${humanDuration(durationMs)} (until about ${hhmm} server time) — ` +
-    `go grab it. That's also the earliest the next one can drop.`
+    `The Rallying Cry just dropped in ${city}! It's up for ~${humanDuration(durationMs)} — go grab it now. ` +
+    `The next one can't drop until this one wears off.`
   );
 }
 

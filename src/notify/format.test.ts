@@ -3,6 +3,7 @@ import type { RaidCohortSnapshot } from "../watcher/raid-tracker.js";
 import {
   formatBuffAlert,
   formatBuffDropped,
+  formatBuffDroppedWhisper,
   formatBuffWhisper,
   formatRaidEvent,
   formatRaidWhisper,
@@ -51,6 +52,16 @@ describe("formatBuffDropped", () => {
     const message = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), 90 * 60_000);
     expect(message.title).toContain("Orgrimmar");
     expect(message.body).toContain("~90 min");
+  });
+});
+
+describe("formatBuffDroppedWhisper", () => {
+  it("names the city and the duration, with NO absolute clock time (the bot's clock isn't the player's)", () => {
+    const line = formatBuffDroppedWhisper("alliance", 120 * 60_000);
+    expect(line).toContain("Stormwind");
+    expect(line).toContain("~2h");
+    expect(line).not.toMatch(/\d{1,2}:\d{2}/); // no HH:MM
+    expect(line).not.toMatch(/<t:/); // no Discord timestamp (WoW can't render it)
   });
 });
 
