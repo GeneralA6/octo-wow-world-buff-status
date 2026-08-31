@@ -1,6 +1,6 @@
 import { DEFAULT_FACTIONS, isFaction, type Faction, type SubscriberStore } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
-import { CITY_FOR, FACTION_FILTER_HINT, humanClock } from "../notify/format.js";
+import { CITY_FOR, humanClock } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
 
 /** Per-faction buff cooldown for the status query. */
@@ -81,7 +81,6 @@ export class CommandRouter {
   async handle(sender: string, text: string): Promise<string[]> {
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
     const command = (parts[0] ?? "").toLowerCase();
-    const arg = parts[1] ?? "";
     const { store, activeRaids, areaName } = this.#deps;
 
     switch (command) {
@@ -89,10 +88,12 @@ export class CommandRouter {
       case "sub":
       case "start": {
         const added = await store.add(sender);
-        if (added) this.#factionLookup?.(sender); // auto-detect their side in the background
+        // Detect their side from a /who and ping them for just that faction (best-effort — a
+        // custom race or being offline leaves them on both). No manual step to nudge about.
+        if (added) this.#factionLookup?.(sender);
         return added
-          ? [`You're subscribed! I'll whisper you in-game when a raid clears and the buff is about to drop.`, FACTION_FILTER_HINT]
-          : [`You're already subscribed to ${areaName} alerts. Whisper "profile" for your settings, or "help" for what I can do.`];
+          ? [`You're subscribed! I'll ping you in-game when a raid clears and the Onyxia buff is about to drop.`]
+          : [`You're already subscribed to ${areaName} alerts. Whisper "help" for what I can do.`];
       }
       case "unsubscribe":
       case "unsub":
@@ -111,35 +112,26 @@ export class CommandRouter {
       case "suggest":
       case "suggestion":
         return this.#feedback(sender, parts.slice(1).join(" ").trim());
+      // Direct side words still work as a quiet override if the /who detection got it wrong
+      // (or a player wants both) — unlisted in help, since the side is detected automatically.
       case "alliance":
       case "horde":
       case "both":
         return this.#setFaction(sender, command);
-      case "faction":
-      case "side":
-        return this.#setFaction(sender, arg);
       case "discord":
         return this.#discord();
-      case "profile":
-      case "me": {
-        const sub = await store.get(sender);
-        if (!sub) return [`You're not subscribed. Whisper "subscribe" to start.`];
-        return [
-          `Subscribed - ${factionLabel(sub.factions)} buffs. ("alliance"/"horde"/"both" to change your side.)`,
-        ];
-      }
       case "status":
         return this.#status();
       case "help":
       case "commands":
       case "?":
+        // Concise, one command per whisper, status first and the guild invite last.
         return [
-          `I warn you before the Onyxia "Rallying Cry" world buff drops, so you can park in a capital and grab it. Whisper me:`,
-          `subscribe - start getting in-game alerts (unsubscribe anytime to stop)`,
-          `alliance / horde / both - which side's buff you want (I try to detect it; default both)`,
-          `invite - join <${this.#deps.guildName}>, the guild that runs me (we're recruiting!)`,
-          `feedback <message> - send a suggestion or bug report straight to the team`,
-          `also: discord (our Discord), status (raids now), profile (your settings).`,
+          `status - what's raiding Onyxia now, and the buff cooldown`,
+          `subscribe / unsubscribe - start or stop in-game buff alerts`,
+          `discord - our Discord invite link`,
+          `feedback <message> - send a suggestion or bug report`,
+          `invite - join <${this.#deps.guildName}> (we're recruiting)`,
         ];
       default: {
         // Natural-language intent detection over the whole message.
@@ -244,7 +236,6 @@ export class CommandRouter {
       case "unsubscribe":
       case "status":
       case "discord":
-      case "profile":
       case "help":
         return this.handle(sender, intent);
       case "feedback":

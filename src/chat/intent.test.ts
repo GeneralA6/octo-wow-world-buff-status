@@ -24,8 +24,9 @@ describe("parseIntent", () => {
     // new intents
     ["what's your discord?", "discord"],
     ["do you have a discord", "discord"],
-    ["am i subscribed?", "profile"],
-    ["what are my settings", "profile"],
+    // profile was dropped — these no longer resolve to anything
+    ["am i subscribed?", null],
+    ["what are my settings", null],
     ["you should add a horde-only mode", "feedback"],
     ["i have a suggestion", "feedback"],
     ["can you add a timer for BWL", "feedback"],

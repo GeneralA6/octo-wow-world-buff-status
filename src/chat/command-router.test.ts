@@ -43,15 +43,12 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "subscribe"))[0]).toMatch(/already subscribed/);
   });
 
-  it("follows a fresh subscribe with the full faction/unsubscribe hint (once, on opt-in)", async () => {
+  it("confirms a fresh subscribe in one line, without pushing manual faction selection", async () => {
     const { router } = deps();
     const reply = await router.handle("Raider", "subscribe");
-    const hint = reply.find((l) => /alliance/i.test(l)) ?? "";
-    expect(hint).toMatch(/alliance.*horde|horde.*alliance/i);
-    expect(hint).toMatch(/unsubscribe/i);
-    // A repeat subscribe does NOT re-send the hint.
-    const again = await router.handle("Raider", "subscribe");
-    expect(again.some((l) => /alliance/i.test(l))).toBe(false);
+    expect(reply).toHaveLength(1); // just the confirmation — the side is auto-detected in the background
+    expect(reply[0]).toMatch(/subscribed/i);
+    expect(reply[0]).not.toMatch(/alliance|horde|both/i);
   });
 
   it("unsubscribes a player", async () => {
@@ -214,29 +211,28 @@ describe("CommandRouter", () => {
     expect((await store.get("Raider"))?.factions).toEqual(["alliance", "horde"]);
   });
 
-  it("the faction command needs a subscription and rejects gibberish", async () => {
+  it("the side words still work as an override but need a subscription", async () => {
     const { router } = deps();
     expect((await router.handle("Ghost", "alliance"))[0]).toMatch(/not subscribed/i);
-    await router.handle("Raider", "subscribe");
-    expect((await router.handle("Raider", "faction wat"))[0]).toMatch(/alliance.*horde.*both/i);
   });
 
-  it("shows the caller their settings via 'profile' (and the 'me' alias), rejects unknown commands", async () => {
+  it("has dropped 'profile' and 'faction' — they fall through to the not-understood reply", async () => {
     const { router } = deps();
-    expect((await router.handle("Raider", "profile"))[0]).toMatch(/not subscribed/);
     await router.handle("Raider", "subscribe");
-    expect((await router.handle("Raider", "profile"))[0]).toMatch(/Subscribed - .*change your side/);
-    expect((await router.handle("Raider", "me"))[0]).toMatch(/Subscribed -/); // alias still works
-    expect((await router.handle("Raider", "flibber"))[0]).toMatch(/didn't get that/);
+    expect((await router.handle("Raider", "profile"))[0]).toMatch(/didn't get that/i);
+    expect((await router.handle("Raider", "faction"))[0]).toMatch(/didn't get that/i);
+    expect((await router.handle("Raider", "flibber"))[0]).toMatch(/didn't get that/i);
   });
 
-  it("help leads with subscribe and covers side, invite, feedback and discord — but not notify", async () => {
+  it("help is concise: status first, invite last, one command per line, no profile/faction/notify", async () => {
     const { router } = deps();
-    const help = (await router.handle("Raider", "help")).join(" ");
-    expect(help).toMatch(/subscribe/i);
-    expect(help).toMatch(/alliance/i);
-    expect(help).toMatch(/feedback/i);
+    const lines = await router.handle("Raider", "help");
+    expect(lines[0]).toMatch(/^status/i); // status first
+    expect(lines[lines.length - 1]).toMatch(/invite/i); // guild invite last
+    const help = lines.join(" ");
+    expect(help).toMatch(/subscribe \/ unsubscribe/);
     expect(help).toMatch(/discord/i);
-    expect(help).not.toMatch(/notify/i);
+    expect(help).toMatch(/feedback/i);
+    expect(help).not.toMatch(/profile|notify|\bfaction\b|alliance/i);
   });
 });

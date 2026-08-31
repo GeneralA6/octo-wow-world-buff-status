@@ -14,7 +14,6 @@ export type Intent =
   | "unsubscribe"
   | "feedback"
   | "discord"
-  | "profile"
   | "guild"
   | "buff"
   | "status"
@@ -32,10 +31,6 @@ const PATTERNS: readonly (readonly [Intent, RegExp])[] = [
     /\b(feedback|suggest\w*|feature request|report a bug|there'?s a bug|you should (add|make|change|have|include|support)|could you (add|make|change|support)|can you (add|support))\b/,
   ],
   ["discord", /\bdiscord\b/],
-  [
-    "profile",
-    /\b(my (settings|profile|subscription|side|faction)|am i (subscribed|signed up|on the list|set up)|what (am i|did i) (signed up for|subscribed to|get))\b/,
-  ],
   ["guild", /\b(guild|invite me|how (do i|to) join|joining|recruit\w*|rage\s?quit)\b/],
   ["buff", /\b(buff|rallying cry|world ?buff|the head|onyxia buff)\b|when.{0,20}(drop|up)|(drop|up).{0,20}when/],
   [
