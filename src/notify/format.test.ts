@@ -39,12 +39,12 @@ describe("formatBuffAlert", () => {
 });
 
 describe("formatBuffDropped", () => {
-  it("names the city and the exact earliest-next time (drop + duration)", () => {
+  it("titles the buff up in the city; body gives the window without repeating the title", () => {
     const appliedAt = new Date("2026-08-30T20:00:00Z");
     const twoHours = 120 * 60_000;
     const message = formatBuffDropped("alliance", appliedAt, twoHours, "Gibom");
-    expect(message.title).toContain("Stormwind");
-    expect(message.body).toContain("just dropped in Stormwind");
+    expect(message.title).toBe("🎉 Rallying Cry is up in Stormwind");
+    expect(message.body).not.toMatch(/Rallying Cry|Stormwind/); // title carries name + city; body doesn't repeat
     expect(message.body).toContain("~2h");
     // expiry = 22:00Z that day -> unix 1788472800
     const expiresUnix = Math.floor((appliedAt.getTime() + twoHours) / 1000);

@@ -44,14 +44,12 @@ function tipsLine(author: string): string {
 }
 
 export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs: number, author: string): NotifyMessage {
-  const city = CITY_FOR[faction];
   const expiresUnix = Math.floor((appliedAt.getTime() + durationMs) / 1000);
   return {
     kind: "info",
-    title: `🎉 Rallying Cry is up in ${city}`,
+    title: `🎉 Rallying Cry is up in ${CITY_FOR[faction]}`,
     body:
-      `The Rallying Cry of the Dragonslayer just dropped in ${city} - good for ~${humanDuration(durationMs)}, ` +
-      `until <t:${expiresUnix}:t> (<t:${expiresUnix}:R>). ` +
+      `Good for ~${humanDuration(durationMs)}, until <t:${expiresUnix}:t> (<t:${expiresUnix}:R>). ` +
       `That's also the earliest a fresh one can drop, so start watching again then. ${tipsLine(author)}`,
   };
 }
