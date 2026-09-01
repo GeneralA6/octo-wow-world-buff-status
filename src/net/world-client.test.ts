@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
-import { AUTH_OK, ChatType, WorldOpcode } from "../protocol/opcodes.js";
+import { AUTH_OK, ChatType, GuildEvent, WorldOpcode } from "../protocol/opcodes.js";
 import type { WhoResult } from "../protocol/who.js";
 import { PacketReader, PacketWriter } from "./byte-buffer.js";
 import type { NodeSocketLike } from "./socket.js";
@@ -61,6 +61,13 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
       .u8(0)
       .toBuffer();
     this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
+  }
+
+  /** Deliver an SMSG_GUILD_EVENT (u8 type, u8 count, `count` cstrings). */
+  pushGuildEvent(type: number, params: string[]): void {
+    const writer = new PacketWriter().u8(type).u8(params.length);
+    for (const p of params) writer.cString(p);
+    this.#sendServer(WorldOpcode.SMSG_GUILD_EVENT, writer.toBuffer());
   }
 
   /** Deliver a server SYSTEM message (how command results/errors arrive) to the client. */
@@ -352,6 +359,35 @@ describe("WorldClient (against a scripted mock server)", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(system).toEqual(["Raider is already in a guild."]); // trimmed
     expect(whispers).toEqual([]); // a system message is never a command
+
+    client.close();
+  });
+
+  it("fires onGuildJoin for a JOINED guild event, and ignores other guild events", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const joined: string[] = [];
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x22,
+      pingIntervalMs: 0,
+      handlers: { onReady: () => markReady(), onGuildJoin: (name) => joined.push(name) },
+    });
+
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    socket.pushGuildEvent(GuildEvent.Left, ["Quitter"]); // not a join → ignored
+    socket.pushGuildEvent(GuildEvent.Joined, ["Raider"]); // a join → fires
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(joined).toEqual(["Raider"]);
 
     client.close();
   });

@@ -80,9 +80,10 @@ export class Outreach {
     if (!(await this.#isSubscribed(playerName))) {
       this.#logger.info(`outreach: greeting ${playerName}`);
       for (const line of introLines(this.#config)) whisper(playerName, line);
+      // Invite silently — no "I sent you an invite" whisper. If they accept, they're welcomed in
+      // guild chat instead (the join is detected server-side).
       if (this.#config.guildInviteEnabled && this.#guildInvite) {
         this.#guildInvite(playerName);
-        whisper(playerName, `And I've sent you a guild invite - accept the popup to join!`);
       }
     }
     // Every message is transferred to Bufftracker's command engine and answered.

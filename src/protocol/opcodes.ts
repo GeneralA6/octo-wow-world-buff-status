@@ -33,6 +33,8 @@ export enum WorldOpcode {
   SMSG_WHO = 0x63,
   /** Invite a player to the guild by name (cstring body). Needs the sender guilded. */
   CMSG_GUILD_INVITE = 0x82,
+  /** Guild roster events broadcast to members — join/leave/promote/etc. (see GuildEvent). */
+  SMSG_GUILD_EVENT = 0x92,
   CMSG_MESSAGECHAT = 0x95,
   SMSG_MESSAGECHAT = 0x96,
   /** Nearby object create/update stream — where a GameObject's guid+entry arrive. */
@@ -74,6 +76,21 @@ export enum ChatType {
   MonsterWhisper = 0x0d,
   MonsterEmote = 0x0e,
   Channel = 0x11,
+}
+
+/** SMSG_GUILD_EVENT `type` byte (1.12). We only act on JOINED; the rest are for logging. */
+export enum GuildEvent {
+  Promotion = 0,
+  Demotion = 1,
+  Motd = 2,
+  Joined = 3,
+  Left = 4,
+  Removed = 5,
+  LeaderIs = 6,
+  LeaderChanged = 7,
+  Disbanded = 8,
+  SignedOn = 12,
+  SignedOff = 13,
 }
 
 /** Universal language — readable by everyone, so a whisper is never garbled. */

@@ -106,11 +106,11 @@ describe("Outreach", () => {
     expect(whispers).toContain("ok");
   });
 
-  it("guild-invites and congratulates a non-subscriber when enabled", async () => {
+  it("guild-invites a non-subscriber SILENTLY when enabled — no 'I sent you' whisper", async () => {
     const { outreach, whispers, invites } = make({ ...config, guildInviteEnabled: true });
     await outreach.onListenerContact("Raider", "hi");
-    expect(invites).toEqual(["Raider"]);
-    expect(whispers.some((w) => /invite/i.test(w.msg))).toBe(true);
+    expect(invites).toEqual(["Raider"]); // invited
+    expect(whispers.some((w) => /invite/i.test(w.msg))).toBe(false); // but not told about it
   });
 
   it("does not invite when disabled", async () => {

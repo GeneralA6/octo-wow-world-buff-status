@@ -206,15 +206,14 @@ describe("CommandRouter", () => {
     expect(reply).not.toMatch(/Rage Quit|recruit/i); // guild attribution removed
   });
 
-  it("sends a guild invite on 'invite' when the capability is wired, else says it can't", async () => {
+  it("guild-invites SILENTLY on 'invite' when wired (no confirmation), else says it can't", async () => {
     const { router } = deps();
     expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
     const invited: string[] = [];
     router.setGuildInvite((name) => invited.push(name));
-    const reply = (await router.handle("Raider", "invite"))[0];
-    expect(invited).toEqual(["Raider"]);
-    expect(reply).toMatch(/invite sent/i); // confirms it, without naming the guild
-    expect(reply).not.toMatch(/Rage Quit/); // guild attribution removed
+    const reply = await router.handle("Raider", "invite");
+    expect(invited).toEqual(["Raider"]); // invited
+    expect(reply).toEqual([]); // and NOT told "I sent you" — welcome happens in /g on join
     router.setGuildInvite(null);
     expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
   });

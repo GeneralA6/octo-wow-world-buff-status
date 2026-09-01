@@ -110,7 +110,37 @@ export function buildYell(message: string, language: number = LANG_UNIVERSAL): B
     .toBuffer();
 }
 
+/** Build a CMSG_MESSAGECHAT to guild chat (/g) — no target, like a yell. */
+export function buildGuildChat(message: string, language: number = LANG_UNIVERSAL): Buffer {
+  return new PacketWriter()
+    .u32LE(ChatType.Guild)
+    .u32LE(language)
+    .cString(escapeChatText(message))
+    .toBuffer();
+}
+
 /** SMSG_CHAT_PLAYER_NOT_FOUND body is the offline target's name as a CString. */
 export function parsePlayerNotFound(body: Buffer): string {
   return new PacketReader(body).cString();
+}
+
+export interface GuildEventMessage {
+  /** The event type (see GuildEvent) — Joined is the one we act on. */
+  readonly type: number;
+  /** String params: for a JOIN/LEAVE/SIGN-ON, params[0] is the character name. */
+  readonly params: string[];
+}
+
+/**
+ * Parse SMSG_GUILD_EVENT: u8 type, u8 count, then `count` CStrings. Some events (sign on/off)
+ * append a u64 guid after the strings, which we don't read — we only need the type and names.
+ * The documented 1.12 layout; confirm against a real join (every event is logged) before trusting.
+ */
+export function parseGuildEvent(body: Buffer): GuildEventMessage {
+  const reader = new PacketReader(body);
+  const type = reader.u8();
+  const count = reader.u8();
+  const params: string[] = [];
+  for (let i = 0; i < count; i += 1) params.push(reader.cString());
+  return { type, params };
 }

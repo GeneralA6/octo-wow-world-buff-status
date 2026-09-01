@@ -268,8 +268,9 @@ export class CommandRouter {
     if (!this.#guildInvite) {
       return [`I can't send a guild invite right now - try again in a moment.`];
     }
+    // Invite silently — no confirmation whisper. If they accept, they're welcomed in guild chat.
     this.#guildInvite(sender);
-    return [`Guild invite sent - accept the popup and you're in.`];
+    return [];
   }
 
   /** Act on a natural-language intent — re-dispatching to the canonical command where one

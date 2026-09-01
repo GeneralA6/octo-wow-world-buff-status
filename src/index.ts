@@ -16,6 +16,7 @@ import {
   formatBuffWhisper,
   formatCapitalStatusYell,
   formatFeedbackPost,
+  formatGuildWelcome,
   formatRaidFinished,
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
@@ -735,6 +736,23 @@ async function runConnection(
       }
     };
 
+    // Guild invites the bot sends, so a matching JOIN can be welcomed in guild chat. An invite not
+    // accepted within the TTL is stale (the popup lapsed), so we don't welcome on a late/unrelated join.
+    const GUILD_INVITE_TTL_MS = 10 * 60_000;
+    const pendingGuildInvites = new Map<string, number>();
+    const guildInvite = (nameTo: string): void => {
+      pendingGuildInvites.set(nameTo.toLowerCase(), Date.now());
+      world.guildInvite(nameTo);
+    };
+    const welcomeIfWeInvited = (name: string): void => {
+      const invitedAt = pendingGuildInvites.get(name.toLowerCase());
+      if (invitedAt === undefined) return; // joined via someone else's invite — not ours to greet
+      pendingGuildInvites.delete(name.toLowerCase());
+      if (Date.now() - invitedAt > GUILD_INVITE_TTL_MS) return; // accepted too late to be sure it's ours
+      logger.info(`guild: ${name} accepted our invite — welcoming in /g`);
+      world.guildChat(formatGuildWelcome(name));
+    };
+
     const world = new WorldClient({
       socket,
       account: config.account,
@@ -752,11 +770,8 @@ async function runConnection(
           // Offer Bufftracker's outbound channel so listeners can greet players through it,
           // and give the command router the guild-invite capability for the "invite" command.
           if (config.whispersEnabled) {
-            outreach.setChannel(
-              (nameTo, msg) => whisperQueue?.enqueue(nameTo, msg),
-              (nameTo) => world.guildInvite(nameTo),
-            );
-            router.setGuildInvite((nameTo) => world.guildInvite(nameTo));
+            outreach.setChannel((nameTo, msg) => whisperQueue?.enqueue(nameTo, msg), guildInvite);
+            router.setGuildInvite(guildInvite);
             // The watcher can now whisper, so route listener-heard buff drops through it.
             buffDropSink.notify = (faction) =>
               void announceBuffDrop(faction).catch((error) =>
@@ -789,6 +804,8 @@ async function runConnection(
           statusYellTimer.unref?.();
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
+        // A player joined the guild — if we invited them, welcome them in /g (no whisper).
+        onGuildJoin: (name) => welcomeIfWeInvited(name),
         // Server SYSTEM messages report command results. Log every one (so real error wording can
         // be captured and added to the classifier), and alert the errors channel on a failure —
         // chiefly a guild invite that didn't take (no permission, target already guilded, etc.).

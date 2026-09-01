@@ -9,6 +9,7 @@ import {
   formatBuffWhisper,
   formatCapitalStatusYell,
   formatFeedbackPost,
+  formatGuildWelcome,
   formatRaidFinished,
   humanClock,
 } from "./format.js";
@@ -115,6 +116,15 @@ describe("formatBuffDroppedWhisper", () => {
 
   it("names the buff in full, so a reader knows which buff it is", () => {
     expect(formatBuffDroppedWhisper("horde", 120 * 60_000, "Gibom")).toContain("Rallying Cry of the Dragonslayer");
+  });
+});
+
+describe("formatGuildWelcome", () => {
+  it("welcomes the member by name, on one line, without naming the guild", () => {
+    const line = formatGuildWelcome("Raider");
+    expect(line).toContain("Raider");
+    expect(line).toMatch(/welcome/i);
+    expect(line).not.toContain("\n");
   });
 });
 

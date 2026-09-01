@@ -2,12 +2,14 @@ import { randomBytes } from "node:crypto";
 import { inflateSync } from "node:zlib";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { FatalError } from "../errors.js";
-import { AUTH_OK, ChatType, CLIENT_BUILD, WorldOpcode } from "../protocol/opcodes.js";
+import { AUTH_OK, ChatType, CLIENT_BUILD, GuildEvent, WorldOpcode } from "../protocol/opcodes.js";
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
 import {
+  buildGuildChat,
   buildWhisper,
   buildYell,
   isMonsterChatType,
+  parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
   parseServerChat,
@@ -45,6 +47,8 @@ export interface WorldClientHandlers {
   /** A server SYSTEM message — how the server reports command results/errors (e.g. a guild
    *  invite that failed). The wiring layer decides which ones are errors worth alerting on. */
   onSystemMessage?: (text: string) => void;
+  /** A player just JOINED our guild (from SMSG_GUILD_EVENT) — e.g. accepted our invite. */
+  onGuildJoin?: (name: string) => void;
   /** A decompressed nearby-object update block, for parsing GameObjects (e.g. a bench). */
   onWorldObjects?: (body: Buffer) => void;
   onError?: (error: Error) => void;
@@ -182,6 +186,13 @@ export class WorldClient {
     this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildYell(message));
   }
 
+  /** Post to guild chat (/g) — used to welcome a new member. Needs the character guilded. */
+  guildChat(message: string): void {
+    if (!this.#ready) throw new Error("cannot guild-chat before the character is in world");
+    this.#logger.info(`guild chat: ${JSON.stringify(message)}`);
+    this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildGuildChat(message));
+  }
+
   /** Sit the character down (the /sit stand-state) — used to look parked in a city. */
   sit(): void {
     if (!this.#ready) throw new Error("cannot sit before the character is in world");
@@ -283,6 +294,9 @@ export class WorldClient {
         }
         case WorldOpcode.SMSG_MESSAGECHAT:
           this.#handleChat(body);
+          break;
+        case WorldOpcode.SMSG_GUILD_EVENT:
+          this.#handleGuildEvent(body);
           break;
         case WorldOpcode.SMSG_UPDATE_OBJECT:
           this.#handleWorldObjects(body, false);
@@ -414,6 +428,19 @@ export class WorldClient {
       this.#logger.debug(
         `world: could not read monster chat [${body.subarray(0, 64).toString("hex")}]: ${(error as Error).message}`,
       );
+    }
+  }
+
+  #handleGuildEvent(body: Buffer): void {
+    try {
+      const event = parseGuildEvent(body);
+      // Log every guild event so the real JOINED layout can be confirmed against a live join.
+      this.#logger.info(`guild event: type=${event.type} params=${JSON.stringify(event.params)}`);
+      if (event.type === GuildEvent.Joined && event.params[0]) {
+        this.#handlers.onGuildJoin?.(event.params[0]);
+      }
+    } catch (error) {
+      this.#logger.debug(`world: could not read guild event: ${(error as Error).message}`);
     }
   }
 

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { PacketReader, PacketWriter } from "../net/byte-buffer.js";
-import { ChatType, LANG_UNIVERSAL } from "./opcodes.js";
+import { ChatType, GuildEvent, LANG_UNIVERSAL } from "./opcodes.js";
 import {
+  buildGuildChat,
   buildWhisper,
   buildYell,
   escapeChatText,
   isMonsterChatType,
+  parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
   parseServerChat,
@@ -169,5 +171,28 @@ describe("parsePlayerNotFound", () => {
   it("reads the offline target's name", () => {
     const body = new PacketWriter().cString("OfflineGuy").toBuffer();
     expect(parsePlayerNotFound(body)).toBe("OfflineGuy");
+  });
+});
+
+describe("buildGuildChat", () => {
+  it("addresses guild chat, with pipes escaped and no target", () => {
+    const reader = new PacketReader(buildGuildChat("welcome, Raider|X"));
+    expect(reader.u32LE()).toBe(ChatType.Guild);
+    expect(reader.u32LE()).toBe(LANG_UNIVERSAL);
+    expect(reader.cString()).toBe("welcome, Raider||X");
+  });
+});
+
+describe("parseGuildEvent", () => {
+  it("reads a JOINED event with the new member's name", () => {
+    const body = new PacketWriter().u8(GuildEvent.Joined).u8(1).cString("Raider").toBuffer();
+    expect(parseGuildEvent(body)).toEqual({ type: GuildEvent.Joined, params: ["Raider"] });
+  });
+
+  it("reads a multi-string event and ignores a trailing guid (sign-on)", () => {
+    const body = new PacketWriter().u8(GuildEvent.SignedOn).u8(1).cString("Raider").u64LE(0x1234n).toBuffer();
+    const event = parseGuildEvent(body);
+    expect(event.type).toBe(GuildEvent.SignedOn);
+    expect(event.params).toEqual(["Raider"]); // trailing guid not read, doesn't corrupt the parse
   });
 });
