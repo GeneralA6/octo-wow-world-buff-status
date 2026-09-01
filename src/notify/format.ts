@@ -111,11 +111,12 @@ export interface CapitalStatusRaid {
 }
 
 /**
- * The periodic status board yelled in a capital: leads with the buff cooldown clock, then
- * the raid in the lair (with its # and how long it's been in), then a "park" nudge ONLY
- * when a fresh buff is genuinely possible when they clear (the buff-gate decision), and
- * always a subscribe/discord CTA. `cooldownActiveMsLeft` is ms until the current buff wears
- * off (a fresh one can then drop), or null if one can drop now.
+ * The periodic status board yelled in a capital. Leads by NAMING the buff, so a passer-by who
+ * wasn't following knows what these alerts are for; then the cooldown clock while a buff is up,
+ * then the raid in the lair (# and time in) with a "park" nudge ONLY when a fresh buff is
+ * genuinely possible at their clear (the buff-gate decision), and always a subscribe/discord CTA.
+ * `cooldownActiveMsLeft` is ms until the current buff wears off (a fresh one can then drop), or
+ * null if one can drop now.
  */
 export function formatCapitalStatusYell(
   faction: Faction,
@@ -124,10 +125,11 @@ export function formatCapitalStatusYell(
   buffPossible: boolean,
 ): string {
   const city = CITY_FOR[faction];
-  const parts: string[] = [];
+  // Lead: name the buff up front - the message is otherwise vague about what it's alerting on.
+  const parts: string[] = [`Rallying Cry world buff:`];
   // Cooldown: state the timer only while a buff is UP. Ready needs no mention (it's the norm).
   if (cooldownActiveMsLeft !== null) {
-    parts.push(`Rallying Cry cooldown in ${city}: ~${humanClock(cooldownActiveMsLeft)} until a fresh one can drop.`);
+    parts.push(`up in ${city}, ~${humanClock(cooldownActiveMsLeft)} until a fresh one can drop.`);
   }
   // Raid: only when one is in the lair, with a park nudge when a fresh buff is genuinely possible.
   if (raid) {
@@ -138,8 +140,7 @@ export function formatCapitalStatusYell(
         : `A raid's in the lair (${id}in for ~${humanClock(raid.elapsedMs)}).`,
     );
   }
-  // Always: the self-promotion.
-  parts.push(`Whisper Bufftracker "subscribe" for pings, "discord" for discord notifications.`);
+  parts.push(`Whisper "subscribe" for pings, "discord" for discord notifications.`);
   return `[Onyxia] ${parts.join(" ")}`;
 }
 

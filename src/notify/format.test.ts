@@ -142,9 +142,10 @@ describe("formatRaidFinished", () => {
 describe("formatCapitalStatusYell", () => {
   const raid = { number: 834, elapsedMs: 42 * 60_000 };
 
-  it("buff up + no raid: cooldown timer + self-promo, and NO raid mention", () => {
+  it("names the buff, shows the cooldown timer, and no raid mention when none is in", () => {
     const y = formatCapitalStatusYell("alliance", 72 * 60_000, null, false);
-    expect(y).toContain("Rallying Cry cooldown in Stormwind: ~1h12m until a fresh one can drop");
+    expect(y).toContain("Rallying Cry world buff:"); // named up front, no longer vague
+    expect(y).toContain("up in Stormwind, ~1h12m until a fresh one can drop");
     expect(y).not.toMatch(/raid/i); // no raid → not mentioned at all
     expect(y).toMatch(/subscribe.*discord/);
   });
@@ -163,9 +164,9 @@ describe("formatCapitalStatusYell", () => {
     expect(y).toMatch(/one may drop when they clear, park here!/);
   });
 
-  it("ready + no raid (idle): JUST the self-promo — no cooldown, no raid", () => {
+  it("ready + no raid (idle): names the buff + self-promo, no cooldown, no raid", () => {
     const y = formatCapitalStatusYell("alliance", null, null, false);
-    expect(y).toBe(`[Onyxia] Whisper Bufftracker "subscribe" for pings, "discord" for discord notifications.`);
+    expect(y).toBe(`[Onyxia] Rallying Cry world buff: Whisper "subscribe" for pings, "discord" for discord notifications.`);
   });
 
   it("ready + raid: no cooldown mention, raid + park nudge", () => {
