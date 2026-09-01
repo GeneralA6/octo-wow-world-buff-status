@@ -19,6 +19,13 @@ describe("InMemorySnapshotStore", () => {
     const recent = await store.recent(2);
     expect(recent.map((s) => s.present)).toEqual([2, 3]); // oldest-of-the-last-two first
   });
+
+  it("between() returns snapshots in [from, to], ascending, inclusive of the bounds", async () => {
+    const store = new InMemorySnapshotStore();
+    for (const s of [1, 2, 3, 4, 5]) await store.record(snap(s, ["a"]));
+    const got = await store.between(new Date(2000), new Date(4000));
+    expect(got.map((s) => s.ts.getTime() / 1000)).toEqual([2, 3, 4]);
+  });
 });
 
 describe("MongoSnapshotStore", () => {
@@ -36,6 +43,12 @@ describe("MongoSnapshotStore", () => {
           complete: d.complete,
           names: [...d.names],
         })),
+      ),
+      range: vi.fn(async (from: Date, to: Date) =>
+        [...docs]
+          .filter((d) => d.ts.getTime() >= from.getTime() && d.ts.getTime() <= to.getTime())
+          .sort((a, b) => a.ts.getTime() - b.ts.getTime())
+          .map((d) => ({ ts: d.ts, present: d.present, complete: d.complete, names: [...d.names] })),
       ),
       close: vi.fn(async () => {}),
     };
@@ -58,6 +71,16 @@ describe("MongoSnapshotStore", () => {
     await store.record(snap(2, ["a", "b"]));
     const recent = await store.recent(3);
     expect(recent.map((s) => s.ts.getTime() / 1000)).toEqual([1, 2, 3]);
+  });
+
+  it("between() maps the range query results (ascending in [from, to])", async () => {
+    const db = fakeDb();
+    const store = new MongoSnapshotStore(db);
+    await store.record(snap(10, ["a"]));
+    await store.record(snap(20, ["a", "b"]));
+    await store.record(snap(30, ["a", "b", "c"]));
+    const got = await store.between(new Date(15_000), new Date(25_000));
+    expect(got.map((s) => s.ts.getTime() / 1000)).toEqual([20]);
   });
 
   it("closes the underlying connection", async () => {
