@@ -47,7 +47,7 @@ export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs:
   const expiresUnix = Math.floor((appliedAt.getTime() + durationMs) / 1000);
   return {
     kind: "info",
-    title: `🎉 Rallying Cry is up in ${CITY_FOR[faction]}`,
+    title: `🎉 Rallying Cry just dropped in ${CITY_FOR[faction]}`,
     body:
       `Good for ~${humanDuration(durationMs)}, until <t:${expiresUnix}:t> (<t:${expiresUnix}:R>). ` +
       `That's also the earliest a fresh one can drop, so start watching again then. ${tipsLine(author)}`,

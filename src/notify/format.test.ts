@@ -43,7 +43,7 @@ describe("formatBuffDropped", () => {
     const appliedAt = new Date("2026-08-30T20:00:00Z");
     const twoHours = 120 * 60_000;
     const message = formatBuffDropped("alliance", appliedAt, twoHours, "Gibom");
-    expect(message.title).toBe("🎉 Rallying Cry is up in Stormwind");
+    expect(message.title).toBe("🎉 Rallying Cry just dropped in Stormwind");
     expect(message.body).not.toMatch(/Rallying Cry|Stormwind/); // title carries name + city; body doesn't repeat
     expect(message.body).toContain("~2h");
     // expiry = 22:00Z that day -> unix 1788472800
