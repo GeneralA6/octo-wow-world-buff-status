@@ -103,7 +103,7 @@ describe("formatBuffDropped", () => {
   it("carries the same tips line as the whisper (consistent everywhere the drop reaches)", () => {
     const body = formatBuffDropped("alliance", new Date("2026-08-30T20:00:00Z"), 120 * 60_000, "Gibom").body;
     const whisper = formatBuffDroppedWhisper("alliance", 120 * 60_000, "Gibom");
-    const tip = "Free to use - a tip to Gibom is welcome.";
+    const tip = "Did you get it? A tip to Gibom is appreciated.";
     expect(body).toContain(tip);
     expect(whisper).toContain(tip);
   });

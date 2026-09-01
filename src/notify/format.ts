@@ -51,7 +51,7 @@ export function formatRaidFinished(
 /** The tips line — identical on the channel post and the in-game whisper, so a reader sees
  *  the same words wherever the drop reaches them. Gold is mailed in-game to `author`. */
 function tipsLine(author: string): string {
-  return `Free to use - a tip to ${author} is welcome.`;
+  return `Did you get it? A tip to ${author} is appreciated.`;
 }
 
 export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs: number, author: string): NotifyMessage {
