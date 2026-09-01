@@ -63,15 +63,15 @@ export function formatBuffDroppedWhisper(faction: Faction, durationMs: number, a
   const city = CITY_FOR[faction];
   return (
     `The Rallying Cry of the Dragonslayer just dropped in ${city}! ` +
-    `The next can't drop for at least ${humanDuration(durationMs)}, usually longer - I'll warn you before it does. ` +
+    `The next can't drop for at least ${humanDuration(durationMs)}, usually longer - I'll alert you before it does. ` +
     tipsLine(author)
   );
 }
 
 /**
  * The buff's window just elapsed, so a fresh one can drop again. Discord channel post.
- * Names the full buff and ties it to Onyxia, so a reader who wasn't following knows
- * exactly which buff this is and where it comes from.
+ * The title names the full buff; the body ties it to Onyxia without repeating the name,
+ * so a reader who wasn't following still knows which buff this is and where it comes from.
  */
 export function formatBuffCooldownRefreshed(faction: Faction): NotifyMessage {
   const city = CITY_FOR[faction];
@@ -79,7 +79,7 @@ export function formatBuffCooldownRefreshed(faction: Faction): NotifyMessage {
     kind: "info",
     title: `🔄 Rallying Cry of the Dragonslayer can drop again in ${city}`,
     body:
-      `The last Rallying Cry of the Dragonslayer (the Onyxia world buff) in ${city} has worn off, ` +
+      `The last one in ${city} has worn off, ` +
       `so a fresh one can drop again as soon as a raid clears Onyxia and turns in the head. ` +
       `Park up in ${city} if you want to catch it.`,
   };

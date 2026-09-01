@@ -103,7 +103,7 @@ export class CommandRouter {
         if (added) this.#factionLookup?.(sender);
         return added
           ? [`You're subscribed! I'll ping you in-game when a raid clears and the Onyxia buff is about to drop.`]
-          : [`You're already subscribed to ${areaName} alerts. Whisper "help" for what I can do.`];
+          : [`You're already subscribed to ${areaName} alerts. "help" for more.`];
       }
       case "unsubscribe":
       case "unsub":
