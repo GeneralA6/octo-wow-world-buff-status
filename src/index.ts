@@ -179,6 +179,31 @@ interface BuffDropSink {
  *  it knows it; the watcher yells through it to broadcast to everyone nearby in the city. */
 type YellSink = Partial<Record<Faction, (message: string) => void>>;
 
+/** Runs one /who and returns the result — a socket's queued lookup. */
+type WhoRunner = (query: WhoQuery) => Promise<WhoResult>;
+
+/**
+ * A registry of the listeners' /who runners. A faction lookup that can't be answered from the
+ * listener's own side (a direct whisper to Bufftracker, or a faction-less listener) borrows a
+ * listener's socket through here instead of Bufftracker's, so it never contends with the raid
+ * poll — the thing whose /who timing out actually matters. Empty (no listener in world) falls
+ * back to Bufftracker's own /who.
+ */
+class ListenerWho {
+  readonly #runners = new Map<string, WhoRunner>();
+  register(id: string, run: WhoRunner): void {
+    this.#runners.set(id, run);
+  }
+  unregister(id: string): void {
+    this.#runners.delete(id);
+  }
+  /** Any registered listener runner (they're cross-faction-capable), or null if none is up. */
+  any(): WhoRunner | null {
+    for (const run of this.#runners.values()) return run;
+    return null;
+  }
+}
+
 /** Chronicle early-confirm dependencies, or null when it's off (no Mongo / disabled). */
 interface LaneChronicle {
   readonly client: ChronicleClient;
@@ -193,6 +218,8 @@ interface ConnectionServices {
   readonly lanes: readonly DetectionLane[];
   /** Chronicle early-confirm, or null when off. */
   readonly chronicle: LaneChronicle | null;
+  /** Listener sockets Bufftracker can borrow for a faction /who, off its own raid-poll socket. */
+  readonly listenerWho: ListenerWho;
   readonly buffStore: BuffStore;
   readonly broadcasts: BroadcastLedger;
   readonly raidStateStore: RaidStateStore;
@@ -236,7 +263,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, chronicle, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, client } =
+  const { lanes, chronicle, listenerWho, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
@@ -674,8 +701,11 @@ async function runConnection(
     // Null if it can't run, they're not found, or their race is custom. Used to tailor the
     // status to a non-subscriber's capital.
     const detectFaction = async (name: string): Promise<Faction | null> => {
+      // Prefer a listener's socket so this never steals a slot from the raid poll; only fall back
+      // to Bufftracker's own /who if no listener is in world.
+      const who = listenerWho.any() ?? queuedWho;
       try {
-        const result = await queuedWho({ minLevel: 0, maxLevel: 100, playerName: name });
+        const result = await who({ minLevel: 0, maxLevel: 100, playerName: name });
         const player = result.players.find((p) => subscriberKey(p.name) === subscriberKey(name));
         return player ? factionOfRace(player.raceId) : null;
       } catch (error) {
@@ -785,6 +815,7 @@ async function runListener(
   onBuffApplied: (faction: Faction, sourceName: string, text: string) => void,
   outreach: Outreach,
   yellSink: YellSink,
+  listenerWho: ListenerWho,
 ): Promise<void> {
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
@@ -814,11 +845,25 @@ async function runListener(
       settled = true;
       if (readyTimer) clearTimeout(readyTimer);
       if (interactTimer) clearTimeout(interactTimer);
+      listenerWho.unregister(listener.characterName); // stop offering this socket once it's gone
       if (listener.faction && registeredYell && yellSink[listener.faction] === registeredYell) {
         delete yellSink[listener.faction];
       }
       if (error) reject(error);
       else resolve();
+    };
+
+    // A one-at-a-time /who on THIS listener's socket, offered to Bufftracker for faction lookups
+    // so they don't queue behind its raid poll. Idle otherwise — a listener never polls.
+    let whoChain: Promise<unknown> = Promise.resolve();
+    const queuedWho = (query: WhoQuery): Promise<WhoResult> => {
+      const run = (): Promise<WhoResult> => world.whoOnce(query, config.whoTimeoutMs);
+      const result = whoChain.then(run, run);
+      whoChain = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result;
     };
 
     const world = new WorldClient({
@@ -833,6 +878,8 @@ async function runListener(
           if (readyTimer) clearTimeout(readyTimer);
           readyTimer = null;
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
+          // Offer this socket for Bufftracker's faction lookups, keeping them off its raid poll.
+          listenerWho.register(listener.characterName, queuedWho);
           // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone
           // standing in this capital. Only when the listener's faction is configured.
           if (listener.faction) {
@@ -1172,6 +1219,8 @@ async function main(): Promise<void> {
   // Each city listener registers its /yell here on login (and clears it on disconnect), so
   // an alert can be shouted to everyone standing in that capital, not only to subscribers.
   const yellSink: YellSink = {};
+  // Listener sockets Bufftracker borrows for faction /who, so lookups stay off its raid poll.
+  const listenerWho = new ListenerWho();
 
   const recordBuff = (faction: Faction, sourceName: string, text: string, detectedBy: string): void => {
     const appliedAt = new Date();
@@ -1245,6 +1294,7 @@ async function main(): Promise<void> {
   const services: ConnectionServices = {
     lanes,
     chronicle,
+    listenerWho,
     buffStore,
     broadcasts,
     raidStateStore,
@@ -1353,7 +1403,7 @@ async function main(): Promise<void> {
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runListener(config, listener, log, client, onBuff, outreach, yellSink);
+        await runListener(config, listener, log, client, onBuff, outreach, yellSink, listenerWho);
         log.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
         if (down.recover()) {
