@@ -116,10 +116,12 @@ const WORLD_READY_TIMEOUT_MS = 30_000;
 /** How often the watcher logs its monitoring heartbeat (subs, learned timer, buffs). */
 const HEARTBEAT_MS = 15 * 60_000;
 
-/** How often the active faction resolver /who's ONE both-faction subscriber (via a listener),
- *  and — when the backlog is empty — how long it waits before re-scanning for new stragglers. */
-const FACTION_RESOLVE_MS = 15_000;
-const FACTION_RESOLVE_IDLE_RESCAN_MS = 5 * 60_000;
+/** How often the active faction resolver /who's ONE both-faction subscriber, and — when the
+ *  backlog is empty — how long it waits before re-scanning for new stragglers. Deliberately slow:
+ *  it runs on Bufftracker's own /who (serialized behind the raid poll), so this is a gentle,
+ *  low-priority background cleanup, not a race to drain the backlog. */
+const FACTION_RESOLVE_MS = 2 * 60_000;
+const FACTION_RESOLVE_IDLE_RESCAN_MS = 10 * 60_000;
 
 /** Re-check for a nearby object this often, and give up after this many tries. The
  *  object burst can arrive over several seconds, so we poll rather than wait once. */
@@ -803,10 +805,12 @@ async function runConnection(
     // Resolve a player's side with a targeted /who — they're online, having just whispered.
     // Null if it can't run, they're not found, or their race is custom. Used to tailor the
     // status to a non-subscriber's capital.
-    const detectFaction = async (name: string): Promise<Faction | null> => {
-      // Prefer a listener's socket so this never steals a slot from the raid poll; only fall back
-      // to Bufftracker's own /who if no listener is in world.
-      const who = listenerWho.any() ?? queuedWho;
+    const detectFaction = async (name: string, viaBufftracker = false): Promise<Faction | null> => {
+      // Interactive lookups (subscribe, status) prefer a listener's socket so they never steal a
+      // slot from the raid poll. The background resolver passes `viaBufftracker` to run on
+      // Bufftracker's own /who instead — serialized behind the raid poll (its natural throttle),
+      // which is where a slow, low-priority backlog cleanup belongs.
+      const who = viaBufftracker ? queuedWho : (listenerWho.any() ?? queuedWho);
       try {
         const result = await who({ minLevel: 0, maxLevel: 100, playerName: name });
         const player = result.players.find((p) => subscriberKey(p.name) === subscriberKey(name));
@@ -817,8 +821,8 @@ async function runConnection(
       }
     };
     // Auto-set a new subscriber's side from the detected faction (leave "both" if unknown).
-    const lookupFaction = async (name: string): Promise<void> => {
-      const faction = await detectFaction(name);
+    const lookupFaction = async (name: string, viaBufftracker = false): Promise<void> => {
+      const faction = await detectFaction(name, viaBufftracker);
       if (!faction) return; // offline, not found, or a custom race — leave them on "both"
       if (await store.update(name, { factions: [faction], factionSource: "auto" })) {
         logger.info(`faction: detected ${name} as ${faction}`);
@@ -826,11 +830,12 @@ async function runConnection(
     };
 
     // Actively clear the both-faction backlog: each tick, /who ONE subscriber still on the
-    // unresolved "both" default (via a listener, so it never steals the raid poll's /who) and set
-    // their side — so they get the right city's alerts WITHOUT ever whispering us. Covers future
-    // stragglers too: a failed /who at subscribe, or a direct-to-Bufftracker whisper (no listener
-    // to infer from), lands back on the both-default and is picked up on the next re-scan.
-    // Offline / custom-race lookups return nothing and are retried on a later pass.
+    // unresolved "both" default and set their side — so they get the right city's alerts WITHOUT
+    // ever whispering us. Runs on BUFFTRACKER's own /who (serialized behind the raid poll, its
+    // natural throttle), slowly, as a low-priority background cleanup. Covers future stragglers
+    // too: a failed /who at subscribe, or a direct-to-Bufftracker whisper (no listener to infer
+    // from), lands back on the both-default and is picked up on the next re-scan. Offline /
+    // custom-race lookups return nothing and are retried on a later pass.
     let resolveQueue: string[] = [];
     let nextResolveRescanAt = 0;
     const resolveNextFaction = async (now: number): Promise<void> => {
@@ -845,7 +850,7 @@ async function runConnection(
         logger.info(`faction: resolving ${resolveQueue.length} both-faction subscriber(s) in the background`);
       }
       const name = resolveQueue.shift();
-      if (name) await lookupFaction(name);
+      if (name) await lookupFaction(name, true); // via Bufftracker, serialized behind the raid poll
     };
 
     // Guild invites the bot sends, so a matching JOIN can be welcomed in guild chat. An invite not
