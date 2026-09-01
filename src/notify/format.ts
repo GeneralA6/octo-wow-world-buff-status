@@ -68,33 +68,20 @@ export function formatBuffDroppedWhisper(faction: Faction, durationMs: number, a
   );
 }
 
-/** The full tuning hint: how to pick a side, and how to stop. Sent once, on the subscribe
- *  confirmation — the natural onboarding moment, not on every alert. */
-export const FACTION_FILTER_HINT =
-  `Only want one side's buffs? Whisper Bufftracker "alliance" or "horde" in-game and I'll ping you for just that faction (or "both" for all). Whisper "unsubscribe" to stop alerts.`;
-
-/** A short faction-only nudge for the recurring cooldown post — no unsubscribe, kept brief
- *  because it rides on every ~2h refresh. */
-export const FACTION_HINT_SHORT =
-  `Only want one side? Whisper Bufftracker "alliance" or "horde" and I'll ping just that faction.`;
-
 /**
  * The buff's window just elapsed, so a fresh one can drop again. Discord channel post.
  * Names the full buff and ties it to Onyxia, so a reader who wasn't following knows
- * exactly which buff this is and where it comes from. `includeFilterHint` appends the
- * short faction nudge — true for the public channel post, but set false for a DM to a
- * subscriber who has already chosen a single side (don't nag them about it).
+ * exactly which buff this is and where it comes from.
  */
-export function formatBuffCooldownRefreshed(faction: Faction, includeFilterHint = true): NotifyMessage {
+export function formatBuffCooldownRefreshed(faction: Faction): NotifyMessage {
   const city = CITY_FOR[faction];
-  const body =
-    `The last Rallying Cry of the Dragonslayer (the Onyxia world buff) in ${city} has worn off, ` +
-    `so a fresh one can drop again as soon as a raid clears Onyxia and turns in the head. ` +
-    `Park up in ${city} if you want to catch it.`;
   return {
     kind: "info",
     title: `🔄 Rallying Cry of the Dragonslayer can drop again in ${city}`,
-    body: includeFilterHint ? `${body}\n\n${FACTION_HINT_SHORT}` : body,
+    body:
+      `The last Rallying Cry of the Dragonslayer (the Onyxia world buff) in ${city} has worn off, ` +
+      `so a fresh one can drop again as soon as a raid clears Onyxia and turns in the head. ` +
+      `Park up in ${city} if you want to catch it.`,
   };
 }
 
@@ -159,50 +146,6 @@ function cityList(cities: readonly Faction[]): string {
   const names = cities.map((faction) => CITY_FOR[faction]);
   if (names.length >= 2) return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
   return names[0] ?? "a capital";
-}
-
-/** Turn a raid event into a human-readable notification for the given zone. */
-export function formatRaidEvent(event: RaidEvent, areaName: string): NotifyMessage {
-  switch (event.kind) {
-    case "raid-forming": {
-      const { label, count } = event.cohort;
-      if (event.initial) {
-        return {
-          kind: "entered",
-          title: `🐉 Raid in ${areaName}`,
-          body: `${label} is already ${count} strong in ${areaName}.`,
-        };
-      }
-      return {
-        kind: "entered",
-        title: `🐉 Raid forming in ${areaName}`,
-        body: `${label} just reached ${count} in ${areaName} - a raid is about to start.`,
-      };
-    }
-    case "raid-left": {
-      const { label, peak } = event.cohort;
-      return {
-        kind: "left",
-        title: `✅ Raid left ${areaName}`,
-        body: `${label} has cleared out of ${areaName} (peaked ${peak} ${plural(peak, "player")}).`,
-      };
-    }
-  }
-}
-
-/** A single terse line for an in-game whisper (no markup, well under the length cap). */
-export function formatRaidWhisper(event: RaidEvent, areaName: string): string {
-  if (event.kind === "raid-left") {
-    return `${event.cohort.label} has left ${areaName} (peaked ${event.cohort.peak}).`;
-  }
-  const { label, count } = event.cohort;
-  return event.initial
-    ? `A raid is already underway in ${areaName}: ${label} (${count}).`
-    : `${label} is forming in ${areaName} (${count}) - a raid is about to start!`;
-}
-
-function plural(count: number, word: string): string {
-  return count === 1 ? word : `${word}s`;
 }
 
 /**

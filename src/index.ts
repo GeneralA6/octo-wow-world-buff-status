@@ -328,7 +328,7 @@ async function runConnection(
         if (was === true && !active) {
           logger.info(`Onyxia Rallying Cry cooldown refreshed for ${faction} (${faction === "alliance" ? "Stormwind" : "Orgrimmar"}) - a fresh one can drop again`);
           const whisperLine = formatBuffCooldownRefreshedWhisper(faction);
-          void push(formatBuffCooldownRefreshed(faction, false), [faction]); // channel, pinging that side's role
+          void push(formatBuffCooldownRefreshed(faction), [faction]); // channel, pinging that side's role
           void notifyFactionSubscribers(faction, whisperLine); // in-game subscribers of that side
           yellSink[faction]?.(whisperLine); // broadcast to the capital (task: yell)
         }
