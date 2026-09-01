@@ -63,6 +63,21 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
   }
 
+  /** Deliver a server SYSTEM message (how command results/errors arrive) to the client. */
+  pushSystem(text: string): void {
+    const msg = Buffer.from(text, "utf8");
+    const body = new PacketWriter()
+      .u8(ChatType.System)
+      .u32LE(0)
+      .u64LE(0n) // system messages carry no sender
+      .u32LE(msg.length + 1)
+      .bytes(msg)
+      .u8(0)
+      .u8(0)
+      .toBuffer();
+    this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
+  }
+
   /** Deliver a zone monster yell (the buff yell arrives this way) to the client. */
   pushMonsterYell(senderGuid: bigint, senderName: string, text: string): void {
     const name = Buffer.from(senderName, "utf8");
@@ -303,6 +318,40 @@ describe("WorldClient (against a scripted mock server)", () => {
 
     client.whisper("Raider", "Subscribed!");
     expect(socket.sentWhispers).toContainEqual({ target: "Raider", message: "Subscribed!" });
+
+    client.close();
+  });
+
+  it("surfaces a server SYSTEM message via onSystemMessage (trimmed), never as a whisper", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const system: string[] = [];
+    const whispers: string[] = [];
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x22,
+      pingIntervalMs: 0,
+      handlers: {
+        onReady: () => markReady(),
+        onSystemMessage: (text) => system.push(text),
+        onWhisper: (_sender, text) => whispers.push(text),
+      },
+    });
+
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    socket.pushSystem("  Raider is already in a guild.  ");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(system).toEqual(["Raider is already in a guild."]); // trimmed
+    expect(whispers).toEqual([]); // a system message is never a command
 
     client.close();
   });

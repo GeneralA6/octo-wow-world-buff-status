@@ -42,6 +42,9 @@ export interface WorldClientHandlers {
   onWhisperUndelivered?: (target: string) => void;
   /** An NPC yelled to the zone (raw). The wiring layer decides if it is a buff yell. */
   onMonsterYell?: (senderName: string, text: string) => void;
+  /** A server SYSTEM message — how the server reports command results/errors (e.g. a guild
+   *  invite that failed). The wiring layer decides which ones are errors worth alerting on. */
+  onSystemMessage?: (text: string) => void;
   /** A decompressed nearby-object update block, for parsing GameObjects (e.g. a bench). */
   onWorldObjects?: (body: Buffer) => void;
   onError?: (error: Error) => void;
@@ -370,6 +373,12 @@ export class WorldClient {
       this.#logger.debug(
         `world: chat type=0x${chat.type.toString(16)} guid=0x${chat.senderGuid.toString(16)} text=${JSON.stringify(chat.text)}`,
       );
+      // Server SYSTEM messages are how command results/errors arrive (a failed guild invite,
+      // "player not found", etc.). Surface them so the wiring can alert; they are never commands.
+      if (chat.type === ChatType.System) {
+        this.#handlers.onSystemMessage?.(chat.text.trim());
+        return;
+      }
       if (chat.type !== ChatType.Whisper) return; // only inbound whispers are commands
       const text = chat.text.trim();
       if (!text) return;

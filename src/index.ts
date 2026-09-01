@@ -43,6 +43,7 @@ import {
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
 import { evaluateTimer } from "./watcher/timer-eval.js";
+import { isCommandError } from "./chat/system-error.js";
 import { HttpChronicleClient, type ChronicleClient } from "./chronicle/client.js";
 import { cleanOnyxiaKills } from "./chronicle/parse.js";
 import { confirmingKills } from "./chronicle/confirm.js";
@@ -232,6 +233,8 @@ interface ConnectionServices {
   readonly buffDropSink: BuffDropSink;
   readonly yellSink: YellSink;
   readonly push: (message: NotifyMessage, factions?: readonly Faction[]) => Promise<void>;
+  /** Post an operational/error notice to the errors Discord channel (or log-only if unset). */
+  readonly notifyAdmin: (title: string, body: string) => Promise<void>;
   readonly client: ClientValues;
 }
 
@@ -263,7 +266,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, client } =
+  const { lanes, chronicle, listenerWho, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
@@ -776,6 +779,18 @@ async function runConnection(
           statusYellTimer.unref?.();
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
+        // Server SYSTEM messages report command results. Log every one (so real error wording can
+        // be captured and added to the classifier), and alert the errors channel on a failure —
+        // chiefly a guild invite that didn't take (no permission, target already guilded, etc.).
+        onSystemMessage: (text) => {
+          if (!text) return;
+          logger.info(`system: ${JSON.stringify(text)}`);
+          if (isCommandError(text)) {
+            void notifyAdmin("⚠️ Command failed in-game", text).catch((e) =>
+              logger.debug(`system-error notify: ${describeError(e)}`),
+            );
+          }
+        },
         onError: (error) => {
           world.close();
           settle(error);
@@ -1308,6 +1323,7 @@ async function main(): Promise<void> {
     buffDropSink,
     yellSink,
     push,
+    notifyAdmin,
     client,
   };
 
