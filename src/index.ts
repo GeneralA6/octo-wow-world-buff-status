@@ -70,6 +70,7 @@ import {
 import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
+import { WhisperPool } from "./chat/whisper-pool.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
 import { subscriberKey, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
@@ -221,6 +222,9 @@ interface ConnectionServices {
   readonly chronicle: LaneChronicle | null;
   /** Listener sockets Bufftracker can borrow for a faction /who, off its own raid-poll socket. */
   readonly listenerWho: ListenerWho;
+  /** The listeners' whisper queues, pooled so a broadcast splits across them; Bufftracker falls
+   *  back to its own queue only when the pool is empty. */
+  readonly whisperPool: WhisperPool;
   readonly buffStore: BuffStore;
   readonly broadcasts: BroadcastLedger;
   readonly raidStateStore: RaidStateStore;
@@ -266,7 +270,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
@@ -311,6 +315,12 @@ async function runConnection(
       else resolve();
     };
 
+    // Broadcast a whisper to many subscribers via the listener pool (splitting the load across
+    // their separate throttle budgets), falling back to Bufftracker's own queue if no listener is up.
+    const broadcastWhisper = (names: readonly string[], message: string, faction: Faction | null): void => {
+      if (whisperPool.fanOut(names, message, faction) === 0) whisperQueue?.enqueueAll(names, message);
+    };
+
     // A buff-parking alert: post to the Onyxia channel (pinging @alliance/@horde per open
     // city), yell in each open capital, and whisper in-game subscribers of that side. The
     // caller already deduped `cities` against the ledger, so this fires at most once per cycle.
@@ -334,7 +344,7 @@ async function runConnection(
       if (subscribers.length === 0) return;
       for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, cities)) {
         const line = formatBuffWhisper(event, groupCities, config.watchAreaName);
-        whisperQueue?.enqueueAll(members.map((s) => s.name), line);
+        broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null);
       }
     };
 
@@ -350,7 +360,7 @@ async function runConnection(
       }
       subscribers = subscribers.filter((s) => s.factions.includes(faction));
       if (subscribers.length === 0) return;
-      whisperQueue?.enqueueAll(subscribers.map((s) => s.name), whisperLine);
+      broadcastWhisper(subscribers.map((s) => s.name), whisperLine, faction);
     };
 
     // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
@@ -823,13 +833,10 @@ async function runConnection(
   });
 }
 
-/** Marker text for the one-shot cross-faction whisper probe between our own listeners. */
-const XFACTION_PROBE = "__xfwhisper_probe__";
-
 /**
- * A listener session: log in a city-parked character, reach the world, and forward
- * buff yells. No /who, no whispers — its only job is to hear its capital's yell so
- * the buff-drop time is known. Shares the client identity so a patch heals once.
+ * A listener session: log in a city-parked character, reach the world, and forward buff yells.
+ * It also lends its socket for faction /who lookups and joins the whisper pool (so broadcasts
+ * fan across the listeners' throttle budgets). Shares the client identity so a patch heals once.
  */
 async function runListener(
   config: BotConfig,
@@ -840,6 +847,7 @@ async function runListener(
   outreach: Outreach,
   yellSink: YellSink,
   listenerWho: ListenerWho,
+  whisperPool: WhisperPool,
 ): Promise<void> {
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
@@ -870,6 +878,8 @@ async function runListener(
       if (readyTimer) clearTimeout(readyTimer);
       if (interactTimer) clearTimeout(interactTimer);
       listenerWho.unregister(listener.characterName); // stop offering this socket once it's gone
+      whisperPool.unregister(listener.characterName); // and stop routing broadcasts through it
+      listenerWhispers.stop();
       if (listener.faction && registeredYell && yellSink[listener.faction] === registeredYell) {
         delete yellSink[listener.faction];
       }
@@ -890,11 +900,14 @@ async function runListener(
       return result;
     };
 
-    // Cross-faction whisper probe: ping every OTHER listener (opposite faction, and definitely
-    // online since it's our own bot). Received => cross-faction whisper works here; undelivered =>
-    // blocked. One-shot per login; decides the whisper-pool routing. Names are our own listeners'.
-    const otherListeners = config.listeners.filter((l) => l.characterName !== listener.characterName);
-    const otherListenerNames = new Set(otherListeners.map((l) => l.characterName.toLowerCase()));
+    // This listener's own whisper queue, wired to its socket. Registered in the pool while in
+    // world, so a broadcast to many subscribers fans across the listeners' separate throttle
+    // budgets (cross-faction whisper works here, so either listener can reach any subscriber).
+    const listenerWhispers = new WhisperQueue(
+      (targetName, message) => world.whisper(targetName, message),
+      config.whisperThrottleMs,
+      (error, targetName) => logger.debug(`whisper to ${targetName} failed: ${describeError(error)}`),
+    );
 
     const world = new WorldClient({
       socket,
@@ -910,16 +923,8 @@ async function runListener(
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
           // Offer this socket for Bufftracker's faction lookups, keeping them off its raid poll.
           listenerWho.register(listener.characterName, queuedWho);
-          // Fire the cross-faction whisper probe once the other listeners have had time to log in.
-          if (otherListeners.length > 0) {
-            const probeTimer = setTimeout(() => {
-              for (const other of otherListeners) {
-                logger.info(`xfaction-probe: ${listener.characterName} (${listener.faction ?? "?"}) -> ${other.characterName} (${other.faction ?? "?"})`);
-                world.whisper(other.characterName, XFACTION_PROBE);
-              }
-            }, 25_000);
-            probeTimer.unref?.();
-          }
+          // Join the whisper pool so broadcasts can fan across this listener's own throttle budget.
+          whisperPool.register(listener.characterName, listener.faction, listenerWhispers);
           // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone
           // standing in this capital. Only when the listener's faction is configured.
           if (listener.faction) {
@@ -992,12 +997,6 @@ async function runListener(
         // answers (and introduces itself on the player's first contact). The listener is
         // just the ear; Bufftracker does the thinking and the whispering back.
         onWhisper: (sender, text) => {
-          // Cross-faction probe reply: another of our listeners reached us — cross-faction whisper
-          // works. Log it and DON'T route it to the command engine (it isn't a player).
-          if (text === XFACTION_PROBE && otherListenerNames.has(sender.toLowerCase())) {
-            logger.info(`xfaction-probe: RECEIVED from ${sender} at ${listener.characterName} — cross-faction whisper WORKS`);
-            return;
-          }
           logger.info(`whisper from ${sender}: ${JSON.stringify(text)} -> routed to ${config.characterName}`);
           // The listener serves one faction's capital, so its whisperer is that faction in
           // practice (safe to assume even on a cross-faction realm) — pass it as a faction hint so
@@ -1006,12 +1005,10 @@ async function runListener(
             .onListenerContact(sender, text, listener.faction)
             .catch((error) => logger.error(`outreach: ${describeError(error)}`));
         },
-        onWhisperUndelivered: (targetName) => {
-          // If a probe to another listener bounces, that listener is online (it's our bot), so the
-          // only reason is cross-faction blocking.
-          if (otherListenerNames.has(targetName.toLowerCase())) {
-            logger.info(`xfaction-probe: UNDELIVERED to ${targetName} from ${listener.characterName} — cross-faction whisper BLOCKED`);
-          }
+        onSystemMessage: (text) => {
+          // This listener whispers too now, so the server can throttle it — back its own queue off
+          // and retry, exactly as Bufftracker does.
+          if (text && isWhisperThrottle(text)) listenerWhispers.notifyThrottled();
         },
         onWorldObjects:
           listener.onLogin === "interact"
@@ -1275,6 +1272,10 @@ async function main(): Promise<void> {
   const yellSink: YellSink = {};
   // Listener sockets Bufftracker borrows for faction /who, so lookups stay off its raid poll.
   const listenerWho = new ListenerWho();
+  // The listeners' whisper queues, pooled so a broadcast to many subscribers splits across them
+  // (each has its own server throttle budget). Bufftracker whispers through it, falling back to
+  // its own queue only if no listener is in world.
+  const whisperPool = new WhisperPool();
 
   const recordBuff = (faction: Faction, sourceName: string, text: string, detectedBy: string): void => {
     const appliedAt = new Date();
@@ -1349,6 +1350,7 @@ async function main(): Promise<void> {
     lanes,
     chronicle,
     listenerWho,
+    whisperPool,
     buffStore,
     broadcasts,
     raidStateStore,
@@ -1458,7 +1460,7 @@ async function main(): Promise<void> {
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runListener(config, listener, log, client, onBuff, outreach, yellSink, listenerWho);
+        await runListener(config, listener, log, client, onBuff, outreach, yellSink, listenerWho, whisperPool);
         log.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
         if (down.recover()) {
