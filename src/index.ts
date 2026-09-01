@@ -43,6 +43,9 @@ import {
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
 import { evaluateTimer } from "./watcher/timer-eval.js";
+import { HttpChronicleClient } from "./chronicle/client.js";
+import { pollChronicleOnce } from "./chronicle/poller.js";
+import { MongoChronicleStore, type ChronicleStore } from "./chronicle/store.js";
 import {
   InMemoryRaidCounterStore,
   MongoRaidCounterStore,
@@ -1070,6 +1073,39 @@ async function main(): Promise<void> {
     }
   }
 
+  // Chronicle reconciler: an independent background poll (no WoW connection needed) that
+  // cross-references community raid logs against our /who snapshots to measure detection recall.
+  // Read-only and after-the-fact — it never alerts. Needs Mongo for the snapshot history and the
+  // dedup ledger, so it's skipped without it. ±30 min around a kill's pull covers the raid's
+  // presence in our rosters (the uploader is there from forming through the kill).
+  const CHRONICLE_MATCH_WINDOW_MS = 30 * 60_000;
+  let chronicleStore: ChronicleStore | null = null;
+  if (config.chronicleEnabled && config.mongodbUri) {
+    try {
+      const connected = await MongoChronicleStore.connect(config.mongodbUri, config.mongodbDb);
+      chronicleStore = connected;
+      const chronicleClient = new HttpChronicleClient();
+      const pollChronicle = (): void => {
+        void pollChronicleOnce({
+          client: chronicleClient,
+          snapshots,
+          store: connected,
+          realm: config.realm,
+          matchWindowMs: CHRONICLE_MATCH_WINDOW_MS,
+          logger,
+        }).catch((error) => logger.debug(`chronicle: poll failed (${describeError(error)})`));
+      };
+      const chronicleTimer = setInterval(pollChronicle, config.chroniclePollMs);
+      chronicleTimer.unref?.();
+      logger.info(`chronicle: reconciling ${config.realm} kills every ${config.chroniclePollMs / 1000}s`);
+      pollChronicle(); // first pass now, don't wait a full interval
+    } catch (error) {
+      logger.error(`chronicle: MongoDB connect failed (${describeError(error)}); reconciler off`);
+    }
+  } else if (config.chronicleEnabled) {
+    logger.info("chronicle: reconciler needs MONGODB_URI for /who history — off");
+  }
+
   // The watcher fills this once in world, so a listener-heard buff drop can be whispered.
   const buffDropSink: BuffDropSink = { notify: null };
   // Each city listener registers its /yell here on login (and clears it on disconnect), so
@@ -1194,6 +1230,7 @@ async function main(): Promise<void> {
       feedbackStore.close(),
       raidCounterStore.close(),
       raidStateStore.close(),
+      chronicleStore ? chronicleStore.close() : Promise.resolve(),
     ]).finally(() => process.exit(0));
   };
   process.on("SIGINT", () => shutdown("SIGINT"));

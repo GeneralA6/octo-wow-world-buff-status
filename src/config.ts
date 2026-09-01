@@ -140,6 +140,12 @@ export interface BotConfig {
   readonly author: string;
   /** Auto guild-invite players who contact a listener. Needs the watcher to be guilded. */
   readonly guildInviteEnabled: boolean;
+  /** Cross-reference Chronicle Classic raid logs against our /who detection to measure recall.
+   *  Read-only and after-the-fact — never drives alerts. Needs MongoDB for /who snapshot history;
+   *  a no-op without it. */
+  readonly chronicleEnabled: boolean;
+  /** How often the Chronicle reconciler polls (ms). */
+  readonly chroniclePollMs: number;
   readonly logLevel: LogLevel;
 }
 
@@ -319,6 +325,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const inviteRaw = env.WOW_GUILD_INVITE?.trim().toLowerCase();
   const guildInviteEnabled = inviteRaw === "true" || inviteRaw === "1";
 
+  // Chronicle reconciler: on by default (a no-op without Mongo), disabled with false/0/none.
+  const chronicleRaw = env.CHRONICLE_ENABLED?.trim().toLowerCase();
+  const chronicleEnabled = chronicleRaw !== "false" && chronicleRaw !== "0" && chronicleRaw !== "none";
+  const chroniclePollMs = intWithDefault("CHRONICLE_POLL_SECONDS", 600, 60) * 1000;
+
   const logLevelRaw = (env.LOG_LEVEL?.trim() || "info") as LogLevel;
   const logLevel: LogLevel = LOG_LEVELS.includes(logLevelRaw) ? logLevelRaw : "info";
   if (env.LOG_LEVEL && !LOG_LEVELS.includes(logLevelRaw)) {
@@ -381,6 +392,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     community,
     author,
     guildInviteEnabled,
+    chronicleEnabled,
+    chroniclePollMs,
     logLevel,
   };
 }

@@ -352,6 +352,15 @@ describe("loadConfig", () => {
     expect(configured.guildInviteEnabled).toBe(true);
   });
 
+  it("defaults the Chronicle reconciler on, with a 10-min poll, and reads overrides", () => {
+    const bare = loadConfig({ ...minimalEnv });
+    expect(bare.chronicleEnabled).toBe(true); // on by default (a no-op without Mongo)
+    expect(bare.chroniclePollMs).toBe(600_000);
+    expect(loadConfig({ ...minimalEnv, CHRONICLE_ENABLED: "false" }).chronicleEnabled).toBe(false);
+    expect(loadConfig({ ...minimalEnv, CHRONICLE_ENABLED: "none" }).chronicleEnabled).toBe(false);
+    expect(loadConfig({ ...minimalEnv, CHRONICLE_POLL_SECONDS: "300" }).chroniclePollMs).toBe(300_000);
+  });
+
   it("defaults the Mongo settings and reads overrides", () => {
     const bare = loadConfig({ ...minimalEnv });
     expect(bare.mongodbUri).toBeNull();
