@@ -137,7 +137,9 @@ export class CommandRouter {
         // Natural-language intent detection over the whole message.
         const intent = parseIntent(text);
         if (intent) return this.#handleIntent(intent, sender, text);
-        return [`Sorry, I didn't get that. Whisper "help" for what I can do.`];
+        // Not a recognised command — answer with the live status and a pointer to help,
+        // which is more useful than a dead-end "didn't get that".
+        return [...(await this.#status()), `"help" for more.`];
       }
     }
   }

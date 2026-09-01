@@ -147,9 +147,12 @@ describe("CommandRouter", () => {
     expect(reply).toMatch(/subscribe/i);
   });
 
-  it("falls back gracefully on true gibberish", async () => {
+  it("answers gibberish with the live status and a help pointer, not a dead end", async () => {
     const { router } = deps();
-    expect((await router.handle("Raider", "qwzx blorp"))[0]).toMatch(/didn't get that/i);
+    const reply = (await router.handle("Raider", "qwzx blorp")).join(" ");
+    expect(reply).not.toMatch(/didn't get that/i);
+    expect(reply).toMatch(/No raid in Onyxia's Lair/); // the live status
+    expect(reply).toMatch(/"help"/); // and a pointer to help
   });
 
   it("routes a natural-language suggestion to feedback, keeping the whole message", async () => {
@@ -176,9 +179,11 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "thanks so much!"))[0]).toMatch(/welcome/i);
   });
 
-  it("no longer has a 'notify' command — alert-type choosing is gone", async () => {
+  it("no longer has a 'notify' command — it falls through to the status/help fallback", async () => {
     const { router } = deps();
-    expect((await router.handle("Raider", "notify forming off"))[0]).toMatch(/didn't get that/i);
+    const reply = (await router.handle("Raider", "notify forming off")).join(" ");
+    expect(reply).toMatch(/"help" for more/);
+    expect(reply).not.toMatch(/alert/i); // not handled as an alert-type command
   });
 
   it("shares the Discord invite link on 'discord', or says it's not set", async () => {
@@ -217,12 +222,14 @@ describe("CommandRouter", () => {
     expect((await router.handle("Ghost", "alliance"))[0]).toMatch(/not subscribed/i);
   });
 
-  it("has dropped 'profile' and 'faction' — they fall through to the not-understood reply", async () => {
+  it("has dropped 'profile' and 'faction' — they fall through to the status/help fallback", async () => {
     const { router } = deps();
     await router.handle("Raider", "subscribe");
-    expect((await router.handle("Raider", "profile"))[0]).toMatch(/didn't get that/i);
-    expect((await router.handle("Raider", "faction"))[0]).toMatch(/didn't get that/i);
-    expect((await router.handle("Raider", "flibber"))[0]).toMatch(/didn't get that/i);
+    for (const msg of ["profile", "faction", "flibber"]) {
+      const reply = (await router.handle("Raider", msg)).join(" ");
+      expect(reply).toMatch(/"help" for more/); // the fallback pointer
+      expect(reply).not.toMatch(/Subscribed|change your side/); // not a profile reply
+    }
   });
 
   it("help is concise: status first, invite last, one command per line, no profile/faction/notify", async () => {
