@@ -40,7 +40,7 @@ export function formatRaidFinished(raidNumber: number | null, durationMs: number
 /** The tips line — identical on the channel post and the in-game whisper, so a reader sees
  *  the same words wherever the drop reaches them. Gold is mailed in-game to `author`. */
 function tipsLine(author: string): string {
-  return `Free to use - a gold tip to ${author} is welcome, never expected.`;
+  return `Free to use - a tip to ${author} is welcome.`;
 }
 
 export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs: number, author: string): NotifyMessage {
@@ -49,8 +49,8 @@ export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs:
     kind: "info",
     title: `🎉 Rallying Cry just dropped in ${CITY_FOR[faction]}`,
     body:
-      `Good for ~${humanDuration(durationMs)}, until <t:${expiresUnix}:t> (<t:${expiresUnix}:R>). ` +
-      `That's also the earliest a fresh one can drop, so start watching again then. ${tipsLine(author)}`,
+      `A ${humanDuration(durationMs)} cooldown has started, until <t:${expiresUnix}:t> (<t:${expiresUnix}:R>). ` +
+      tipsLine(author),
   };
 }
 

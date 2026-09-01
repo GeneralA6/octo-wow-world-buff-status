@@ -45,7 +45,7 @@ describe("formatBuffDropped", () => {
     const message = formatBuffDropped("alliance", appliedAt, twoHours, "Gibom");
     expect(message.title).toBe("🎉 Rallying Cry just dropped in Stormwind");
     expect(message.body).not.toMatch(/Rallying Cry|Stormwind/); // title carries name + city; body doesn't repeat
-    expect(message.body).toContain("~2h");
+    expect(message.body).toContain("A 2h cooldown has started"); // the drop starts the cooldown, not "good for"
     // expiry = 22:00Z that day -> unix 1788472800
     const expiresUnix = Math.floor((appliedAt.getTime() + twoHours) / 1000);
     expect(message.body).toContain(`<t:${expiresUnix}:t>`);
@@ -55,13 +55,13 @@ describe("formatBuffDropped", () => {
   it("renders a non-round window as minutes", () => {
     const message = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), 90 * 60_000, "Gibom");
     expect(message.title).toContain("Orgrimmar");
-    expect(message.body).toContain("~90 min");
+    expect(message.body).toContain("90 min cooldown");
   });
 
   it("carries the same tips line as the whisper (consistent everywhere the drop reaches)", () => {
     const body = formatBuffDropped("alliance", new Date("2026-08-30T20:00:00Z"), 120 * 60_000, "Gibom").body;
     const whisper = formatBuffDroppedWhisper("alliance", 120 * 60_000, "Gibom");
-    const tip = "Free to use - a gold tip to Gibom is welcome, never expected.";
+    const tip = "Free to use - a tip to Gibom is welcome.";
     expect(body).toContain(tip);
     expect(whisper).toContain(tip);
   });
