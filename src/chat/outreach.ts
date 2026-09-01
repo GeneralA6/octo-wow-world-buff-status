@@ -11,6 +11,8 @@ export interface OutreachConfig {
 
 export type WhisperFn = (target: string, message: string) => void;
 export type GuildInviteFn = (target: string) => void;
+/** Runs a player's message through the command engine and returns the reply line(s). */
+export type HandleFn = (sender: string, text: string) => Promise<string[]>;
 
 /** The lines Bufftracker whispers to a player who first contacts a listener. Concise: what
  *  it does and how to opt in — no attribution, no recruiting, no tips (those ride the buff-drop
@@ -22,17 +24,22 @@ export function introLines(config: OutreachConfig): string[] {
 }
 
 /**
- * Greets players who interact with the parked listener characters. The listeners detect
- * the contact; the watcher (Bufftracker) does the whispering — so the watcher registers
- * its outbound channel here when in world and clears it on disconnect.
+ * Bridges a player's contact with a parked listener character to Bufftracker: the listeners
+ * hear the whisper, but Bufftracker does the thinking and the whispering — so the watcher
+ * registers its outbound channel AND its command engine here when in world, and clears them
+ * on disconnect.
  *
- * Each player is greeted at most once (persisted in the {@link GreetLedger}, so a nightly
- * redeploy doesn't re-greet a regular), and only once the watcher is available — if it's
+ * Every listener whisper is routed to Bufftracker's command engine and answered, so a listener
+ * is a full front-end for Bufftracker — you can whisper "subscribe" or "help" at onyxiabuffsw
+ * and it works, and a player is never left without a reply. On a player's FIRST contact it also
+ * sends the onboarding intro (once — persisted in the {@link GreetLedger}, so a nightly redeploy
+ * doesn't re-introduce itself to a regular). Only acts while the watcher is available; if it's
  * offline the contact is NOT claimed, so their next contact retries.
  */
 export class Outreach {
   #whisper: WhisperFn | null = null;
   #guildInvite: GuildInviteFn | null = null;
+  #handle: HandleFn | null = null;
   readonly #config: OutreachConfig;
   readonly #greeted: GreetLedger;
   readonly #logger: Logger;
@@ -49,20 +56,32 @@ export class Outreach {
     this.#guildInvite = guildInvite;
   }
 
-  /** A player contacted a listener — introduce Bufftracker (once), and invite if enabled. */
-  async onListenerContact(playerName: string): Promise<void> {
+  /** The command engine listener whispers are routed through. Set once at startup. */
+  setHandler(handle: HandleFn | null): void {
+    this.#handle = handle;
+  }
+
+  /** A player whispered a listener — introduce Bufftracker on their first contact, then route
+   *  their message (every time) through Bufftracker's command engine and whisper back the reply. */
+  async onListenerContact(playerName: string, text: string): Promise<void> {
     const whisper = this.#whisper;
     if (!whisper) {
       // Watcher not in world — don't claim the greeting, so we retry on their next contact.
-      this.#logger.debug(`outreach: watcher offline, cannot greet ${playerName} yet`);
+      this.#logger.debug(`outreach: watcher offline, cannot answer ${playerName} yet`);
       return;
     }
-    if (!(await this.#greeted.claim(playerName))) return; // already greeted
-    this.#logger.info(`outreach: greeting ${playerName}`);
-    for (const line of introLines(this.#config)) whisper(playerName, line);
-    if (this.#config.guildInviteEnabled && this.#guildInvite) {
-      this.#guildInvite(playerName);
-      whisper(playerName, `And I've sent you an invite to <${this.#config.guildName}> - welcome aboard!`);
+    // First contact → the onboarding intro (and a guild invite when that's enabled).
+    if (await this.#greeted.claim(playerName)) {
+      this.#logger.info(`outreach: greeting ${playerName}`);
+      for (const line of introLines(this.#config)) whisper(playerName, line);
+      if (this.#config.guildInviteEnabled && this.#guildInvite) {
+        this.#guildInvite(playerName);
+        whisper(playerName, `And I've sent you an invite to <${this.#config.guildName}> - welcome aboard!`);
+      }
+    }
+    // Every message is transferred to Bufftracker's command engine and answered.
+    if (this.#handle) {
+      for (const reply of await this.#handle(playerName, text)) whisper(playerName, reply);
     }
   }
 }

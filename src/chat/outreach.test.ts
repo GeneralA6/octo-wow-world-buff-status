@@ -35,42 +35,66 @@ describe("Outreach", () => {
   function make(cfg = config) {
     const whispers: { to: string; msg: string }[] = [];
     const invites: string[] = [];
+    const routed: { sender: string; text: string }[] = [];
     const outreach = new Outreach(cfg, new InMemoryGreetLedger(), silentLogger);
     outreach.setChannel(
       (to, msg) => whispers.push({ to, msg }),
       (to) => invites.push(to),
     );
-    return { outreach, whispers, invites };
+    outreach.setHandler(async (sender, text) => {
+      routed.push({ sender, text });
+      return [`reply to ${text}`];
+    });
+    return { outreach, whispers, invites, routed };
   }
 
-  it("greets a player once and not again", async () => {
-    const { outreach, whispers } = make();
-    await outreach.onListenerContact("Raider");
-    expect(whispers.length).toBe(1); // the single intro line
-    await outreach.onListenerContact("RAIDER"); // case-insensitive repeat
-    expect(whispers.length).toBe(1); // unchanged
+  const isIntro = (msg: string): boolean => /World Buff Tracker/.test(msg);
+
+  it("introduces itself on first contact AND routes the message to the command engine", async () => {
+    const { outreach, whispers, routed } = make();
+    await outreach.onListenerContact("Raider", "hi");
+    expect(whispers.some((w) => isIntro(w.msg))).toBe(true); // the onboarding intro
+    expect(whispers.some((w) => w.msg === "reply to hi")).toBe(true); // routed reply
+    expect(routed).toEqual([{ sender: "Raider", text: "hi" }]);
   });
 
-  it("does not greet while the watcher channel is unavailable, then greets once it is", async () => {
+  it("keeps answering every later message — the greet-once silence is gone", async () => {
+    const { outreach, whispers, routed } = make();
+    await outreach.onListenerContact("Raider", "hi");
+    await outreach.onListenerContact("RAIDER", "subscribe"); // case-insensitive, second contact
+    await outreach.onListenerContact("Raider", "help");
+    expect(routed.map((r) => r.text)).toEqual(["hi", "subscribe", "help"]); // all routed
+    expect(whispers.some((w) => w.msg === "reply to help")).toBe(true);
+    expect(whispers.filter((w) => isIntro(w.msg)).length).toBe(1); // intro sent ONCE only
+  });
+
+  it("does nothing while the watcher channel is unavailable, then works once it is", async () => {
     const whispers: string[] = [];
+    const routed: string[] = [];
     const outreach = new Outreach(config, new InMemoryGreetLedger(), silentLogger);
-    await outreach.onListenerContact("Raider"); // no channel yet → not claimed
+    outreach.setHandler(async (_s, t) => {
+      routed.push(t);
+      return ["ok"];
+    });
+    await outreach.onListenerContact("Raider", "hi"); // no channel → not greeted, not routed
     expect(whispers).toEqual([]);
-    outreach.setChannel((to) => whispers.push(to), null);
-    await outreach.onListenerContact("Raider");
-    expect(whispers).toEqual(["Raider"]);
+    expect(routed).toEqual([]);
+    outreach.setChannel((_to, msg) => whispers.push(msg), null);
+    await outreach.onListenerContact("Raider", "hi");
+    expect(routed).toEqual(["hi"]);
+    expect(whispers).toContain("ok");
   });
 
-  it("guild-invites and congratulates when enabled", async () => {
+  it("guild-invites and congratulates on first contact when enabled", async () => {
     const { outreach, whispers, invites } = make({ ...config, guildInviteEnabled: true });
-    await outreach.onListenerContact("Raider");
+    await outreach.onListenerContact("Raider", "hi");
     expect(invites).toEqual(["Raider"]);
     expect(whispers.some((w) => /invite/i.test(w.msg))).toBe(true);
   });
 
   it("does not invite when disabled", async () => {
     const { outreach, invites } = make({ ...config, guildInviteEnabled: false });
-    await outreach.onListenerContact("Raider");
+    await outreach.onListenerContact("Raider", "hi");
     expect(invites).toEqual([]);
   });
 });

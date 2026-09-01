@@ -822,12 +822,14 @@ async function runListener(
           logger.info(`heard yell from ${senderName}: ${JSON.stringify(text)}${faction ? ` -> BUFF ${faction}` : ""}`);
           if (faction) onBuffApplied(faction, senderName, text);
         },
-        // A player whispered this parked character → log it (tagged with this
-        // listener's name) and have Bufftracker greet them. The listener itself does
-        // not answer commands — that's Bufftracker — so this is a greet-only surface.
+        // A player whispered this parked character → transfer it to Bufftracker, which
+        // answers (and introduces itself on the player's first contact). The listener is
+        // just the ear; Bufftracker does the thinking and the whispering back.
         onWhisper: (sender, text) => {
-          logger.info(`whisper from ${sender}: ${JSON.stringify(text)} (greet-only; commands go to ${config.characterName})`);
-          void outreach.onListenerContact(sender).catch((error) => logger.error(`outreach: ${describeError(error)}`));
+          logger.info(`whisper from ${sender}: ${JSON.stringify(text)} -> routed to ${config.characterName}`);
+          void outreach
+            .onListenerContact(sender, text)
+            .catch((error) => logger.error(`outreach: ${describeError(error)}`));
         },
         onWorldObjects:
           listener.onLogin === "interact"
@@ -1144,6 +1146,8 @@ async function main(): Promise<void> {
     greetLedger,
     logger,
   );
+  // A whisper to a listener is transferred to Bufftracker's command engine and answered.
+  outreach.setHandler((sender, text) => router.handle(sender, text));
   const services: ConnectionServices = {
     lanes,
     buffStore,
