@@ -150,7 +150,7 @@ export function formatCapitalStatusYell(
     );
   }
   // Always: the self-promotion.
-  parts.push(`Whisper Bufftracker "subscribe" for Onyxia buff pings ("discord" for Discord).`);
+  parts.push(`Whisper Bufftracker "subscribe" for Onyxia buff pings ("discord" for discord notifications).`);
   return `[Onyxia] ${parts.join(" ")}`;
 }
 
