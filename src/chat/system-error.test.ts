@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCommandError } from "./system-error.js";
+import { isCommandError, isWhisperThrottle } from "./system-error.js";
 
 describe("isCommandError", () => {
   it("flags guild-invite failure messages (server interpolates the name)", () => {
@@ -18,5 +18,13 @@ describe("isCommandError", () => {
     expect(isCommandError("Welcome to Turtle WoW!")).toBe(false);
     expect(isCommandError("You have reached level 60!")).toBe(false);
     expect(isCommandError("The server will restart in 15 minutes.")).toBe(false);
+  });
+
+  it("treats the whisper throttle as its own thing (handled, not alerted)", () => {
+    expect(isWhisperThrottle("You have whispered too many different players too quickly.")).toBe(true);
+    expect(isWhisperThrottle("Please wait a while before whispering any additional players.")).toBe(true);
+    expect(isWhisperThrottle("Raider is already in a guild.")).toBe(false);
+    // and it isn't mistaken for a command error (which would alert the errors channel)
+    expect(isCommandError("You have whispered too many different players too quickly.")).toBe(false);
   });
 });

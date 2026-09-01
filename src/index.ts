@@ -43,7 +43,7 @@ import {
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
 import { evaluateTimer } from "./watcher/timer-eval.js";
-import { isCommandError } from "./chat/system-error.js";
+import { isCommandError, isWhisperThrottle } from "./chat/system-error.js";
 import { HttpChronicleClient, type ChronicleClient } from "./chronicle/client.js";
 import { cleanOnyxiaKills } from "./chronicle/parse.js";
 import { confirmingKills } from "./chronicle/confirm.js";
@@ -785,6 +785,12 @@ async function runConnection(
         onSystemMessage: (text) => {
           if (!text) return;
           logger.info(`system: ${JSON.stringify(text)}`);
+          // Whisper spam-throttle: back the queue off and retry the dropped whispers rather than
+          // alert — it's self-healing and fires in bursts, so alerting would just be noise.
+          if (isWhisperThrottle(text)) {
+            whisperQueue?.notifyThrottled();
+            return;
+          }
           if (isCommandError(text)) {
             void notifyAdmin("⚠️ Command failed in-game", text).catch((e) =>
               logger.debug(`system-error notify: ${describeError(e)}`),

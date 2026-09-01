@@ -59,4 +59,39 @@ describe("WhisperQueue", () => {
     expect(sent).toEqual(["A"]); // A already went; B and C were dropped
     expect(queue.size).toBe(0);
   });
+
+  it("retries a throttled whisper after a cooldown instead of dropping it", () => {
+    const sent: string[] = [];
+    const queue = new WhisperQueue((t) => sent.push(t), 1000);
+    queue.enqueue("A", "park now");
+    expect(sent).toEqual(["A"]); // sent immediately, then the server drops it
+    queue.notifyThrottled();
+    vi.advanceTimersByTime(1000);
+    expect(sent).toEqual(["A"]); // paused during the cooldown — no resend yet
+    vi.advanceTimersByTime(30_000); // cooldown elapses
+    expect(sent).toEqual(["A", "A"]); // retried, not lost
+  });
+
+  it("sends nothing during the throttle cooldown, then resumes", () => {
+    const sent: string[] = [];
+    const queue = new WhisperQueue((t) => sent.push(t), 1000);
+    queue.enqueueAll(["A", "B", "C"], "x"); // A sent, B/C queued
+    expect(sent).toEqual(["A"]);
+    queue.notifyThrottled();
+    vi.advanceTimersByTime(29_000); // still within the cooldown
+    expect(sent).toEqual(["A"]); // fully paused
+    vi.advanceTimersByTime(5_000); // past the cooldown
+    expect(sent.length).toBeGreaterThan(1); // resumed delivering
+  });
+
+  it("doesn't duplicate a retry for a target still pending in the queue", () => {
+    const sent: string[] = [];
+    const queue = new WhisperQueue((t) => sent.push(t), 1000);
+    queue.enqueueAll(["A", "B"], "x"); // A sent, B still queued
+    expect(sent).toEqual(["A"]);
+    queue.notifyThrottled(); // A is recent (re-queued); B is already queued (not re-added)
+    vi.advanceTimersByTime(31_000); // resume after cooldown
+    vi.advanceTimersByTime(1000);
+    expect(sent).toEqual(["A", "A", "B"]); // A retried once, B delivered once — not doubled
+  });
 });

@@ -23,3 +23,12 @@ export function isCommandError(text: string): boolean {
   const lower = text.toLowerCase();
   return ERROR_PATTERNS.some((pattern) => lower.includes(pattern));
 }
+
+/** The server's whisper spam-throttle notice — handled by backing the whisper queue off, not by
+ *  alerting (it's self-healing and would otherwise spam the errors channel). */
+const THROTTLE_PATTERNS: readonly string[] = ["too many different players", "wait a while before whispering"];
+
+export function isWhisperThrottle(text: string): boolean {
+  const lower = text.toLowerCase();
+  return THROTTLE_PATTERNS.some((pattern) => lower.includes(pattern));
+}
