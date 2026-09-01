@@ -202,6 +202,11 @@ describe("clearedRaidEvent", () => {
     expect(event.cohort.peak).toBe(28);
     expect(event.cohort.count).toBe(0);
   });
+
+  it("is not kill-confirmed by default, and is when asked (Chronicle early-confirm)", () => {
+    expect(clearedRaidEvent(28)).toMatchObject({ kind: "raid-left", killConfirmed: false });
+    expect(clearedRaidEvent(28, true)).toMatchObject({ kind: "raid-left", killConfirmed: true });
+  });
 });
 
 describe("RaidTracker (lair mode)", () => {

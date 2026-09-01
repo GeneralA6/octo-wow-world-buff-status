@@ -40,6 +40,21 @@ export interface ConfirmedClear {
   readonly number: number | null;
 }
 
+/**
+ * A departure we've DETECTED (the roster fell below the clear floor) but not yet confirmed — it
+ * is still inside the sustained-wait window, so it could still be a wipe. Exposed so the caller
+ * can seek independent proof (a Chronicle kill log by one of this roster) and, if found, confirm
+ * early via `confirmNow` instead of waiting the window out. Never produced without our own
+ * detection first: Chronicle is confirmation ON TOP of the departure, never the trigger.
+ */
+export interface PendingDeparture {
+  readonly roster: readonly string[];
+  readonly number: number | null;
+  readonly peak: number;
+  readonly formedAt: number;
+  readonly belowSince: number;
+}
+
 /** A tracked raid's full state, so it survives a restart (persisted to the DB). Only ever
  *  produced while a raid is in progress; the tracker resumes exactly where it left off. */
 export interface ClearTrackerState {
@@ -105,6 +120,39 @@ export class ClearTracker {
   /** How long the tracked raid has been in (form → now, spanning wipes), or null if none. */
   elapsedMs(now: number): number | null {
     return this.#formedAt === null ? null : now - this.#formedAt;
+  }
+
+  /**
+   * A departure detected but not yet confirmed (roster below the floor, still inside the
+   * sustained-wait window), or null. If `observe` just confirmed and reset this poll, this is
+   * null — so it only ever reports a departure that is genuinely still waiting.
+   */
+  pending(): PendingDeparture | null {
+    if (this.#formedAt === null || this.#belowSince === null) return null;
+    return {
+      roster: [...this.#roster],
+      number: this.#number,
+      peak: this.#peak,
+      formedAt: this.#formedAt,
+      belowSince: this.#belowSince,
+    };
+  }
+
+  /**
+   * Confirm a pending departure NOW, skipping the rest of the sustained wait — for when
+   * independent proof (a Chronicle kill) shows the raid really finished. Returns the same
+   * ConfirmedClear the wait would have produced (duration form → departure-start) and resets.
+   * Null if no departure is pending: it can never manufacture a clear on its own.
+   */
+  confirmNow(): ConfirmedClear | null {
+    if (this.#formedAt === null || this.#belowSince === null) return null;
+    const clear: ConfirmedClear = {
+      durationMs: this.#belowSince - this.#formedAt,
+      peak: this.#peak,
+      number: this.#number,
+    };
+    this.#reset();
+    return clear;
   }
 
   /**

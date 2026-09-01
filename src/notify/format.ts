@@ -170,12 +170,17 @@ export function formatBuffAlert(event: RaidEvent, cities: readonly Faction[], ar
         `get ready to park.`,
     };
   }
+  // A Chronicle Onyxia kill confirmed the clear (not just inferred from the /who departure), so
+  // the buff is genuinely coming — say so, and drop the "may".
+  const confirmed = event.killConfirmed === true;
   return {
     kind: "left",
-    title: "⏳ Rallying Cry may drop soon",
-    body:
-      `A raid just cleared ${areaName} (peaked ${event.cohort.peak}). ` +
-      `Park in ${where} now to catch the Rallying Cry when the head is turned in.`,
+    title: confirmed ? "🏆 Rallying Cry incoming - Onyxia down" : "⏳ Rallying Cry may drop soon",
+    body: confirmed
+      ? `A raid just downed Onyxia in ${areaName} (peaked ${event.cohort.peak}) - kill confirmed. ` +
+        `Park in ${where} now to catch the Rallying Cry when the head is turned in.`
+      : `A raid just cleared ${areaName} (peaked ${event.cohort.peak}). ` +
+        `Park in ${where} now to catch the Rallying Cry when the head is turned in.`,
   };
 }
 
@@ -183,7 +188,9 @@ export function formatBuffAlert(event: RaidEvent, cities: readonly Faction[], ar
 export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], areaName: string): string {
   const where = cityList(cities);
   if (event.kind === "raid-left") {
-    return `A raid just cleared ${areaName} - park in ${where} for a possible Rallying Cry buff.`;
+    return event.killConfirmed === true
+      ? `A raid just downed Onyxia in ${areaName} (kill confirmed) - park in ${where} for the Rallying Cry buff.`
+      : `A raid just cleared ${areaName} - park in ${where} for a possible Rallying Cry buff.`;
   }
   const verb = event.initial ? "underway" : "forming";
   return `A raid is ${verb} in ${areaName} (${event.cohort.count}) - get ready to park in ${where} for the buff.`;

@@ -60,6 +60,9 @@ export type RaidEvent =
       readonly cohort: RaidCohortSnapshot;
       /** How long the raid lasted (form → clear), when known — for duration learning. */
       readonly durationMs?: number;
+      /** The clear was proven by a Chronicle Onyxia kill (not just inferred from the /who
+       *  departure), so the alert can say so. */
+      readonly killConfirmed?: boolean;
     };
 
 export interface ActiveRaid {
@@ -74,8 +77,8 @@ export interface ActiveRaid {
  * event. The ClearTracker is lair-granular and boss-blind, so the label is generic — and
  * the cleared alert's wording uses only the peak and the cities anyway, never the label.
  */
-export function clearedRaidEvent(peak: number): RaidEvent {
-  return { kind: "raid-left", cohort: { key: LAIR_KEY, label: "a raid", count: 0, peak, members: [] } };
+export function clearedRaidEvent(peak: number, killConfirmed = false): RaidEvent {
+  return { kind: "raid-left", cohort: { key: LAIR_KEY, label: "a raid", count: 0, peak, members: [] }, killConfirmed };
 }
 
 interface CohortState {

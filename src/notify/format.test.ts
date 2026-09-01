@@ -36,6 +36,36 @@ describe("formatBuffAlert", () => {
     expect(message.body).toContain("Stormwind or Orgrimmar");
     expect(message.body).toContain("25");
   });
+
+  it("a plain (inferred) clear hedges with 'may' and does NOT claim a kill", () => {
+    const message = formatBuffAlert({ kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) }, ["horde"], AREA);
+    expect(message.title).toContain("may drop");
+    expect(message.body).not.toMatch(/kill confirmed|downed Onyxia/i);
+  });
+
+  it("a Chronicle-confirmed clear says the Onyxia kill is confirmed and drops the hedge", () => {
+    const message = formatBuffAlert(
+      { kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }), killConfirmed: true },
+      ["horde"],
+      AREA,
+    );
+    expect(message.title).not.toMatch(/may/i);
+    expect(message.body).toContain("kill confirmed");
+    expect(message.body).toContain("Onyxia");
+    expect(message.body).toContain("Orgrimmar");
+  });
+
+  it("the whisper mirrors it: confirmed says the kill, plain says 'possible'", () => {
+    const plain = formatBuffWhisper({ kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) }, ["horde"], AREA);
+    const confirmed = formatBuffWhisper(
+      { kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }), killConfirmed: true },
+      ["horde"],
+      AREA,
+    );
+    expect(plain).toContain("possible Rallying Cry");
+    expect(confirmed).toContain("kill confirmed");
+    expect(confirmed).not.toContain("possible");
+  });
 });
 
 describe("formatBuffDropped", () => {

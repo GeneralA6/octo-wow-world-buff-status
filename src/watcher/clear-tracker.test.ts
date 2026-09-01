@@ -162,3 +162,44 @@ describe("ClearTracker", () => {
     expect(clear?.durationMs).toBe(20 * MIN); // 30m → 50m, proving the fresh formedAt
   });
 });
+
+describe("ClearTracker pending() / confirmNow() — Chronicle early-confirm", () => {
+  it("reports no pending departure while a raid is present or none is tracked", () => {
+    const t = tracker();
+    expect(t.pending()).toBeNull(); // nothing tracked
+    t.observe(R(30), 0, false); // formed, present
+    expect(t.pending()).toBeNull(); // present, roster not below the floor
+  });
+
+  it("reports a pending departure once the roster drops below the floor, with the roster", () => {
+    const t = tracker();
+    t.observe(R(30), 0, false);
+    t.observe(R(1), 40 * MIN, false); // departure begins at 40m
+    const p = t.pending();
+    expect(p).not.toBeNull();
+    expect(p?.belowSince).toBe(40 * MIN);
+    expect(p?.formedAt).toBe(0);
+    expect(p?.peak).toBe(30);
+    expect(p?.roster).toContain("r0"); // the raid's members, to match a Chronicle uploader against
+  });
+
+  it("confirmNow() ends a pending departure early with the same clear the wait would give", () => {
+    const t = tracker();
+    t.observe(R(30), 0, false);
+    t.observe(R(1), 40 * MIN, false); // departure begins — normally 5 more min of waiting
+    const clear = t.confirmNow(); // Chronicle proved the kill — confirm at 41m, not 45m
+    expect(clear).not.toBeNull();
+    expect(clear?.durationMs).toBe(40 * MIN); // form(0) → departure start(40m), same as the sustained path
+    expect(clear?.peak).toBe(30);
+    expect(t.tracking).toBe(false); // reset, exactly as a sustained clear leaves it
+    expect(t.pending()).toBeNull();
+  });
+
+  it("confirmNow() manufactures nothing without a detected departure (present raid, or none)", () => {
+    const t = tracker();
+    expect(t.confirmNow()).toBeNull(); // nothing tracked
+    t.observe(R(30), 0, false); // formed, present, roster NOT below the floor
+    expect(t.confirmNow()).toBeNull(); // no departure detected → no clear
+    expect(t.tracking).toBe(true); // and it did not disturb the tracked raid
+  });
+});

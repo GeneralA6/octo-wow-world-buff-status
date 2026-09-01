@@ -1,5 +1,5 @@
 import type { WhoPlayer } from "../protocol/who.js";
-import { ClearTracker, type ClearTrackerState, type ConfirmedClear } from "./clear-tracker.js";
+import { ClearTracker, type ClearTrackerState, type ConfirmedClear, type PendingDeparture } from "./clear-tracker.js";
 import { PresenceTracker, type PresenceChange } from "./presence.js";
 import { RaidSessions } from "./raid-sessions.js";
 import { RaidTracker, type ActiveRaid, type GroupingMode, type RaidEvent } from "./raid-tracker.js";
@@ -86,6 +86,18 @@ export class RaidWatch {
   /** The reference number of the raid in progress, or null if none — for the status query. */
   raidNumber(): number | null {
     return this.#clears.number;
+  }
+
+  /** A departure we've detected but not yet confirmed (still inside the sustained wait), or
+   *  null — so the caller can seek a Chronicle kill to confirm it early. */
+  pendingClear(): PendingDeparture | null {
+    return this.#clears.pending();
+  }
+
+  /** Confirm a pending departure now (Chronicle proved the kill), returning the same clear the
+   *  wait would have produced, or null if none is pending. Never manufactures a clear. */
+  confirmClearNow(): ConfirmedClear | null {
+    return this.#clears.confirmNow();
   }
 
   /** The raid in progress as a persistable snapshot, or null — to survive a restart. */
