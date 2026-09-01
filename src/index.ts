@@ -823,6 +823,9 @@ async function runConnection(
   });
 }
 
+/** Marker text for the one-shot cross-faction whisper probe between our own listeners. */
+const XFACTION_PROBE = "__xfwhisper_probe__";
+
 /**
  * A listener session: log in a city-parked character, reach the world, and forward
  * buff yells. No /who, no whispers — its only job is to hear its capital's yell so
@@ -887,6 +890,12 @@ async function runListener(
       return result;
     };
 
+    // Cross-faction whisper probe: ping every OTHER listener (opposite faction, and definitely
+    // online since it's our own bot). Received => cross-faction whisper works here; undelivered =>
+    // blocked. One-shot per login; decides the whisper-pool routing. Names are our own listeners'.
+    const otherListeners = config.listeners.filter((l) => l.characterName !== listener.characterName);
+    const otherListenerNames = new Set(otherListeners.map((l) => l.characterName.toLowerCase()));
+
     const world = new WorldClient({
       socket,
       account: listener.account,
@@ -901,6 +910,16 @@ async function runListener(
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
           // Offer this socket for Bufftracker's faction lookups, keeping them off its raid poll.
           listenerWho.register(listener.characterName, queuedWho);
+          // Fire the cross-faction whisper probe once the other listeners have had time to log in.
+          if (otherListeners.length > 0) {
+            const probeTimer = setTimeout(() => {
+              for (const other of otherListeners) {
+                logger.info(`xfaction-probe: ${listener.characterName} (${listener.faction ?? "?"}) -> ${other.characterName} (${other.faction ?? "?"})`);
+                world.whisper(other.characterName, XFACTION_PROBE);
+              }
+            }, 25_000);
+            probeTimer.unref?.();
+          }
           // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone
           // standing in this capital. Only when the listener's faction is configured.
           if (listener.faction) {
@@ -973,6 +992,12 @@ async function runListener(
         // answers (and introduces itself on the player's first contact). The listener is
         // just the ear; Bufftracker does the thinking and the whispering back.
         onWhisper: (sender, text) => {
+          // Cross-faction probe reply: another of our listeners reached us — cross-faction whisper
+          // works. Log it and DON'T route it to the command engine (it isn't a player).
+          if (text === XFACTION_PROBE && otherListenerNames.has(sender.toLowerCase())) {
+            logger.info(`xfaction-probe: RECEIVED from ${sender} at ${listener.characterName} — cross-faction whisper WORKS`);
+            return;
+          }
           logger.info(`whisper from ${sender}: ${JSON.stringify(text)} -> routed to ${config.characterName}`);
           // The listener serves one faction's capital, so its whisperer is that faction in
           // practice (safe to assume even on a cross-faction realm) — pass it as a faction hint so
@@ -980,6 +1005,13 @@ async function runListener(
           void outreach
             .onListenerContact(sender, text, listener.faction)
             .catch((error) => logger.error(`outreach: ${describeError(error)}`));
+        },
+        onWhisperUndelivered: (targetName) => {
+          // If a probe to another listener bounces, that listener is online (it's our bot), so the
+          // only reason is cross-faction blocking.
+          if (otherListenerNames.has(targetName.toLowerCase())) {
+            logger.info(`xfaction-probe: UNDELIVERED to ${targetName} from ${listener.characterName} — cross-faction whisper BLOCKED`);
+          }
         },
         onWorldObjects:
           listener.onLogin === "interact"
