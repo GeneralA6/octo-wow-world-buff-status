@@ -89,13 +89,31 @@ describe("formatBuffDroppedWhisper", () => {
 });
 
 describe("formatBuffCooldownRefreshed", () => {
-  it("names the city, the full buff, and its Onyxia source so it's unambiguous", () => {
-    const message = formatBuffCooldownRefreshed("horde");
-    expect(message.title).toContain("Orgrimmar");
-    expect(message.title).toContain("Rallying Cry of the Dragonslayer");
-    expect(message.body).toContain("Onyxia");
-    expect(message.body).toContain("Orgrimmar");
-    expect(message.body).not.toContain("Stormwind");
+  it("titles it off-cooldown in the city and names both ways it can drop, not repeating the title", () => {
+    const message = formatBuffCooldownRefreshed("horde", null, AREA);
+    expect(message.title).toBe("🔄 Onyxia buff off cooldown in Orgrimmar");
+    expect(message.body).toContain("saved head"); // a held head can be turned in now
+    expect(message.body).toContain("next clear"); // or the next raid's clear
+    expect(message.body).not.toMatch(/cooldown/i); // the title already said it
+    expect(message.body).not.toContain("Stormwind"); // right side only
+  });
+
+  it("closes with 'no raid' when the lair is empty", () => {
+    const body = formatBuffCooldownRefreshed("horde", null, AREA).body;
+    expect(body).toContain(`Currently no raid in ${AREA}`);
+  });
+
+  it("closes with the live raid - its number and time in - when one is in the lair", () => {
+    const body = formatBuffCooldownRefreshed("horde", { number: 834, elapsedMs: 42 * 60_000 }, AREA).body;
+    expect(body).toContain(`A raid's in ${AREA} now`);
+    expect(body).toContain("raid #834");
+    expect(body).toMatch(/in for ~42m/);
+  });
+
+  it("drops the raid number when it isn't known, keeping the time in", () => {
+    const body = formatBuffCooldownRefreshed("alliance", { number: null, elapsedMs: 12 * 60_000 }, AREA).body;
+    expect(body).not.toMatch(/raid #/);
+    expect(body).toMatch(/in for ~12m/);
   });
 });
 

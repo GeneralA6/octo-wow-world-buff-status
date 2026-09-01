@@ -69,19 +69,23 @@ export function formatBuffDroppedWhisper(faction: Faction, durationMs: number, a
 }
 
 /**
- * The buff's window just elapsed, so a fresh one can drop again. Discord channel post.
- * The title names the full buff; the body ties it to Onyxia without repeating the name,
- * so a reader who wasn't following still knows which buff this is and where it comes from.
+ * The buff's window just elapsed, so a fresh one can drop again. Discord channel post, kept
+ * short: the title says it's off cooldown, the body names the two ways it can drop (a held head
+ * turned in now, or the next clear) and closes with the live lair status. `raid` is the raid in
+ * progress for this faction's lair, or null if none.
  */
-export function formatBuffCooldownRefreshed(faction: Faction): NotifyMessage {
-  const city = CITY_FOR[faction];
+export function formatBuffCooldownRefreshed(
+  faction: Faction,
+  raid: CapitalStatusRaid | null,
+  areaName: string,
+): NotifyMessage {
+  const status = raid
+    ? `A raid's in ${areaName} now (${raid.number !== null ? `raid #${raid.number}, ` : ""}in for ~${humanClock(raid.elapsedMs)}).`
+    : `Currently no raid in ${areaName}.`;
   return {
     kind: "info",
-    title: `🔄 Rallying Cry of the Dragonslayer can drop again in ${city}`,
-    body:
-      `The last one in ${city} has worn off, ` +
-      `so a fresh one can drop again as soon as a raid clears Onyxia and turns in the head. ` +
-      `Park up in ${city} if you want to catch it.`,
+    title: `🔄 Onyxia buff off cooldown in ${CITY_FOR[faction]}`,
+    body: `A fresh one can drop any time now - from a saved head or the next clear. ${status}`,
   };
 }
 

@@ -328,7 +328,8 @@ async function runConnection(
         if (was === true && !active) {
           logger.info(`Onyxia Rallying Cry cooldown refreshed for ${faction} (${faction === "alliance" ? "Stormwind" : "Orgrimmar"}) - a fresh one can drop again`);
           const whisperLine = formatBuffCooldownRefreshedWhisper(faction);
-          void push(formatBuffCooldownRefreshed(faction), [faction]); // channel, pinging that side's role
+          const raid = raidStateFor(faction, now.getTime()); // the post closes with the live lair status
+          void push(formatBuffCooldownRefreshed(faction, raid, config.watchAreaName), [faction]); // channel, pinging that side's role
           void notifyFactionSubscribers(faction, whisperLine); // in-game subscribers of that side
           yellSink[faction]?.(whisperLine); // broadcast to the capital (task: yell)
         }
