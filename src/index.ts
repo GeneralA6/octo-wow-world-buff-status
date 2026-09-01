@@ -490,11 +490,14 @@ async function runConnection(
 
       // Gate an event against the candidate cities' buff state and the per-cycle dedup, then
       // announce it (channel post + that side's subscribers + a city yell) and record it.
-      const gateAndAnnounce = async (event: RaidEvent): Promise<void> => {
+      // Returns the cities where a fresh buff is still possible (the first gate) — an empty
+      // array means every candidate city already has an active buff, which the clear recap
+      // uses to avoid promising a drop that has already landed.
+      const gateAndAnnounce = async (event: RaidEvent): Promise<Faction[]> => {
         const open = await openCitiesFor(event, lane.cities, buffStore, now, raidDurationMs);
         if (open.length === 0) {
           logger.info(`${lane.label} ${event.kind} suppressed — every candidate city still has an active buff`);
-          return;
+          return open;
         }
         // Second gate: drop any city we've already broadcast this kind for in the current
         // buff cycle. Keyed to the cycle (persisted in Mongo), so a redeploy, a wipe or
@@ -507,7 +510,7 @@ async function runConnection(
           if (shouldBroadcast(last, lastBuffDropAt, now, config.broadcastDedupMs)) fresh.push(city);
           else logger.info(`${lane.label} ${event.kind} for ${city} suppressed — already broadcast this cycle`);
         }
-        if (fresh.length === 0) return;
+        if (fresh.length === 0) return open;
         await announceBuff(event, fresh);
         for (const city of fresh) {
           await broadcasts
@@ -520,6 +523,7 @@ async function runConnection(
             })
             .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
         }
+        return open;
       };
 
       // Only the FORMING alert comes from the count/temporal detector. Its per-cohort
@@ -555,8 +559,11 @@ async function runConnection(
           logger.info(`raid clear ignored: ~${mins(ms)}m exceeds the ${mins(CEILING_MS)}m ceiling — likely a merge`);
           return;
         }
-        await gateAndAnnounce(clearedRaidEvent(clear.peak, killConfirmed));
-        void push(formatRaidFinished(clear.number, ms, config.watchAreaName));
+        // The park-now alert and the recap gate on the same fact: a raid that turned in a
+        // saved head before it left drops the buff BEFORE the clear confirms, so both should
+        // go quiet about a "fresh buff soon" — the park-now suppresses, the recap says it's up.
+        const openNow = await gateAndAnnounce(clearedRaidEvent(clear.peak, killConfirmed));
+        void push(formatRaidFinished(clear.number, ms, config.watchAreaName, openNow.length > 0));
         void (async () => {
           await durationStore.record({ ms, ts: new Date(now) });
           const [learned, samples] = await Promise.all([

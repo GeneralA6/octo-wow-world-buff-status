@@ -177,6 +177,16 @@ describe("formatRaidFinished", () => {
   it("falls back to 'A raid' when unnumbered", () => {
     expect(formatRaidFinished(null, 60 * 60_000, "Onyxia's Lair").title).toContain("A raid");
   });
+
+  it("promises a fresh drop when a buff is still possible (default)", () => {
+    expect(formatRaidFinished(1, 60 * 60_000, "Onyxia's Lair").body).toContain("may drop soon");
+  });
+
+  it("says the buff is already up when no fresh drop is possible", () => {
+    const msg = formatRaidFinished(1, 60 * 60_000, "Onyxia's Lair", false);
+    expect(msg.body).toContain("already up");
+    expect(msg.body).not.toContain("may drop soon");
+  });
 });
 
 describe("formatCapitalStatusYell", () => {

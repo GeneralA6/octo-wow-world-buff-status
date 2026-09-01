@@ -21,13 +21,24 @@ export function humanClock(ms: number): string {
 }
 
 /** A raid the ClearTracker confirmed as really finished — informational recap with the
- *  reference number and how long it took (spanning any wipes). Discord channel post. */
-export function formatRaidFinished(raidNumber: number | null, durationMs: number, areaName: string): NotifyMessage {
+ *  reference number and how long it took (spanning any wipes). Discord channel post.
+ *  `buffPossible` gates the buff hint on the same check the park-now alert uses: when the
+ *  buff is already up (a raid turned in a saved head before it left, so the drop landed
+ *  before the clear confirmed), promising a fresh one "soon" is stale — say it's up instead. */
+export function formatRaidFinished(
+  raidNumber: number | null,
+  durationMs: number,
+  areaName: string,
+  buffPossible = true,
+): NotifyMessage {
   const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
+  const tail = buffPossible
+    ? "A Rallying Cry may drop soon once the head is turned in."
+    : "The Rallying Cry is already up.";
   return {
     kind: "info",
     title: `🏁 ${id} cleared ${areaName}`,
-    body: `${id} cleared ${areaName} after ~${humanClock(durationMs)}. A Rallying Cry may drop soon once the head is turned in.`,
+    body: `${id} cleared ${areaName} after ~${humanClock(durationMs)}. ${tail}`,
   };
 }
 
