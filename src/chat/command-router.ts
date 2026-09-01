@@ -193,13 +193,13 @@ export class CommandRouter {
     return [`Done - I'll alert you for ${factionLabel(factions)} buffs.`];
   }
 
-  /** Share the community Discord invite link. Null when no invite is configured. */
+  /** Share the Discord invite link, with a one-line note on what it's for. Null = unconfigured. */
   #discord(): string[] {
-    const { discordInvite, guildName, community } = this.#deps;
+    const { discordInvite } = this.#deps;
     if (!discordInvite) {
       return [`I don't have a Discord invite link set up right now - sorry!`];
     }
-    return [`Join the ${community} Discord (home of <${guildName}>): ${discordInvite}`];
+    return [`Join our Discord to get Onyxia buff alerts outside the game: ${discordInvite}`];
   }
 
   /** Capture a player's feedback/suggestion and hand it off (persisted + posted to the

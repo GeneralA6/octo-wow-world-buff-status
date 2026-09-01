@@ -192,7 +192,8 @@ describe("CommandRouter", () => {
     });
     const reply = (await withInvite.handle("Raider", "discord")).join(" ");
     expect(reply).toContain("https://discord.gg/abc");
-    expect(reply).toMatch(/OctoWoW/);
+    expect(reply).toMatch(/outside the game/i); // says what Discord is for
+    expect(reply).not.toMatch(/home of|Rage Quit/i); // no guild attribution
     // No invite configured → it says so, and never the old linking/ID flow.
     const bare = (await deps().router.handle("Raider", "discord")).join(" ");
     expect(bare).toMatch(/don't have a Discord invite/i);
