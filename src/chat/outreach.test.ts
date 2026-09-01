@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { silentLogger } from "../logger.js";
-import { Outreach, introLines } from "./outreach.js";
+import { Outreach, introLines, recruitingLine } from "./outreach.js";
 import { InMemoryIntroStore } from "./intro-store.js";
 import type { Faction } from "../subscribers/store.js";
 
@@ -30,12 +30,15 @@ describe("introLines", () => {
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(255); // client line limit
   });
 
-  it("does NOT pitch 'subscribe' when the contact is itself a subscribe — welcomes instead", () => {
-    const lines = introLines(config, true).join(" ");
-    expect(lines).not.toMatch(/whisper "subscribe"/i); // no telling a subscriber to subscribe
-    expect(lines).toMatch(/welcome/i);
-    expect(lines).toMatch(/world-buff tracker/i); // still identifies itself
-    expect(lines).toMatch(/recruit/i); // still recruits
+});
+
+describe("recruitingLine", () => {
+  it("names the guild, recruits, and points at the invite command — no subscribe pitch", () => {
+    const line = recruitingLine(config);
+    expect(line).toContain("Rage Quit");
+    expect(line).toMatch(/recruit/i);
+    expect(line).toMatch(/invite/i);
+    expect(line).not.toMatch(/whisper "subscribe"/i);
   });
 });
 
@@ -75,12 +78,31 @@ describe("Outreach", () => {
     expect(routed).toEqual([{ sender: "Raider", text: "hi" }]);
   });
 
-  it("welcomes a first-contact subscriber instead of telling them to subscribe", async () => {
+  it("a first-contact subscribe gets NO intro — just the reply, then a recruiting follow-up", async () => {
     const { outreach, whispers } = make();
     await outreach.onListenerContact("Raider", "subscribe", "horde"); // their FIRST message is subscribe
-    const intro = whispers.filter((w) => isIntro(w.msg)).map((w) => w.msg).join(" ");
-    expect(intro).toMatch(/welcome/i);
-    expect(intro).not.toMatch(/whisper "subscribe"/i); // never pitch subscribe to a subscriber
+    const msgs = whispers.map((w) => w.msg);
+    expect(msgs.some((m) => isIntro(m))).toBe(false); // no "I'm the tracker" identity line at all
+    const reply = "reply to subscribe"; // the mock stands in for "You're subscribed!"
+    const recruit = recruitingLine(config);
+    expect(msgs).toContain(reply);
+    expect(msgs).toContain(recruit);
+    expect(msgs.indexOf(recruit)).toBeGreaterThan(msgs.indexOf(reply)); // recruiting AFTER the confirmation
+  });
+
+  it("the confirmation reply is identical whether they subscribe first or after a 'hey'", async () => {
+    const confirm = (w: { to: string; msg: string }[]): string[] =>
+      w.map((x) => x.msg).filter((m) => m === "reply to subscribe");
+
+    const direct = make(); // first message is subscribe
+    await direct.outreach.onListenerContact("Raider", "subscribe", "horde");
+
+    const staged = make(); // "hey" then "subscribe"
+    await staged.outreach.onListenerContact("Other", "hey", "horde");
+    await staged.outreach.onListenerContact("Other", "subscribe", "horde");
+
+    expect(confirm(direct.whispers)).toEqual(["reply to subscribe"]);
+    expect(confirm(staged.whispers)).toEqual(["reply to subscribe"]); // same single confirmation
   });
 
   it("forwards the listener's faction to the command engine as the source hint", async () => {

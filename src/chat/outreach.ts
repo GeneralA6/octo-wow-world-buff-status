@@ -27,17 +27,20 @@ export type IsSubscribedFn = (name: string) => Promise<boolean>;
  *  attribution and recruiting that the terse command replies deliberately drop. No tips: those
  *  ride the buff-drop message. Two short whispers, each well under the client's line limit.
  *
- *  When the first contact IS a subscribe (`subscribing`), the "whisper subscribe" pitch would be
- *  telling a subscriber to subscribe, so line 1 welcomes them instead — the "You're subscribed!"
- *  confirmation that follows carries the pinging detail. */
-export function introLines(config: OutreachConfig, subscribing = false): string[] {
-  const identity = subscribing
-    ? `Welcome! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild. Whisper "help" any time to see everything I can do.`
-    : `Hi! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild - I ping you in-game just before the Rallying Cry drops. Whisper "subscribe" for pings, or "help" for more.`;
+ *  This is the intro for a NON-subscribe first contact (a question, "status", "help"). When the
+ *  first contact IS a subscribe, the identity/pitch is skipped entirely — the "You're subscribed!"
+ *  confirmation stands on its own and `recruitingLine` follows it (see `onListenerContact`). */
+export function introLines(config: OutreachConfig): string[] {
   return [
-    identity,
-    `<${config.guildName}> is recruiting, too - whisper "invite" any time and I'll send you a guild invite.`,
+    `Hi! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild - I ping you in-game just before the Rallying Cry drops. Whisper "subscribe" for pings, or "help" for more.`,
+    recruitingLine(config),
   ];
+}
+
+/** The recruiting nudge — line 2 of the intro, and the standalone follow-up sent after a
+ *  first-contact subscribe's confirmation. */
+export function recruitingLine(config: OutreachConfig): string {
+  return `<${config.guildName}> is recruiting, too - whisper "invite" any time and I'll send you a guild invite.`;
 }
 
 /**
@@ -91,22 +94,37 @@ export class Outreach {
       this.#logger.debug(`outreach: watcher offline, cannot answer ${playerName} yet`);
       return;
     }
-    // Introduce Bufftracker the FIRST time a not-yet-subscribed player reaches us — once, not
-    // every message (the intro carries attribution + recruiting, which is spam if repeated).
-    // `introduceOnce` is atomic, so back-to-back whispers can't double-send.
-    if (!(await this.#isSubscribed(playerName)) && (await this.#introStore.introduceOnce(playerName))) {
+    // The FIRST time a not-yet-subscribed player reaches us (once, not every message —
+    // `introduceOnce` is atomic so back-to-back whispers can't double-send):
+    const firstContact = !(await this.#isSubscribed(playerName)) && (await this.#introStore.introduceOnce(playerName));
+    const subscribing = isSubscribeRequest(text);
+
+    // A NON-subscribe first contact gets the full intro (identity + recruiting) BEFORE the reply.
+    // A subscribe first contact skips it entirely — the "You're subscribed!" reply stands alone,
+    // identical to the "hey" then "subscribe" path, and the recruiting line follows it below.
+    if (firstContact && !subscribing) {
       this.#logger.info(`outreach: introducing Bufftracker to ${playerName}`);
-      // A first contact that IS a subscribe gets the welcome variant — never a pitch to subscribe.
-      for (const line of introLines(this.#config, isSubscribeRequest(text))) whisper(playerName, line);
-      // Invite silently — no "I sent you an invite" whisper. If they accept, they're welcomed in
-      // guild chat instead (the join is detected server-side). Gated on the watcher being guilded.
-      if (this.#config.guildInviteEnabled && this.#guildInvite) {
-        this.#guildInvite(playerName);
-      }
+      for (const line of introLines(this.#config)) whisper(playerName, line);
+      this.#autoInvite(playerName);
     }
+
     // Every message is transferred to Bufftracker's command engine and answered.
     if (this.#handle) {
       for (const reply of await this.#handle(playerName, text, sourceFaction)) whisper(playerName, reply);
     }
+
+    // A subscribe first contact: after the confirmation, a recruiting follow-up + the invite.
+    if (firstContact && subscribing) {
+      this.#logger.info(`outreach: welcoming new subscriber ${playerName}`);
+      whisper(playerName, recruitingLine(this.#config));
+      this.#autoInvite(playerName);
+    }
+  }
+
+  /** Auto guild-invite (silent — no "I sent you an invite" whisper). If they accept, they're
+   *  welcomed in guild chat instead (the join is detected server-side). Gated on the watcher
+   *  being guilded (WOW_GUILD_INVITE). */
+  #autoInvite(playerName: string): void {
+    if (this.#config.guildInviteEnabled && this.#guildInvite) this.#guildInvite(playerName);
   }
 }
