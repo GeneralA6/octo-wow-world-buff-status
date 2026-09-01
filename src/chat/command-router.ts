@@ -49,6 +49,9 @@ export interface CommandDeps {
   /** Receives a player's "feedback"/"suggest" message (sender + text). Fire-and-forget:
    *  the caller persists it and posts it to the feedback channel. Undefined = no-op. */
   readonly onFeedback?: (from: string, text: string) => void;
+  /** Fired (fire-and-forget) when a player newly subscribes, so the caller can record them in
+   *  the lifetime user ledger — a total that survives a later unsubscribe. Undefined = no-op. */
+  readonly onSubscribe?: (name: string) => void;
   /** How long the raid in progress has been in the lair (form → now), or null if none — for status. */
   readonly raidElapsed?: () => number | null;
   /** The reference number of the raid in progress, or null if none — for status. */
@@ -107,7 +110,10 @@ export class CommandRouter {
         const added = await store.add(sender);
         // Set their side: from the listener they came through if we know it (certain, no /who),
         // else a best-effort /who (a custom race or being offline leaves them on both).
-        if (added) await this.#autoSetFaction(sender, sourceFaction);
+        if (added) {
+          await this.#autoSetFaction(sender, sourceFaction);
+          this.#deps.onSubscribe?.(sender); // record in the lifetime user ledger
+        }
         return added
           ? [`You're subscribed! I'll ping you in-game when a raid clears and the Onyxia buff is about to drop.`]
           : [`You're already subscribed to ${areaName} alerts. "help" for more.`];

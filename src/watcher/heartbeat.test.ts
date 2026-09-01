@@ -47,6 +47,11 @@ describe("formatHeartbeat", () => {
     expect(line).not.toContain("-> uses");
   });
 
+  it("shows the lifetime user total beside active subs when provided", () => {
+    const line = formatHeartbeat({ ...base, subscribers: 177, totalUsers: 210 });
+    expect(line).toContain("177 subs (210 all-time)");
+  });
+
   it("reports each faction's buff as up-with-minutes or clear", () => {
     const line = formatHeartbeat({
       ...base,

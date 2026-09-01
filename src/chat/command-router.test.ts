@@ -15,6 +15,7 @@ function deps(
   const store = new InMemorySubscriberStore();
   const tracker = new RaidTracker(15);
   const feedback: { from: string; text: string }[] = [];
+  const subscribed: string[] = [];
   const router = new CommandRouter({
     store,
     activeRaids: () => tracker.activeRaids(),
@@ -25,8 +26,9 @@ function deps(
     guildName: "Rage Quit",
     community: "OctoWoW",
     onFeedback: opts.withFeedback === false ? undefined : (from, text) => feedback.push({ from, text }),
+    onSubscribe: (name) => subscribed.push(name),
   });
-  return { store, tracker, router, feedback };
+  return { store, tracker, router, feedback, subscribed };
 }
 
 function crowd(guild: string, count: number): WhoPlayer[] {
@@ -56,6 +58,13 @@ describe("CommandRouter", () => {
     await router.handle("Raider", "subscribe");
     expect((await router.handle("Raider", "unsubscribe"))[0]).toMatch(/Unsubscribed/);
     expect(await store.has("Raider")).toBe(false);
+  });
+
+  it("fires onSubscribe once for a fresh subscribe (for the lifetime ledger), not on a repeat", async () => {
+    const { router, subscribed } = deps();
+    await router.handle("Raider", "subscribe");
+    await router.handle("Raider", "subscribe"); // already subscribed → no second record
+    expect(subscribed).toEqual(["Raider"]);
   });
 
   it("captures feedback with the sender's name and thanks them", async () => {

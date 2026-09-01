@@ -71,6 +71,7 @@ import {
 import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
 import { InMemoryIntroStore, MongoIntroStore, type IntroStore } from "./chat/intro-store.js";
+import { InMemoryUserLedger, MongoUserLedger, type UserLedger } from "./subscribers/user-ledger.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
 import { WhisperPool } from "./chat/whisper-pool.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
@@ -233,6 +234,8 @@ interface ConnectionServices {
   readonly durationStore: DurationStore;
   readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
+  /** Lifetime distinct-subscriber count for the heartbeat stat (survives unsubscribing). */
+  readonly userLedger: UserLedger;
   readonly router: CommandRouter;
   readonly dm: DiscordDmSender;
   readonly outreach: Outreach;
@@ -272,7 +275,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
@@ -647,10 +650,11 @@ async function runConnection(
     };
 
     const logHeartbeat = async (now: number): Promise<void> => {
-      const [series, learnedMedianMs, subscribers, buffs] = await Promise.all([
+      const [series, learnedMedianMs, subscribers, totalUsers, buffs] = await Promise.all([
         durationStore.recent(TIMER_EVAL_WINDOW),
         durationStore.median(config.raidLearnMinSamples),
         store.all().then((all) => all.length),
+        userLedger.count().catch(() => 0),
         Promise.all(
           FACTIONS.map(async (faction) => {
             const state = await buffStore.current(faction, new Date(now));
@@ -665,6 +669,7 @@ async function runConnection(
       logger.info(
         formatHeartbeat({
           subscribers,
+          totalUsers,
           samples: evaln.samples,
           learnedMedianMs,
           improvedMs: evaln.improvedEstimateMs,
@@ -1299,6 +1304,23 @@ async function main(): Promise<void> {
       logger.error(`intros: MongoDB connect failed (${describeError(error)}); remembering in memory`);
     }
   }
+  // Lifetime user count for statistics: every distinct player who has ever subscribed, kept even
+  // after they unsubscribe (the subscriber store drops the active row; this ledger never does).
+  let userLedger: UserLedger = new InMemoryUserLedger();
+  if (config.mongodbUri) {
+    try {
+      userLedger = await MongoUserLedger.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("users: counting lifetime subscribers in MongoDB");
+    } catch (error) {
+      logger.error(`users: MongoDB connect failed (${describeError(error)}); counting in memory`);
+    }
+  }
+  // Seed the ledger with anyone already subscribed (they predate it) so the total is right from
+  // the first boot. Idempotent, and fire-and-forget so it never delays startup.
+  void store
+    .all()
+    .then((subs) => Promise.all(subs.map((s) => userLedger.record(s.name))))
+    .catch((error) => logger.debug(`users: seed failed (${describeError(error)})`));
 
   // Chronicle early-confirm: during a departure WE detect, a fresh kill log by one of the raid's
   // roster confirms the clear and lets processLane skip the sustained wait (never a trigger on its
@@ -1391,6 +1413,8 @@ async function main(): Promise<void> {
     community: config.community,
     discordInvite: config.discordServerInvite,
     onFeedback,
+    onSubscribe: (name) =>
+      void userLedger.record(name).catch((error) => logger.debug(`users: record failed (${describeError(error)})`)),
   });
   const outreach = new Outreach(
     {
@@ -1417,6 +1441,7 @@ async function main(): Promise<void> {
     durationStore,
     snapshots,
     store,
+    userLedger,
     router,
     dm,
     outreach,
@@ -1458,6 +1483,7 @@ async function main(): Promise<void> {
       durationStore.close(),
       feedbackStore.close(),
       introStore.close(),
+      userLedger.close(),
       raidCounterStore.close(),
       raidStateStore.close(),
       chronicleStore ? chronicleStore.close() : Promise.resolve(),

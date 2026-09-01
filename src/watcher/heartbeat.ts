@@ -25,6 +25,8 @@ export interface HeartbeatAccuracy {
 
 export interface HeartbeatStats {
   readonly subscribers: number;
+  /** Distinct people who have EVER subscribed (survives unsubscribing). Omitted = not shown. */
+  readonly totalUsers?: number;
   readonly samples: number;
   /** The learned median clear-time once >= minSamples are on record, else null. */
   readonly learnedMedianMs: number | null;
@@ -63,5 +65,9 @@ export function formatHeartbeat(stats: HeartbeatStats): string {
       : stats.buffs
           .map((b) => `${b.faction} ${b.leftMs === null ? "clear" : `up ${mins(b.leftMs)}m left`}`)
           .join(", ");
-  return `monitor: ${stats.subscribers} subs; raid timer ${timer}${accuracy}; buffs ${buffs}`;
+  const subs =
+    stats.totalUsers != null
+      ? `${stats.subscribers} subs (${stats.totalUsers} all-time)`
+      : `${stats.subscribers} subs`;
+  return `monitor: ${subs}; raid timer ${timer}${accuracy}; buffs ${buffs}`;
 }
