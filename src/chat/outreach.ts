@@ -1,4 +1,5 @@
 import type { Logger } from "../logger.js";
+import type { Faction } from "../subscribers/store.js";
 
 export interface OutreachConfig {
   readonly guildName: string;
@@ -10,8 +11,10 @@ export interface OutreachConfig {
 
 export type WhisperFn = (target: string, message: string) => void;
 export type GuildInviteFn = (target: string) => void;
-/** Runs a player's message through the command engine and returns the reply line(s). */
-export type HandleFn = (sender: string, text: string) => Promise<string[]>;
+/** Runs a player's message through the command engine and returns the reply line(s).
+ *  `sourceFaction` is the player's certain side when they reached us through a faction-specific
+ *  listener (a cross-faction whisper is impossible), so the engine can skip the /who. */
+export type HandleFn = (sender: string, text: string, sourceFaction: Faction | null) => Promise<string[]>;
 /** Whether a player is already a subscriber — subscribers are onboarded, so they skip the intro. */
 export type IsSubscribedFn = (name: string) => Promise<boolean>;
 
@@ -62,8 +65,10 @@ export class Outreach {
   }
 
   /** A player whispered a listener — introduce Bufftracker unless they're already subscribed,
-   *  then route their message through Bufftracker's command engine and whisper back the reply. */
-  async onListenerContact(playerName: string, text: string): Promise<void> {
+   *  then route their message through Bufftracker's command engine and whisper back the reply.
+   *  `sourceFaction` is the listener's side (the player's, for certain), passed to the engine so
+   *  it can set/tailor the side without a /who; null for a faction-less listener. */
+  async onListenerContact(playerName: string, text: string, sourceFaction: Faction | null = null): Promise<void> {
     const whisper = this.#whisper;
     if (!whisper) {
       // Watcher not in world — can't reply; their next contact will be handled.
@@ -81,7 +86,7 @@ export class Outreach {
     }
     // Every message is transferred to Bufftracker's command engine and answered.
     if (this.#handle) {
-      for (const reply of await this.#handle(playerName, text)) whisper(playerName, reply);
+      for (const reply of await this.#handle(playerName, text, sourceFaction)) whisper(playerName, reply);
     }
   }
 }

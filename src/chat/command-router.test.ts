@@ -130,6 +130,50 @@ describe("CommandRouter", () => {
     expect(reply).not.toMatch(/Orgrimmar/);
   });
 
+  it("subscribe via a listener sets the side from the hint, with NO /who lookup", async () => {
+    const { store, router } = deps();
+    let lookups = 0;
+    router.setFactionLookup(() => (lookups += 1));
+    await router.handle("Raider", "subscribe", "horde"); // came through the horde listener
+    expect((await store.get("Raider"))?.factions).toEqual(["horde"]);
+    expect(lookups).toBe(0); // the certain hint made the /who unnecessary
+  });
+
+  it("subscribe with no hint (a direct whisper) still falls back to the /who lookup", async () => {
+    const { router } = deps();
+    const looked: string[] = [];
+    router.setFactionLookup((name) => looked.push(name));
+    await router.handle("Raider", "subscribe"); // no source faction
+    expect(looked).toEqual(["Raider"]);
+  });
+
+  it("a natural-language subscribe through a listener also uses the hint, no /who", async () => {
+    const { store, router } = deps();
+    let lookups = 0;
+    router.setFactionLookup(() => (lookups += 1));
+    await router.handle("Raider", "hey sign me up", "alliance");
+    expect((await store.get("Raider"))?.factions).toEqual(["alliance"]);
+    expect(lookups).toBe(0);
+  });
+
+  it("status for a non-subscriber uses the listener hint instead of a /who", async () => {
+    const { router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", activeMsLeft: null },
+        { faction: "horde", activeMsLeft: 72 * 60_000 },
+      ],
+    });
+    let detects = 0;
+    router.setFactionDetect(async () => {
+      detects += 1;
+      return "alliance";
+    });
+    const reply = (await router.handle("Ghost", "status", "horde")).join(" ");
+    expect(reply).toMatch(/Orgrimmar/); // the hinted side
+    expect(reply).not.toMatch(/Stormwind/);
+    expect(detects).toBe(0); // hint used, the /who was skipped
+  });
+
   it("status without a raid still reports the buff cooldowns", async () => {
     const { router } = deps({
       buffCooldowns: async () => [

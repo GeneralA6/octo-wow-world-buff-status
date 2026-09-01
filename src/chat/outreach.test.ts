@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { silentLogger } from "../logger.js";
 import { Outreach, introLines } from "./outreach.js";
+import type { Faction } from "../subscribers/store.js";
 
 const config = { guildName: "Rage Quit", community: "OctoWoW", guildInviteEnabled: false, author: "Gibom" };
 
@@ -35,17 +36,19 @@ describe("Outreach", () => {
     const whispers: { to: string; msg: string }[] = [];
     const invites: string[] = [];
     const routed: { sender: string; text: string }[] = [];
+    const hints: (Faction | null)[] = [];
     const subs = new Set(subscribed.map((n) => n.toLowerCase()));
     const outreach = new Outreach(cfg, async (name) => subs.has(name.toLowerCase()), silentLogger);
     outreach.setChannel(
       (to, msg) => whispers.push({ to, msg }),
       (to) => invites.push(to),
     );
-    outreach.setHandler(async (sender, text) => {
+    outreach.setHandler(async (sender, text, sourceFaction) => {
       routed.push({ sender, text });
+      hints.push(sourceFaction);
       return [`reply to ${text}`];
     });
-    return { outreach, whispers, invites, routed, subs };
+    return { outreach, whispers, invites, routed, hints, subs };
   }
 
   const isIntro = (msg: string): boolean => /World Buff Tracker/.test(msg);
@@ -56,6 +59,18 @@ describe("Outreach", () => {
     expect(whispers.some((w) => isIntro(w.msg))).toBe(true); // the onboarding intro
     expect(whispers.some((w) => w.msg === "reply to hi")).toBe(true); // routed reply
     expect(routed).toEqual([{ sender: "Raider", text: "hi" }]);
+  });
+
+  it("forwards the listener's faction to the command engine as the source hint", async () => {
+    const { outreach, hints } = make();
+    await outreach.onListenerContact("Raider", "subscribe", "horde"); // horde listener
+    expect(hints).toEqual(["horde"]);
+  });
+
+  it("forwards a null hint when the listener has no faction configured", async () => {
+    const { outreach, hints } = make();
+    await outreach.onListenerContact("Raider", "subscribe"); // no faction passed
+    expect(hints).toEqual([null]);
   });
 
   it("greets a non-subscriber on EVERY contact — the once-limit is gone", async () => {

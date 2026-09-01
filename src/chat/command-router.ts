@@ -88,7 +88,13 @@ export class CommandRouter {
     this.#factionDetect = fn;
   }
 
-  async handle(sender: string, text: string): Promise<string[]> {
+  /**
+   * `sourceFaction` is the caller's known side when it can be trusted without a lookup — set when
+   * the player reached us through a faction-specific listener (a cross-faction whisper is
+   * impossible in-game, so the listener's side IS the player's). It lets subscribe/status skip the
+   * /who; null means fall back to a lookup.
+   */
+  async handle(sender: string, text: string, sourceFaction: Faction | null = null): Promise<string[]> {
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
     const command = (parts[0] ?? "").toLowerCase();
     const { store, activeRaids, areaName } = this.#deps;
@@ -98,9 +104,9 @@ export class CommandRouter {
       case "sub":
       case "start": {
         const added = await store.add(sender);
-        // Detect their side from a /who and ping them for just that faction (best-effort — a
-        // custom race or being offline leaves them on both). No manual step to nudge about.
-        if (added) this.#factionLookup?.(sender);
+        // Set their side: from the listener they came through if we know it (certain, no /who),
+        // else a best-effort /who (a custom race or being offline leaves them on both).
+        if (added) await this.#autoSetFaction(sender, sourceFaction);
         return added
           ? [`You're subscribed! I'll ping you in-game when a raid clears and the Onyxia buff is about to drop.`]
           : [`You're already subscribed to ${areaName} alerts. "help" for more.`];
@@ -131,7 +137,7 @@ export class CommandRouter {
       case "discord":
         return this.#discord();
       case "status":
-        return this.#status(sender);
+        return this.#status(sender, sourceFaction);
       case "help":
       case "commands":
       case "?":
@@ -146,10 +152,10 @@ export class CommandRouter {
       default: {
         // Natural-language intent detection over the whole message.
         const intent = parseIntent(text);
-        if (intent) return this.#handleIntent(intent, sender, text);
+        if (intent) return this.#handleIntent(intent, sender, text, sourceFaction);
         // Not a recognised command — answer with the live status and a pointer to help,
         // which is more useful than a dead-end "didn't get that".
-        return [...(await this.#status(sender)), `"help" for more.`];
+        return [...(await this.#status(sender, sourceFaction)), `"help" for more.`];
       }
     }
   }
@@ -157,7 +163,7 @@ export class CommandRouter {
   /** Live-state query for a player: what's raiding the lair now (and how long), and the
    *  Rallying Cry cooldown for THEIR capital(s) only — not both, since a player can only use
    *  their own side's buff. */
-  async #status(sender: string): Promise<string[]> {
+  async #status(sender: string, sourceFaction: Faction | null = null): Promise<string[]> {
     const { activeRaids, areaName, raidElapsed, raidNumber, buffCooldowns } = this.#deps;
     const raids = activeRaids();
     const elapsed = raidElapsed?.() ?? null;
@@ -170,7 +176,7 @@ export class CommandRouter {
       lines.push(`${areaName} now: ${id}${elapsed !== null ? ` (in for ~${humanClock(elapsed)})` : ""}.`);
     }
     if (buffCooldowns) {
-      const factions = await this.#relevantFactions(sender);
+      const factions = await this.#relevantFactions(sender, sourceFaction);
       const part = (await buffCooldowns())
         .filter((cd) => factions.includes(cd.faction))
         .map((cd) =>
@@ -186,13 +192,25 @@ export class CommandRouter {
     return lines;
   }
 
-  /** The capital side(s) relevant to a player: their subscribed side(s) if subscribed (we
-   *  already know it), else the side resolved from a /who — falling back to both if we can't tell. */
-  async #relevantFactions(sender: string): Promise<readonly Faction[]> {
+  /** The capital side(s) relevant to a player: their subscribed side(s) if subscribed (we already
+   *  know it); else the listener's side if they came through one (certain, no /who); else resolved
+   *  from a /who — falling back to both if we can't tell. */
+  async #relevantFactions(sender: string, sourceFaction: Faction | null): Promise<readonly Faction[]> {
     const sub = await this.#deps.store.get(sender);
     if (sub) return sub.factions;
+    if (sourceFaction) return [sourceFaction];
     const detected = this.#factionDetect ? await this.#factionDetect(sender) : null;
     return detected ? [detected] : DEFAULT_FACTIONS;
+  }
+
+  /** Set a fresh subscriber's side: from the listener they came through if known (certain — a
+   *  cross-faction whisper is impossible, so no /who), else fire the best-effort /who lookup. */
+  async #autoSetFaction(sender: string, sourceFaction: Faction | null): Promise<void> {
+    if (sourceFaction) {
+      await this.#deps.store.update(sender, { factions: [sourceFaction] });
+      return;
+    }
+    this.#factionLookup?.(sender);
   }
 
   /** Choose which side's buffs to get: "alliance", "horde", or "both". Empty shows current. */
@@ -254,7 +272,7 @@ export class CommandRouter {
   /** Act on a natural-language intent — re-dispatching to the canonical command where one
    *  exists. `text` is the whole original message, used when an intent carries a payload
    *  (feedback). */
-  async #handleIntent(intent: Intent, sender: string, text: string): Promise<string[]> {
+  async #handleIntent(intent: Intent, sender: string, text: string, sourceFaction: Faction | null): Promise<string[]> {
     const { areaName } = this.#deps;
     switch (intent) {
       case "subscribe":
@@ -262,7 +280,7 @@ export class CommandRouter {
       case "status":
       case "discord":
       case "help":
-        return this.handle(sender, intent);
+        return this.handle(sender, intent, sourceFaction);
       case "feedback":
         // The phrasing IS the suggestion — pass the whole message through.
         return this.#feedback(sender, text.trim());
