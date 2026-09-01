@@ -78,7 +78,7 @@ import { WhisperQueue } from "./chat/whisper-queue.js";
 import { WhisperPool } from "./chat/whisper-pool.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
-import { subscriberKey, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
+import { needsFactionResolution, subscriberKey, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 import { DownTracker } from "./down-tracker.js";
 
@@ -115,6 +115,11 @@ const WORLD_READY_TIMEOUT_MS = 30_000;
 
 /** How often the watcher logs its monitoring heartbeat (subs, learned timer, buffs). */
 const HEARTBEAT_MS = 15 * 60_000;
+
+/** How often the active faction resolver /who's ONE both-faction subscriber (via a listener),
+ *  and — when the backlog is empty — how long it waits before re-scanning for new stragglers. */
+const FACTION_RESOLVE_MS = 15_000;
+const FACTION_RESOLVE_IDLE_RESCAN_MS = 5 * 60_000;
 
 /** Re-check for a nearby object this often, and give up after this many tries. The
  *  object burst can arrive over several seconds, so we poll rather than wait once. */
@@ -297,6 +302,7 @@ async function runConnection(
     let pollTimer: NodeJS.Timeout | null = null;
     let cooldownTimer: NodeJS.Timeout | null = null;
     let statusYellTimer: NodeJS.Timeout | null = null;
+    let factionResolveTimer: NodeJS.Timeout | null = null;
     let whisperQueue: WhisperQueue | null = null;
     // The world server can accept the TCP connection but stall the handshake, and
     // there's no other timeout past connect — so bound the time to reach in-world.
@@ -311,6 +317,7 @@ async function runConnection(
       if (pollTimer) clearTimeout(pollTimer);
       if (cooldownTimer) clearInterval(cooldownTimer);
       if (statusYellTimer) clearInterval(statusYellTimer);
+      if (factionResolveTimer) clearInterval(factionResolveTimer);
       if (readyTimer) clearTimeout(readyTimer);
       whisperQueue?.stop();
       outreach.setChannel(null, null); // watcher going away — stop greeting through it
@@ -818,6 +825,29 @@ async function runConnection(
       }
     };
 
+    // Actively clear the both-faction backlog: each tick, /who ONE subscriber still on the
+    // unresolved "both" default (via a listener, so it never steals the raid poll's /who) and set
+    // their side — so they get the right city's alerts WITHOUT ever whispering us. Covers future
+    // stragglers too: a failed /who at subscribe, or a direct-to-Bufftracker whisper (no listener
+    // to infer from), lands back on the both-default and is picked up on the next re-scan.
+    // Offline / custom-race lookups return nothing and are retried on a later pass.
+    let resolveQueue: string[] = [];
+    let nextResolveRescanAt = 0;
+    const resolveNextFaction = async (now: number): Promise<void> => {
+      if (resolveQueue.length === 0) {
+        if (now < nextResolveRescanAt) return; // backlog was empty recently — don't re-scan every tick
+        const subs = await store.all().catch(() => []);
+        resolveQueue = subs.filter(needsFactionResolution).map((s) => s.name);
+        if (resolveQueue.length === 0) {
+          nextResolveRescanAt = now + FACTION_RESOLVE_IDLE_RESCAN_MS;
+          return;
+        }
+        logger.info(`faction: resolving ${resolveQueue.length} both-faction subscriber(s) in the background`);
+      }
+      const name = resolveQueue.shift();
+      if (name) await lookupFaction(name);
+    };
+
     // Guild invites the bot sends, so a matching JOIN can be welcomed in guild chat. An invite not
     // accepted within the TTL is stale (the popup lapsed), so we don't welcome on a late/unrelated join.
     const GUILD_INVITE_TTL_MS = 10 * 60_000;
@@ -884,6 +914,11 @@ async function runConnection(
             if (!settled) void yellCapitalStatus().catch((e) => logger.debug(`status yell: ${describeError(e)}`));
           }, config.statusYellMs);
           statusYellTimer.unref?.();
+          // Actively resolve the both-faction backlog in the background, one /who at a time.
+          factionResolveTimer = setInterval(() => {
+            if (!settled) void resolveNextFaction(Date.now()).catch((e) => logger.debug(`faction resolve: ${describeError(e)}`));
+          }, FACTION_RESOLVE_MS);
+          factionResolveTimer.unref?.();
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
         // A player joined the guild — if we invited them, welcome them in /g (no whisper).

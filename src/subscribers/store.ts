@@ -62,3 +62,16 @@ export interface SubscriberStore {
 export function subscriberKey(name: string): string {
   return name.trim().toLowerCase();
 }
+
+/**
+ * Whether a subscriber's side is still the unresolved "both" default and so is a candidate for
+ * resolution — both factions AND not a "manual" choice. The backlog both the passive listener
+ * re-resolve and the active /who resolver target; never touches a deliberate "both".
+ */
+export function needsFactionResolution(sub: Subscriber): boolean {
+  return (
+    sub.factionSource !== "manual" &&
+    sub.factions.includes("alliance") &&
+    sub.factions.includes("horde")
+  );
+}

@@ -1,4 +1,10 @@
-import { DEFAULT_FACTIONS, isFaction, type Faction, type SubscriberStore } from "../subscribers/store.js";
+import {
+  DEFAULT_FACTIONS,
+  isFaction,
+  needsFactionResolution,
+  type Faction,
+  type SubscriberStore,
+} from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-tracker.js";
 import { CITY_FOR, humanClock } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
@@ -234,9 +240,7 @@ export class CommandRouter {
   async #reResolveFaction(sender: string, sourceFaction: Faction | null): Promise<void> {
     if (!sourceFaction) return;
     const sub = await this.#deps.store.get(sender);
-    if (!sub || sub.factionSource === "manual") return;
-    const isBoth = sub.factions.includes("alliance") && sub.factions.includes("horde");
-    if (!isBoth) return;
+    if (!sub || !needsFactionResolution(sub)) return;
     await this.#deps.store.update(sender, { factions: [sourceFaction], factionSource: "auto" });
   }
 
