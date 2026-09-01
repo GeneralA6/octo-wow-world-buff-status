@@ -813,7 +813,7 @@ async function runConnection(
     const lookupFaction = async (name: string): Promise<void> => {
       const faction = await detectFaction(name);
       if (!faction) return; // offline, not found, or a custom race — leave them on "both"
-      if (await store.update(name, { factions: [faction] })) {
+      if (await store.update(name, { factions: [faction], factionSource: "auto" })) {
         logger.info(`faction: detected ${name} as ${faction}`);
       }
     };

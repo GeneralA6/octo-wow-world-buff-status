@@ -22,15 +22,27 @@ export function isFaction(value: string): value is Faction {
   return FACTIONS.some((faction) => faction === value);
 }
 
+/**
+ * How a subscriber's `factions` was decided:
+ *   - "manual"  — the player ran an explicit alliance/horde/both command,
+ *   - "auto"    — resolved from the listener they came through, or a /who,
+ *   - "default" — the both-default we haven't resolved yet.
+ * Auto-resolution (at subscribe or retroactively on a listener contact) must NEVER override a
+ * "manual" choice, so a player who deliberately picked "both" keeps it.
+ */
+export type FactionSource = "manual" | "auto" | "default";
+
 export interface Subscriber {
   readonly name: string;
   readonly factions: readonly Faction[];
+  readonly factionSource: FactionSource;
   readonly subscribedAt: Date;
 }
 
 /** Fields a subscriber can change after subscribing. Omit a field to leave it. */
 export interface SubscriberUpdate {
   readonly factions?: readonly Faction[];
+  readonly factionSource?: FactionSource;
 }
 
 export interface SubscriberStore {

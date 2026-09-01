@@ -31,7 +31,37 @@ describe("MongoSubscriberStore", () => {
     const store = new MongoSubscriberStore(db);
     expect(await store.add("Raider")).toBe(true);
     expect(await store.add("raider")).toBe(false);
-    expect(db.docs.get("raider")).toMatchObject({ name: "Raider", factions: ["alliance", "horde"] });
+    expect(db.docs.get("raider")).toMatchObject({
+      name: "Raider",
+      factions: ["alliance", "horde"],
+      factionSource: "default",
+    });
+  });
+
+  it("reads a doc with MISSING or EMPTY factions as both (an empty array must not silently drop it)", async () => {
+    const db = fakeDb();
+    db.docs.set("old", { _id: "old", name: "Old", subscribedAt: new Date() }); // no factions field
+    db.docs.set("empty", { _id: "empty", name: "Empty", factions: [], subscribedAt: new Date() });
+    const store = new MongoSubscriberStore(db);
+    expect((await store.get("old"))?.factions).toEqual(["alliance", "horde"]);
+    expect((await store.get("empty"))?.factions).toEqual(["alliance", "horde"]);
+  });
+
+  it("reads a doc with no factionSource as 'default' (resolvable), and keeps a stored one", async () => {
+    const db = fakeDb();
+    db.docs.set("old", { _id: "old", name: "Old", factions: ["horde"], subscribedAt: new Date() });
+    db.docs.set("set", { _id: "set", name: "Set", factions: ["horde"], factionSource: "manual", subscribedAt: new Date() });
+    const store = new MongoSubscriberStore(db);
+    expect((await store.get("old"))?.factionSource).toBe("default");
+    expect((await store.get("set"))?.factionSource).toBe("manual");
+  });
+
+  it("updates the factionSource alongside the side", async () => {
+    const db = fakeDb();
+    const store = new MongoSubscriberStore(db);
+    await store.add("Raider");
+    await store.update("raider", { factions: ["horde"], factionSource: "manual" });
+    expect(db.docs.get("raider")).toMatchObject({ factions: ["horde"], factionSource: "manual" });
   });
 
   it("maps a delete to whether a doc was removed", async () => {

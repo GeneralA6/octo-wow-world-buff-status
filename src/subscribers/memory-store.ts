@@ -16,6 +16,7 @@ export class InMemorySubscriberStore implements SubscriberStore {
     this.#byKey.set(key, {
       name: name.trim(),
       factions: [...DEFAULT_FACTIONS],
+      factionSource: "default", // not resolved yet — subscribe or a listener contact will
       subscribedAt: new Date(),
     });
     return true;
@@ -39,6 +40,7 @@ export class InMemorySubscriberStore implements SubscriberStore {
     this.#byKey.set(subscriberKey(name), {
       ...existing,
       ...(changes.factions !== undefined ? { factions: [...changes.factions] } : {}),
+      ...(changes.factionSource !== undefined ? { factionSource: changes.factionSource } : {}),
     });
     return true;
   }

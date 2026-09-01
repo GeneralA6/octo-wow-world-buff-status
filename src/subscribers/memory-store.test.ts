@@ -31,10 +31,14 @@ describe("InMemorySubscriberStore", () => {
     expect(await store.all()).toHaveLength(0);
   });
 
-  it("defaults a new subscriber to both sides", async () => {
+  it("defaults a new subscriber to both sides, source 'default' (unresolved)", async () => {
     const store = new InMemorySubscriberStore();
     await store.add("Raider");
-    expect(await store.get("raider")).toMatchObject({ name: "Raider", factions: ["alliance", "horde"] });
+    expect(await store.get("raider")).toMatchObject({
+      name: "Raider",
+      factions: ["alliance", "horde"],
+      factionSource: "default",
+    });
   });
 
   it("updates the subscribed side", async () => {

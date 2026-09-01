@@ -2,6 +2,7 @@ import { MongoClient } from "mongodb";
 import {
   DEFAULT_FACTIONS,
   type Faction,
+  type FactionSource,
   type Subscriber,
   type SubscriberStore,
   type SubscriberUpdate,
@@ -15,6 +16,8 @@ export interface SubscriberDoc {
   readonly name: string;
   /** Optional: docs predating faction prefs have none, and default to both. */
   readonly factions?: readonly Faction[];
+  /** Optional: docs predating source tracking have none, and read as "default" (resolvable). */
+  readonly factionSource?: FactionSource;
   readonly subscribedAt: Date;
 }
 
@@ -38,7 +41,7 @@ export interface SubscriberDb {
   deleteByKey(key: string): Promise<DeleteOutcome>;
   countByKey(key: string): Promise<number>;
   getByKey(key: string): Promise<SubscriberDoc | null>;
-  setFields(key: string, fields: Partial<Pick<SubscriberDoc, "factions">>): Promise<UpdateOutcome>;
+  setFields(key: string, fields: Partial<Pick<SubscriberDoc, "factions" | "factionSource">>): Promise<UpdateOutcome>;
   list(): Promise<SubscriberDoc[]>;
   close(): Promise<void>;
 }
@@ -47,9 +50,13 @@ const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "subscribers";
 
 function toSubscriber(doc: SubscriberDoc): Subscriber {
+  // Missing OR empty factions default to both — an empty array is a data fault that would
+  // otherwise silently drop the subscriber from every faction-filtered alert.
+  const factions = doc.factions && doc.factions.length > 0 ? [...doc.factions] : [...DEFAULT_FACTIONS];
   return {
     name: doc.name,
-    factions: doc.factions ? [...doc.factions] : [...DEFAULT_FACTIONS],
+    factions,
+    factionSource: doc.factionSource ?? "default",
     subscribedAt: doc.subscribedAt,
   };
 }
@@ -87,6 +94,7 @@ export class MongoSubscriberStore implements SubscriberStore {
       _id: key,
       name: name.trim(),
       factions: [...DEFAULT_FACTIONS],
+      factionSource: "default", // not resolved yet — subscribe or a listener contact will
       subscribedAt: new Date(),
     });
     return result.upsertedCount === 1;
@@ -114,8 +122,9 @@ export class MongoSubscriberStore implements SubscriberStore {
   async update(name: string, changes: SubscriberUpdate): Promise<boolean> {
     const key = subscriberKey(name);
     if (!key) return false;
-    const fields: { factions?: readonly Faction[] } = {};
+    const fields: { factions?: readonly Faction[]; factionSource?: FactionSource } = {};
     if (changes.factions !== undefined) fields.factions = changes.factions;
+    if (changes.factionSource !== undefined) fields.factionSource = changes.factionSource;
     if (Object.keys(fields).length === 0) return this.has(name);
     return (await this.#db.setFields(key, fields)).matchedCount === 1;
   }

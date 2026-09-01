@@ -145,8 +145,52 @@ describe("CommandRouter", () => {
     let lookups = 0;
     router.setFactionLookup(() => (lookups += 1));
     await router.handle("Raider", "subscribe", "horde"); // came through the horde listener
-    expect((await store.get("Raider"))?.factions).toEqual(["horde"]);
+    const sub = await store.get("Raider");
+    expect(sub?.factions).toEqual(["horde"]);
+    expect(sub?.factionSource).toBe("auto"); // resolved, not a manual choice
     expect(lookups).toBe(0); // the certain hint made the /who unnecessary
+  });
+
+  it("an explicit alliance/horde/both command marks the side as MANUAL", async () => {
+    const { store, router } = deps();
+    await router.handle("Raider", "subscribe", "horde");
+    await router.handle("Raider", "both"); // deliberate choice
+    const sub = await store.get("Raider");
+    expect(sub?.factions).toEqual(["alliance", "horde"]);
+    expect(sub?.factionSource).toBe("manual");
+  });
+
+  describe("retroactive re-resolve (the both-faction backlog)", () => {
+    it("narrows a both-faction subscriber to the listener's side on a later contact", async () => {
+      const { store, router } = deps();
+      await router.handle("Raider", "subscribe"); // direct whisper, no side → both default
+      expect((await store.get("Raider"))?.factions).toEqual(["alliance", "horde"]);
+      await router.handle("Raider", "status", "horde"); // later, via the horde listener
+      const sub = await store.get("Raider");
+      expect(sub?.factions).toEqual(["horde"]);
+      expect(sub?.factionSource).toBe("auto");
+    });
+
+    it("does NOT override a deliberate 'both' (manual) choice", async () => {
+      const { store, router } = deps();
+      await router.handle("Raider", "subscribe", "alliance");
+      await router.handle("Raider", "both"); // manual both
+      await router.handle("Raider", "status", "horde"); // contact via horde listener
+      expect((await store.get("Raider"))?.factions).toEqual(["alliance", "horde"]); // untouched
+    });
+
+    it("leaves an already-resolved single side alone", async () => {
+      const { store, router } = deps();
+      await router.handle("Raider", "subscribe", "alliance"); // resolved to alliance (auto)
+      await router.handle("Raider", "status", "horde"); // contact via the OTHER listener
+      expect((await store.get("Raider"))?.factions).toEqual(["alliance"]); // not flipped
+    });
+
+    it("does nothing for a non-subscriber or a direct (no-listener) contact", async () => {
+      const { store, router } = deps();
+      await router.handle("Ghost", "status", "horde"); // not subscribed
+      expect(await store.get("Ghost")).toBeNull();
+    });
   });
 
   it("subscribe with no hint (a direct whisper) still falls back to the /who lookup", async () => {

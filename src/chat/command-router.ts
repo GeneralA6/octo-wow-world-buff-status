@@ -99,6 +99,9 @@ export class CommandRouter {
    * skip the /who; null means fall back to a lookup.
    */
   async handle(sender: string, text: string, sourceFaction: Faction | null = null): Promise<string[]> {
+    // Retroactively resolve a both-faction subscriber's side from the listener they came through,
+    // before answering — so the reply (and any alerts) reflect their real side from now on.
+    await this.#reResolveFaction(sender, sourceFaction);
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
     const command = (parts[0] ?? "").toLowerCase();
     const { store, activeRaids, areaName } = this.#deps;
@@ -216,10 +219,25 @@ export class CommandRouter {
    *  so no /who — see `handle`), else fire the best-effort /who lookup. */
   async #autoSetFaction(sender: string, sourceFaction: Faction | null): Promise<void> {
     if (sourceFaction) {
-      await this.#deps.store.update(sender, { factions: [sourceFaction] });
+      await this.#deps.store.update(sender, { factions: [sourceFaction], factionSource: "auto" });
       return;
     }
     this.#factionLookup?.(sender);
+  }
+
+  /**
+   * A subscribed player reached us through a faction-specific listener — retroactively resolve
+   * their side if it's still the unresolved "both" default. Never touches a "manual" choice (so a
+   * deliberate "both" is kept) or an already-resolved single side. This is what clears the
+   * both-faction backlog as those subscribers interact, no /who needed.
+   */
+  async #reResolveFaction(sender: string, sourceFaction: Faction | null): Promise<void> {
+    if (!sourceFaction) return;
+    const sub = await this.#deps.store.get(sender);
+    if (!sub || sub.factionSource === "manual") return;
+    const isBoth = sub.factions.includes("alliance") && sub.factions.includes("horde");
+    if (!isBoth) return;
+    await this.#deps.store.update(sender, { factions: [sourceFaction], factionSource: "auto" });
   }
 
   /** Choose which side's buffs to get: "alliance", "horde", or "both". Empty shows current. */
@@ -242,7 +260,7 @@ export class CommandRouter {
     if (!factions) {
       return [`Whisper "alliance", "horde", or "both". You're on ${factionLabel(sub.factions)}.`];
     }
-    await store.update(sender, { factions: [...factions] });
+    await store.update(sender, { factions: [...factions], factionSource: "manual" });
     return [`Done - I'll alert you for ${factionLabel(factions)} buffs.`];
   }
 
