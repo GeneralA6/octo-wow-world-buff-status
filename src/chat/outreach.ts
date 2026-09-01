@@ -1,5 +1,4 @@
 import type { Logger } from "../logger.js";
-import type { GreetLedger } from "./greet-ledger.js";
 
 export interface OutreachConfig {
   readonly guildName: string;
@@ -13,6 +12,8 @@ export type WhisperFn = (target: string, message: string) => void;
 export type GuildInviteFn = (target: string) => void;
 /** Runs a player's message through the command engine and returns the reply line(s). */
 export type HandleFn = (sender: string, text: string) => Promise<string[]>;
+/** Whether a player is already a subscriber — subscribers are onboarded, so they skip the intro. */
+export type IsSubscribedFn = (name: string) => Promise<boolean>;
 
 /** The lines Bufftracker whispers to a player who first contacts a listener. Concise: what
  *  it does and how to opt in — no attribution, no recruiting, no tips (those ride the buff-drop
@@ -31,22 +32,21 @@ export function introLines(config: OutreachConfig): string[] {
  *
  * Every listener whisper is routed to Bufftracker's command engine and answered, so a listener
  * is a full front-end for Bufftracker — you can whisper "subscribe" or "help" at onyxiabuffsw
- * and it works, and a player is never left without a reply. On a player's FIRST contact it also
- * sends the onboarding intro (once — persisted in the {@link GreetLedger}, so a nightly redeploy
- * doesn't re-introduce itself to a regular). Only acts while the watcher is available; if it's
- * offline the contact is NOT claimed, so their next contact retries.
+ * and it works, and a player is never left without a reply. It also sends the onboarding intro to
+ * any player who ISN'T subscribed yet — every time, so it keeps nudging them to join — and stops
+ * once they subscribe (they're onboarded). Only acts while the watcher is available.
  */
 export class Outreach {
   #whisper: WhisperFn | null = null;
   #guildInvite: GuildInviteFn | null = null;
   #handle: HandleFn | null = null;
   readonly #config: OutreachConfig;
-  readonly #greeted: GreetLedger;
+  readonly #isSubscribed: IsSubscribedFn;
   readonly #logger: Logger;
 
-  constructor(config: OutreachConfig, greeted: GreetLedger, logger: Logger) {
+  constructor(config: OutreachConfig, isSubscribed: IsSubscribedFn, logger: Logger) {
     this.#config = config;
-    this.#greeted = greeted;
+    this.#isSubscribed = isSubscribed;
     this.#logger = logger;
   }
 
@@ -61,17 +61,17 @@ export class Outreach {
     this.#handle = handle;
   }
 
-  /** A player whispered a listener — introduce Bufftracker on their first contact, then route
-   *  their message (every time) through Bufftracker's command engine and whisper back the reply. */
+  /** A player whispered a listener — introduce Bufftracker unless they're already subscribed,
+   *  then route their message through Bufftracker's command engine and whisper back the reply. */
   async onListenerContact(playerName: string, text: string): Promise<void> {
     const whisper = this.#whisper;
     if (!whisper) {
-      // Watcher not in world — don't claim the greeting, so we retry on their next contact.
+      // Watcher not in world — can't reply; their next contact will be handled.
       this.#logger.debug(`outreach: watcher offline, cannot answer ${playerName} yet`);
       return;
     }
-    // First contact → the onboarding intro (and a guild invite when that's enabled).
-    if (await this.#greeted.claim(playerName)) {
+    // Introduce the bot to anyone not subscribed yet — every contact, until they join.
+    if (!(await this.#isSubscribed(playerName))) {
       this.#logger.info(`outreach: greeting ${playerName}`);
       for (const line of introLines(this.#config)) whisper(playerName, line);
       if (this.#config.guildInviteEnabled && this.#guildInvite) {
