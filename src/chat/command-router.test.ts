@@ -95,11 +95,39 @@ describe("CommandRouter", () => {
       ],
     });
     tracker.update(crowd("Nightfall", 20));
+    // "Raider" isn't subscribed and no /who detect is wired here, so both capitals show.
     const reply = await router.handle("Raider", "status");
     expect(reply[0]).toMatch(/raid #834.*in for ~42m/);
     expect(reply[0]).not.toMatch(/\b20\b/); // player count is redundant to a user — omitted
     expect(reply[1]).toContain("Stormwind: a fresh buff can drop now");
-    expect(reply[1]).toMatch(/Orgrimmar: buff up, ~1h12m/);
+    expect(reply[1]).toMatch(/Orgrimmar: buff on cooldown, ~1h12m/); // "on cooldown", not "up"
+  });
+
+  it("shows only the subscriber's own side's cooldown, not both", async () => {
+    const { store, router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", activeMsLeft: null },
+        { faction: "horde", activeMsLeft: 72 * 60_000 },
+      ],
+    });
+    await store.add("Raider");
+    await store.update("Raider", { factions: ["horde"] }); // subscribed on the horde side
+    const reply = (await router.handle("Raider", "status")).join(" ");
+    expect(reply).toMatch(/Orgrimmar: buff on cooldown/); // their capital
+    expect(reply).not.toMatch(/Stormwind/); // never the other side
+  });
+
+  it("detects a non-subscriber's side via /who and shows only that capital", async () => {
+    const { router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", activeMsLeft: null },
+        { faction: "horde", activeMsLeft: 72 * 60_000 },
+      ],
+    });
+    router.setFactionDetect(async () => "alliance"); // /who resolves them to alliance
+    const reply = (await router.handle("Ghost", "status")).join(" ");
+    expect(reply).toMatch(/Stormwind: a fresh buff can drop now/);
+    expect(reply).not.toMatch(/Orgrimmar/);
   });
 
   it("status without a raid still reports the buff cooldowns", async () => {

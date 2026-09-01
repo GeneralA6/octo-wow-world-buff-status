@@ -257,6 +257,7 @@ async function runConnection(
       outreach.setChannel(null, null); // watcher going away — stop greeting through it
       router.setGuildInvite(null); // and stop offering guild invites until reconnected
       router.setFactionLookup(null); // and stop the /who-based faction detection
+      router.setFactionDetect(null);
       buffDropSink.notify = null; // and stop routing buff-drop whispers until reconnected
       if (error) reject(error);
       else resolve();
@@ -597,19 +598,25 @@ async function runConnection(
       return result;
     };
 
-    // Detect a new subscriber's side with a targeted /who — they're online, having just
-    // whispered. Best-effort: they stay on "both" if it can't run or their race is custom.
-    const lookupFaction = async (name: string): Promise<void> => {
+    // Resolve a player's side with a targeted /who — they're online, having just whispered.
+    // Null if it can't run, they're not found, or their race is custom. Used to tailor the
+    // status to a non-subscriber's capital.
+    const detectFaction = async (name: string): Promise<Faction | null> => {
       try {
         const result = await queuedWho({ minLevel: 0, maxLevel: 100, playerName: name });
         const player = result.players.find((p) => subscriberKey(p.name) === subscriberKey(name));
-        const faction = player ? factionOfRace(player.raceId) : null;
-        if (!faction) return; // offline, not found, or a custom race — leave them on "both"
-        if (await store.update(name, { factions: [faction] })) {
-          logger.info(`faction: detected ${name} as ${faction}`);
-        }
+        return player ? factionOfRace(player.raceId) : null;
       } catch (error) {
         logger.debug(`faction lookup for ${name}: ${describeError(error)}`);
+        return null;
+      }
+    };
+    // Auto-set a new subscriber's side from the detected faction (leave "both" if unknown).
+    const lookupFaction = async (name: string): Promise<void> => {
+      const faction = await detectFaction(name);
+      if (!faction) return; // offline, not found, or a custom race — leave them on "both"
+      if (await store.update(name, { factions: [faction] })) {
+        logger.info(`faction: detected ${name} as ${faction}`);
       }
     };
 
@@ -642,6 +649,7 @@ async function runConnection(
               );
           }
           router.setFactionLookup((name) => void lookupFaction(name));
+          router.setFactionDetect(detectFaction);
           const poll = async (): Promise<void> => {
             try {
               const roster = await fetchRoster(queuedWho, config.watchAreaId);

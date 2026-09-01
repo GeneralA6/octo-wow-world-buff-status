@@ -63,6 +63,9 @@ export class CommandRouter {
   // The watcher registers a /who-based faction detector; fired (fire-and-forget) when a
   // new subscriber is added, to auto-set their side. Null = detection unavailable.
   #factionLookup: ((name: string) => void) | null = null;
+  // The watcher registers a /who that RESOLVES a player's faction — used to tailor the
+  // status to a non-subscriber's side. Null = detection unavailable (falls back to both).
+  #factionDetect: ((name: string) => Promise<Faction | null>) | null = null;
 
   constructor(deps: CommandDeps) {
     this.#deps = deps;
@@ -76,6 +79,11 @@ export class CommandRouter {
   /** The watcher offers/withdraws /who-based faction detection as it connects/drops. */
   setFactionLookup(fn: ((name: string) => void) | null): void {
     this.#factionLookup = fn;
+  }
+
+  /** The watcher offers/withdraws a /who that resolves a player's faction, for the status. */
+  setFactionDetect(fn: ((name: string) => Promise<Faction | null>) | null): void {
+    this.#factionDetect = fn;
   }
 
   async handle(sender: string, text: string): Promise<string[]> {
@@ -121,7 +129,7 @@ export class CommandRouter {
       case "discord":
         return this.#discord();
       case "status":
-        return this.#status();
+        return this.#status(sender);
       case "help":
       case "commands":
       case "?":
@@ -139,14 +147,15 @@ export class CommandRouter {
         if (intent) return this.#handleIntent(intent, sender, text);
         // Not a recognised command — answer with the live status and a pointer to help,
         // which is more useful than a dead-end "didn't get that".
-        return [...(await this.#status()), `"help" for more.`];
+        return [...(await this.#status(sender)), `"help" for more.`];
       }
     }
   }
 
-  /** Live-state query: what's raiding the lair now (and how long they've been in), and how
-   *  long until a fresh Rallying Cry can drop in each capital. */
-  async #status(): Promise<string[]> {
+  /** Live-state query for a player: what's raiding the lair now (and how long), and the
+   *  Rallying Cry cooldown for THEIR capital(s) only — not both, since a player can only use
+   *  their own side's buff. */
+  async #status(sender: string): Promise<string[]> {
     const { activeRaids, areaName, raidElapsed, raidNumber, buffCooldowns } = this.#deps;
     const raids = activeRaids();
     const elapsed = raidElapsed?.() ?? null;
@@ -159,16 +168,29 @@ export class CommandRouter {
       lines.push(`${areaName} now: ${id}${elapsed !== null ? ` (in for ~${humanClock(elapsed)})` : ""}.`);
     }
     if (buffCooldowns) {
+      const factions = await this.#relevantFactions(sender);
       const part = (await buffCooldowns())
+        .filter((cd) => factions.includes(cd.faction))
         .map((cd) =>
+          // "on cooldown" (not "up"): to a WoW player "buff up" reads as READY; here it means
+          // one is active in the city, so a fresh one can't drop until it wears off.
           cd.activeMsLeft === null
             ? `${CITY_FOR[cd.faction]}: a fresh buff can drop now`
-            : `${CITY_FOR[cd.faction]}: buff up, ~${humanClock(cd.activeMsLeft)} until the next can drop`,
+            : `${CITY_FOR[cd.faction]}: buff on cooldown, ~${humanClock(cd.activeMsLeft)} until the next can drop`,
         )
         .join(" | ");
-      lines.push(`Rallying Cry - ${part}.`);
+      if (part) lines.push(`Rallying Cry - ${part}.`);
     }
     return lines;
+  }
+
+  /** The capital side(s) relevant to a player: their subscribed side(s) if subscribed (we
+   *  already know it), else the side resolved from a /who — falling back to both if we can't tell. */
+  async #relevantFactions(sender: string): Promise<readonly Faction[]> {
+    const sub = await this.#deps.store.get(sender);
+    if (sub) return sub.factions;
+    const detected = this.#factionDetect ? await this.#factionDetect(sender) : null;
+    return detected ? [detected] : DEFAULT_FACTIONS;
   }
 
   /** Choose which side's buffs to get: "alliance", "horde", or "both". Empty shows current. */
