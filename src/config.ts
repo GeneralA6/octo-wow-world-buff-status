@@ -73,6 +73,9 @@ export interface BotConfig {
   readonly raidClearSize: number;
   /** How long the Rallying Cry buff lasts, and blocks the next drop (the head window). */
   readonly buffDurationMs: number;
+  /** Within this much of the active buff expiring, if a raid is in the lair, the "🔥 buff
+   *  imminent" alert fires (a fresh buff is about to be producible) — once per cycle. */
+  readonly buffImminentMs: number;
   /** Estimated Onyxia clear time, used to predict a forming raid's end until learned. */
   readonly raidDurationEstimateMs: number;
   /** Learned-median clear time replaces the estimate once this many raids are recorded. */
@@ -265,6 +268,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   }
 
   const buffDurationMs = intWithDefault("WOW_BUFF_DURATION_MINUTES", 120, 1) * 60_000;
+  const buffImminentMs = intWithDefault("WOW_BUFF_IMMINENT_MINUTES", 30, 1) * 60_000;
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
   const raidLearnMinSamples = intWithDefault("WOW_RAID_LEARN_MIN_SAMPLES", 15, 1);
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
@@ -362,6 +366,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidLeftFloor,
     raidClearSize,
     buffDurationMs,
+    buffImminentMs,
     raidDurationEstimateMs,
     raidLearnMinSamples,
     raidMinClearMs,

@@ -214,3 +214,35 @@ export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], 
   const id = event.number != null ? `Raid #${event.number}` : "A raid";
   return `${id} has formed in ${areaName} - get ready to park in ${where} for the buff.`;
 }
+
+/**
+ * The highest-value "go park NOW" moment: a raid is in the lair AND the buff is about to wear
+ * off, so a fresh Rallying Cry is imminent — it'll drop the moment they clear and turn in the
+ * head. Distinct from the forming heads-up (which fires early, at form), the off-cooldown alert
+ * (at expiry) and the cleared alert (at the clear); this is the pre-expiry convergence, the
+ * window to head to the capital before the refresh lands. Discord channel post.
+ */
+export function formatBuffImminent(
+  faction: Faction,
+  raidNumber: number | null,
+  buffMsLeft: number,
+  areaName: string,
+): NotifyMessage {
+  const id = raidNumber != null ? `Raid #${raidNumber}` : "A raid";
+  const city = CITY_FOR[faction];
+  return {
+    kind: "entered",
+    title: `🔥 Rallying Cry buff imminent in ${city}`,
+    body:
+      `${id} is in ${areaName} and the buff wears off in ~${humanClock(buffMsLeft)} - ` +
+      `a fresh Rallying Cry should drop in ${city} the moment they clear. Park now to catch it.`,
+  };
+}
+
+/** The terse in-game whisper twin of the buff-imminent alert. */
+export function formatBuffImminentWhisper(faction: Faction, buffMsLeft: number): string {
+  return (
+    `${CITY_FOR[faction]} buff wears off in ~${humanClock(buffMsLeft)} and a raid's in the lair - ` +
+    `park now to catch the fresh Rallying Cry.`
+  );
+}

@@ -17,10 +17,13 @@ import type { RaidEvent } from "./raid-tracker.js";
  */
 
 export type RaidEventKind = RaidEvent["kind"];
+/** The dedup keys the ledger tracks: the two raid-event alerts, plus the "buff imminent" alert,
+ *  which has no RaidEvent of its own (it fires from the buff/raid convergence, not a detector). */
+export type BroadcastKind = RaidEventKind | "buff-imminent";
 
 export interface BroadcastRecord {
   readonly city: Faction;
-  readonly kind: RaidEventKind;
+  readonly kind: BroadcastKind;
   /** The raid group this alert was about, for the log and the status query. */
   readonly cohortLabel: string;
   readonly peak: number;
@@ -52,13 +55,13 @@ export function shouldBroadcast(
 
 export interface BroadcastLedger {
   /** The last broadcast for a (city, kind), or null if there's never been one. */
-  last(city: Faction, kind: RaidEventKind): Promise<BroadcastRecord | null>;
+  last(city: Faction, kind: BroadcastKind): Promise<BroadcastRecord | null>;
   /** Record a broadcast we just sent (upsert on city+kind). */
   record(rec: BroadcastRecord): Promise<void>;
   close(): Promise<void>;
 }
 
-function key(city: Faction, kind: RaidEventKind): string {
+function key(city: Faction, kind: BroadcastKind): string {
   return `${city}:${kind}`;
 }
 
@@ -66,7 +69,7 @@ function key(city: Faction, kind: RaidEventKind): string {
 export class InMemoryBroadcastLedger implements BroadcastLedger {
   readonly #records = new Map<string, BroadcastRecord>();
 
-  async last(city: Faction, kind: RaidEventKind): Promise<BroadcastRecord | null> {
+  async last(city: Faction, kind: BroadcastKind): Promise<BroadcastRecord | null> {
     return this.#records.get(key(city, kind)) ?? null;
   }
 
@@ -81,7 +84,7 @@ export class InMemoryBroadcastLedger implements BroadcastLedger {
 
 interface BroadcastDoc {
   readonly city: Faction;
-  readonly kind: RaidEventKind;
+  readonly kind: BroadcastKind;
   readonly cohortLabel: string;
   readonly peak: number;
   readonly lastBroadcastAt: Date;
@@ -89,7 +92,7 @@ interface BroadcastDoc {
 
 /** Narrow port over the Mongo collection, so the ledger's logic is unit-tested with a fake. */
 export interface BroadcastDb {
-  get(city: Faction, kind: RaidEventKind): Promise<BroadcastDoc | null>;
+  get(city: Faction, kind: BroadcastKind): Promise<BroadcastDoc | null>;
   upsert(doc: BroadcastDoc): Promise<void>;
   close(): Promise<void>;
 }
@@ -120,7 +123,7 @@ export class MongoBroadcastLedger implements BroadcastLedger {
     return new MongoBroadcastLedger(db);
   }
 
-  async last(city: Faction, kind: RaidEventKind): Promise<BroadcastRecord | null> {
+  async last(city: Faction, kind: BroadcastKind): Promise<BroadcastRecord | null> {
     const doc = await this.#db.get(city, kind);
     return doc
       ? {

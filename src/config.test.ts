@@ -155,6 +155,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_BUFF_DURATION_MINUTES: "90" }).buffDurationMs).toBe(90 * 60_000);
   });
 
+  it("defaults the buff-imminent window to 30m and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).buffImminentMs).toBe(30 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_BUFF_IMMINENT_MINUTES: "20" }).buffImminentMs).toBe(20 * 60_000);
+  });
+
   it("defaults the raid-duration estimate to 45m and accepts an override", () => {
     expect(loadConfig({ ...minimalEnv }).raidDurationEstimateMs).toBe(45 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_RAID_DURATION_MINUTES: "30" }).raidDurationEstimateMs).toBe(

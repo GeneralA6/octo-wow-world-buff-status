@@ -6,6 +6,8 @@ import {
   formatBuffCooldownRefreshedWhisper,
   formatBuffDropped,
   formatBuffDroppedWhisper,
+  formatBuffImminent,
+  formatBuffImminentWhisper,
   formatBuffWhisper,
   formatCapitalStatusYell,
   formatFeedbackPost,
@@ -285,5 +287,29 @@ describe("formatBuffWhisper", () => {
       AREA,
     );
     expect(left).toContain("Stormwind or Orgrimmar");
+  });
+});
+
+describe("formatBuffImminent", () => {
+  it("titles the imminent buff in the city and names the raid, time left, and 'park now'", () => {
+    const message = formatBuffImminent("alliance", 28, 25 * 60_000, AREA);
+    expect(message.title).toContain("🔥");
+    expect(message.title).toContain("Stormwind");
+    expect(message.body).toContain("Raid #28");
+    expect(message.body).toContain("Onyxia's Lair");
+    expect(message.body).toContain("~25m");
+    expect(message.body).toMatch(/park now/i);
+  });
+
+  it("falls back to 'A raid' when the raid is unnumbered", () => {
+    expect(formatBuffImminent("horde", null, 10 * 60_000, AREA).body).toContain("A raid");
+  });
+
+  it("the whisper twin names the city, the time left, and that a raid is in", () => {
+    const line = formatBuffImminentWhisper("horde", 25 * 60_000);
+    expect(line).toContain("Orgrimmar");
+    expect(line).toContain("~25m");
+    expect(line).toMatch(/raid'?s in the lair/i);
+    expect(line).toMatch(/park now/i);
   });
 });

@@ -13,6 +13,8 @@ import {
   formatBuffCooldownRefreshedWhisper,
   formatBuffDropped,
   formatBuffDroppedWhisper,
+  formatBuffImminent,
+  formatBuffImminentWhisper,
   formatBuffWhisper,
   formatCapitalStatusYell,
   formatFeedbackPost,
@@ -362,6 +364,38 @@ async function runConnection(
       }
     };
 
+    // The "🔥 buff imminent" alert: a raid is in the lair AND the buff is about to wear off, so a
+    // fresh Rallying Cry is coming when they clear — the highest-value "park now" moment. Fires
+    // once per buff cycle per city (its OWN dedup kind, so it's independent of the forming and
+    // cleared alerts), to Discord + that side's subscribers + a city yell. The whisper is tagged
+    // with the city so a buff dropping there purges it as stale, like the other park alerts.
+    const announceBuffImminent = async (
+      faction: Faction,
+      raidNumber: number | null,
+      buffMsLeft: number,
+      buffAppliedAt: Date,
+      now: number,
+    ): Promise<void> => {
+      const last = await broadcasts.last(faction, "buff-imminent");
+      if (!shouldBroadcast(last, buffAppliedAt, now, config.broadcastDedupMs)) return;
+      const message = formatBuffImminent(faction, raidNumber, buffMsLeft, config.watchAreaName);
+      logger.info(`ALERT buff-imminent (${faction}): ${message.body}`);
+      await push(message, [faction]);
+      if (config.whispersEnabled) {
+        const line = formatBuffImminentWhisper(faction, buffMsLeft);
+        yellSink[faction]?.(line);
+        try {
+          const subscribers = (await store.all()).filter((s) => s.factions.includes(faction));
+          if (subscribers.length > 0) broadcastWhisper(subscribers.map((s) => s.name), line, faction, [faction]);
+        } catch (error) {
+          logger.error(`subscribers: ${describeError(error)}`);
+        }
+      }
+      await broadcasts
+        .record({ city: faction, kind: "buff-imminent", cohortLabel: "a raid", peak: 0, lastBroadcastAt: new Date(now) })
+        .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
+    };
+
     // Whisper one side's in-game subscribers (used by buff drops and cooldown refreshes).
     const notifyFactionSubscribers = async (faction: Faction, whisperLine: string): Promise<void> => {
       if (!config.whispersEnabled) return;
@@ -393,23 +427,35 @@ async function runConnection(
     const lastBuffActive = new Map<Faction, boolean>();
     const checkCooldowns = async (): Promise<void> => {
       const now = new Date();
+      const nowMs = now.getTime();
       for (const faction of FACTIONS) {
-        let active = false;
+        let buff: Awaited<ReturnType<typeof buffStore.current>> = null;
         try {
-          active = (await buffStore.current(faction, now))?.active ?? false;
+          buff = await buffStore.current(faction, now);
         } catch (error) {
           logger.debug(`cooldown check ${faction}: ${describeError(error)}`);
           continue;
         }
+        const active = buff?.active ?? false;
         const was = lastBuffActive.get(faction);
         lastBuffActive.set(faction, active);
         if (was === true && !active) {
           logger.info(`Onyxia Rallying Cry cooldown refreshed for ${faction} (${faction === "alliance" ? "Stormwind" : "Orgrimmar"}) - a fresh one can drop again`);
           const whisperLine = formatBuffCooldownRefreshedWhisper(faction);
-          const raid = raidStateFor(faction, now.getTime()); // the post closes with the live lair status
+          const raid = raidStateFor(faction, nowMs); // the post closes with the live lair status
           void push(formatBuffCooldownRefreshed(faction, raid, config.watchAreaName), [faction]); // channel, pinging that side's role
           void notifyFactionSubscribers(faction, whisperLine); // in-game subscribers of that side
           yellSink[faction]?.(whisperLine); // broadcast to the capital (task: yell)
+        }
+        // 🔥 buff imminent: the buff is still up but about to wear off AND a raid is in the lair,
+        // so a fresh Rallying Cry is coming when they clear — the pre-expiry "go park now" moment
+        // that no other alert covers. Deduped once per cycle inside announceBuffImminent.
+        if (buff?.active) {
+          const msLeft = buff.expiresAt.getTime() - nowMs;
+          const raid = raidStateFor(faction, nowMs);
+          if (raid && msLeft <= config.buffImminentMs) {
+            await announceBuffImminent(faction, raid.number, msLeft, buff.appliedAt, nowMs);
+          }
         }
       }
     };
