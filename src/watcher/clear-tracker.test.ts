@@ -14,18 +14,27 @@ function tracker() {
 describe("ClearTracker", () => {
   it("does not track until the zone reaches raid strength", () => {
     const t = tracker();
-    expect(t.observe(R(10), 0, false)).toBeNull();
+    expect(t.observe(R(10), 0, false).clear).toBeNull();
     expect(t.tracking).toBe(false);
-    expect(t.observe(R(15), MIN, false)).toBeNull();
+    expect(t.observe(R(15), MIN, false).clear).toBeNull();
     expect(t.tracking).toBe(true);
+  });
+
+  it("reports a formation the poll it reaches strength, with the peak, and only that poll", () => {
+    const t = tracker();
+    expect(t.observe(R(10), 0, false).formed).toBeNull(); // below strength — no formation
+    const formed = t.observe(R(18), MIN, false).formed;
+    expect(formed).not.toBeNull();
+    expect(formed?.peak).toBe(18);
+    expect(t.observe(R(20), 2 * MIN, false).formed).toBeNull(); // already formed — not re-reported
   });
 
   it("TOLERATES a wipe — the same members drop out and run back inside the window", () => {
     const t = tracker();
     t.observe(R(30), 0, false); // formed
-    expect(t.observe(R(6), 2 * MIN, false)).toBeNull(); // wipe: only 6 of the roster visible
-    expect(t.observe(R(9), 4 * MIN, false)).toBeNull(); // still low, still inside 5 min
-    expect(t.observe(R(30), 5 * MIN, false)).toBeNull(); // same members ran back → recovered
+    expect(t.observe(R(6), 2 * MIN, false).clear).toBeNull(); // wipe: only 6 of the roster visible
+    expect(t.observe(R(9), 4 * MIN, false).clear).toBeNull(); // still low, still inside 5 min
+    expect(t.observe(R(30), 5 * MIN, false).clear).toBeNull(); // same members ran back → recovered
     expect(t.tracking).toBe(true); // still the same raid
   });
 
@@ -34,9 +43,9 @@ describe("ClearTracker", () => {
     t.observe(R(30), 0, false); // formed at 0
     // ...raid runs, then everyone leaves at 40 min and does not come back
     t.observe(R(30), 40 * MIN, false);
-    expect(t.observe(R(2), 41 * MIN, false)).toBeNull(); // departure begins
-    expect(t.observe(R(0), 45 * MIN, false)).toBeNull(); // 4 min in — not yet
-    const clear = t.observe(R(0), 46 * MIN, false); // 5 min sustained
+    expect(t.observe(R(2), 41 * MIN, false).clear).toBeNull(); // departure begins
+    expect(t.observe(R(0), 45 * MIN, false).clear).toBeNull(); // 4 min in — not yet
+    const clear = t.observe(R(0), 46 * MIN, false).clear; // 5 min sustained
     expect(clear).not.toBeNull();
     expect(clear?.durationMs).toBe(41 * MIN); // form(0) → departure start(41m), spanning nothing here
     expect(t.tracking).toBe(false); // reset, ready for the next raid
@@ -50,7 +59,7 @@ describe("ClearTracker", () => {
     t.observe(R(4), 30 * MIN, false); // wipe
     t.observe(R(30), 33 * MIN, false); // back
     t.observe(R(1), 50 * MIN, false); // real departure begins at 50m
-    const clear = t.observe(R(0), 56 * MIN, false); // sustained 6 min
+    const clear = t.observe(R(0), 56 * MIN, false).clear; // sustained 6 min
     expect(clear?.durationMs).toBe(50 * MIN); // 0 → 50m, wipes absorbed
   });
 
@@ -59,7 +68,7 @@ describe("ClearTracker", () => {
     t.observe(R(30), 0, false); // raid r0..r29
     // the raid leaves; 20 unrelated players are now in the lair
     t.observe(C(20), 20 * MIN, false); // cohort of the OLD roster = 0
-    const clear = t.observe(C(20), 26 * MIN, false); // old roster gone 6 min → clear
+    const clear = t.observe(C(20), 26 * MIN, false).clear; // old roster gone 6 min → clear
     expect(clear?.durationMs).toBe(20 * MIN);
   });
 
@@ -67,7 +76,7 @@ describe("ClearTracker", () => {
     const t = tracker();
     t.observe(R(30), 0, false);
     t.observe(R(4), 10 * MIN, false); // everyone drops...
-    expect(t.observe([], 11 * MIN, true)).toBeNull(); // ...but it's a blackout (server/us offline)
+    expect(t.observe([], 11 * MIN, true).clear).toBeNull(); // ...but it's a blackout (server/us offline)
     expect(t.tracking).toBe(false); // discarded, not recorded as a clear
   });
 
@@ -77,30 +86,30 @@ describe("ClearTracker", () => {
     t.observe(R(34), 2 * MIN, false); // grew
     t.observe(R(34), 3 * MIN, false); // roster caught up → peak 34
     t.observe(R(5), 20 * MIN, false); // wipe trough (not the peak)
-    const clear = t.observe(R(0), 26 * MIN, false);
+    const clear = t.observe(R(0), 26 * MIN, false).clear;
     expect(clear?.peak).toBe(34);
   });
 
-  it("assigns a reference number at form, exposes it, and carries it on the clear", () => {
+  it("assigns a reference number at form, exposes it on the formation and the clear", () => {
     let n = 40;
     const t = new ClearTracker({ formAt: 15, sustainedMs: 5 * MIN, nextNumber: () => ++n });
     expect(t.number).toBeNull();
-    t.observe(R(20), 0, false); // forms → #41
+    const formed = t.observe(R(20), 0, false).formed; // forms → #41
+    expect(formed?.number).toBe(41);
     expect(t.number).toBe(41);
     t.observe(R(0), 10 * MIN, false);
-    const clear = t.observe(R(0), 16 * MIN, false);
+    const clear = t.observe(R(0), 16 * MIN, false).clear;
     expect(clear?.number).toBe(41);
     expect(t.number).toBeNull(); // reset
-    t.observe(C(20), 30 * MIN, false); // next raid → #42
-    expect(t.number).toBe(42);
+    expect(t.observe(C(20), 30 * MIN, false).formed?.number).toBe(42); // next raid → #42
   });
 
   it("leaves raids unnumbered when no counter is configured", () => {
     const t = tracker();
-    t.observe(R(20), 0, false);
+    expect(t.observe(R(20), 0, false).formed?.number).toBeNull();
     expect(t.number).toBeNull();
     t.observe(R(0), 10 * MIN, false);
-    expect(t.observe(R(0), 16 * MIN, false)?.number).toBeNull();
+    expect(t.observe(R(0), 16 * MIN, false).clear?.number).toBeNull();
   });
 
   it("snapshots a raid and RESUMES it after a restart, still catching the clear", () => {
@@ -119,8 +128,18 @@ describe("ClearTracker", () => {
 
     // The raid leaves and stays gone — the resumed tracker confirms the clear.
     b.observe(R(0), 40 * MIN, false);
-    const clear = b.observe(R(0), 46 * MIN, false);
+    const clear = b.observe(R(0), 46 * MIN, false).clear;
     expect(clear?.durationMs).toBe(40 * MIN); // 0 → 40m, spanning the restart
+  });
+
+  it("does NOT re-report a formation on restore (resumed raids don't re-alert)", () => {
+    const a = tracker();
+    a.observe(R(30), 0, false);
+    const snap = a.snapshot();
+    const b = tracker();
+    b.restore(snap!);
+    // The next poll sees a present raid, not a fresh formation.
+    expect(b.observe(R(30), 21 * MIN, false).formed).toBeNull();
   });
 
   it("snapshot is null when no raid is tracked, and restore is ignored mid-raid", () => {
@@ -152,13 +171,13 @@ describe("ClearTracker", () => {
     const t = tracker();
     t.observe(R(30), 0, false);
     t.observe(R(0), 10 * MIN, false);
-    expect(t.observe(R(0), 16 * MIN, false)).not.toBeNull(); // first raid cleared at 16m
+    expect(t.observe(R(0), 16 * MIN, false).clear).not.toBeNull(); // first raid cleared at 16m
     expect(t.tracking).toBe(false);
     // a new, different raid forms at 30m and later clears
     t.observe(C(20), 30 * MIN, false);
     expect(t.tracking).toBe(true);
     t.observe(C(1), 50 * MIN, false); // departs
-    const clear = t.observe(C(0), 56 * MIN, false); // sustained 6 min
+    const clear = t.observe(C(0), 56 * MIN, false).clear; // sustained 6 min
     expect(clear?.durationMs).toBe(20 * MIN); // 30m → 50m, proving the fresh formedAt
   });
 });

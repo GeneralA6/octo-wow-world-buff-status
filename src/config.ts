@@ -93,7 +93,9 @@ export interface BotConfig {
   readonly realmType: RealmType;
   /** How to tell concurrent raids apart: auto (guild raids + a pickup pool), guild, or lair. */
   readonly raidGrouping: GroupingMode;
-  /** Which detector drives alerts: "count" (hysteresis) or "temporal" (arrival/departure). */
+  /** Legacy selector for the count/temporal detector. Both are now only shadow-logged for
+   *  comparison — the FORMING and CLEAR alerts are driven by the ClearTracker's roster state
+   *  (formation at strength, sustained-departure clear), so this no longer selects a driver. */
   readonly raidDetector: "count" | "temporal";
   /** Post a "bot online" message on startup. Off by default to stay quiet. */
   readonly announceStartup: boolean;

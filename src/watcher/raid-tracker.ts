@@ -54,7 +54,14 @@ export interface RaidCohortSnapshot {
 }
 
 export type RaidEvent =
-  | { readonly kind: "raid-forming"; readonly cohort: RaidCohortSnapshot; readonly initial: boolean }
+  | {
+      readonly kind: "raid-forming";
+      readonly cohort: RaidCohortSnapshot;
+      readonly initial: boolean;
+      /** The raid's reference number when the alert fires at strength (via `formedRaidEvent`);
+       *  absent for a detector-emitted forming at the lower minRaidSize, which has no number. */
+      readonly number?: number | null;
+    }
   | {
       readonly kind: "raid-left";
       readonly cohort: RaidCohortSnapshot;
@@ -79,6 +86,16 @@ export interface ActiveRaid {
  */
 export function clearedRaidEvent(peak: number, killConfirmed = false): RaidEvent {
   return { kind: "raid-left", cohort: { key: LAIR_KEY, label: "a raid", count: 0, peak, members: [] }, killConfirmed };
+}
+
+/**
+ * A synthetic "raid-forming" event for a raid the ClearTracker just took to strength, carrying
+ * its reference number — so the "a raid has formed" alert runs through the same buff-gate +
+ * dedup + announce path, and can name the raid the same #N the clear will. Same generic label
+ * as `clearedRaidEvent` for the same reason (the forming wording uses only the number + cities).
+ */
+export function formedRaidEvent(peak: number, number: number | null): RaidEvent {
+  return { kind: "raid-forming", cohort: { key: LAIR_KEY, label: "a raid", count: peak, peak, members: [] }, initial: false, number };
 }
 
 interface CohortState {

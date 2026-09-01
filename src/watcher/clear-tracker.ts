@@ -40,6 +40,21 @@ export interface ConfirmedClear {
   readonly number: number | null;
 }
 
+/** A raid just reached strength this poll — the first moment it has a reference number. The
+ *  "a raid has formed" alert fires from this (not the detector's lower forming threshold, where
+ *  no number exists yet), so the alert can name the raid the same #N the clear will. */
+export interface FormedRaid {
+  readonly number: number | null;
+  readonly peak: number;
+}
+
+/** What one `observe` poll produced: a confirmed clear, a fresh formation, or neither (the
+ *  usual case — a raid still in progress). A single poll never both forms and clears. */
+export interface ClearObservation {
+  readonly clear: ConfirmedClear | null;
+  readonly formed: FormedRaid | null;
+}
+
 /**
  * A departure we've DETECTED (the roster fell below the clear floor) but not yet confirmed — it
  * is still inside the sustained-wait window, so it could still be a wipe. Exposed so the caller
@@ -156,15 +171,15 @@ export class ClearTracker {
   }
 
   /**
-   * Feed one poll's players (names in the watched zone). Returns a ConfirmedClear the moment
-   * a sustained departure of the roster is confirmed, else null. `blackout` discards whatever
-   * was in progress.
+   * Feed one poll's players (names in the watched zone). Reports a fresh formation the poll a
+   * raid first reaches strength (`formed`), and a ConfirmedClear the poll a sustained departure
+   * is confirmed (`clear`) — never both in one poll. `blackout` discards whatever was in progress.
    */
-  observe(names: readonly string[], now: number, blackout: boolean): ConfirmedClear | null {
+  observe(names: readonly string[], now: number, blackout: boolean): ClearObservation {
     if (blackout) {
       // We went blind (our DC or a server outage) — anything across it is untrustworthy.
       this.#reset();
-      return null;
+      return { clear: null, formed: null };
     }
 
     if (this.#formedAt === null) {
@@ -174,8 +189,9 @@ export class ClearTracker {
         this.#roster = new Set(names);
         this.#peak = names.length;
         this.#belowSince = null;
+        return { clear: null, formed: { number: this.#number, peak: this.#peak } };
       }
-      return null;
+      return { clear: null, formed: null };
     }
 
     // How many of THIS raid's members are visible now (ambient/new arrivals don't count).
@@ -188,13 +204,13 @@ export class ClearTracker {
       for (const name of names) this.#roster.add(name);
       if (cohort > this.#peak) this.#peak = cohort;
       this.#belowSince = null;
-      return null;
+      return { clear: null, formed: null };
     }
 
     // The roster has mostly dropped out — a wipe or a real departure.
     if (this.#belowSince === null) {
       this.#belowSince = now;
-      return null;
+      return { clear: null, formed: null };
     }
     if (now - this.#belowSince >= this.#sustainedMs) {
       const clear: ConfirmedClear = {
@@ -203,9 +219,9 @@ export class ClearTracker {
         number: this.#number,
       };
       this.#reset();
-      return clear;
+      return { clear, formed: null };
     }
-    return null; // still within the window — the roster could yet run back (a wipe)
+    return { clear: null, formed: null }; // still within the window — the roster could yet run back (a wipe)
   }
 
   #reset(): void {

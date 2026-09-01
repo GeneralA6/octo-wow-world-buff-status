@@ -1,5 +1,11 @@
 import type { WhoPlayer } from "../protocol/who.js";
-import { ClearTracker, type ClearTrackerState, type ConfirmedClear, type PendingDeparture } from "./clear-tracker.js";
+import {
+  ClearTracker,
+  type ClearTrackerState,
+  type ConfirmedClear,
+  type FormedRaid,
+  type PendingDeparture,
+} from "./clear-tracker.js";
 import { PresenceTracker, type PresenceChange } from "./presence.js";
 import { RaidSessions } from "./raid-sessions.js";
 import { RaidTracker, type ActiveRaid, type GroupingMode, type RaidEvent } from "./raid-tracker.js";
@@ -34,6 +40,8 @@ export interface RaidObservation {
   readonly temporalEvents: readonly RaidEvent[];
   /** A real, completed clear was confirmed this poll — the ground truth for the timer. */
   readonly clear: ConfirmedClear | null;
+  /** A raid reached strength this poll (first got its number) — drives the "raid has formed" alert. */
+  readonly formed: FormedRaid | null;
 }
 
 export class RaidWatch {
@@ -62,13 +70,15 @@ export class RaidWatch {
       this.#tracker.rebaseline(players);
       this.#sessions.update(change); // clears its state on blackout too
       this.#clears.observe(names, now, true); // discard any in-progress clear measurement
-      return { change, countEvents: [], temporalEvents: [], clear: null };
+      return { change, countEvents: [], temporalEvents: [], clear: null, formed: null };
     }
+    const clearObs = this.#clears.observe(names, now, false);
     return {
       change,
       countEvents: this.#tracker.update(players),
       temporalEvents: this.#sessions.update(change),
-      clear: this.#clears.observe(names, now, false),
+      clear: clearObs.clear,
+      formed: clearObs.formed,
     };
   }
 

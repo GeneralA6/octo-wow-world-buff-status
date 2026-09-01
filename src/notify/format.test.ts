@@ -21,11 +21,22 @@ function cohort(over: Partial<RaidCohortSnapshot> = {}): RaidCohortSnapshot {
 }
 
 describe("formatBuffAlert", () => {
-  it("names the single open capital for a forming raid", () => {
+  it("names the single open capital for a formed raid", () => {
     const message = formatBuffAlert({ kind: "raid-forming", initial: false, cohort: cohort() }, ["alliance"], AREA);
     expect(message.body).toContain("Stormwind");
     expect(message.body).not.toContain("Orgrimmar");
     expect(message.body).toContain("park");
+    expect(message.body).toContain("has formed");
+  });
+
+  it("names the raid by its number when the formation carries one", () => {
+    const message = formatBuffAlert(
+      { kind: "raid-forming", initial: false, cohort: cohort(), number: 28 },
+      ["alliance"],
+      AREA,
+    );
+    expect(message.body).toContain("Raid #28 has formed");
+    expect(message.body).not.toMatch(/\(\d+\)/); // no bare member-count in parens
   });
 
   it("names both capitals when a fresh buff is possible in either", () => {
@@ -260,9 +271,14 @@ describe("formatBuffCooldownRefreshedWhisper", () => {
 });
 
 describe("formatBuffWhisper", () => {
-  it("gives a terse park-in-the-city line naming the open capital", () => {
-    const forming = formatBuffWhisper({ kind: "raid-forming", initial: false, cohort: cohort() }, ["horde"], AREA);
+  it("gives a terse park-in-the-city line naming the open capital, with the raid number", () => {
+    const forming = formatBuffWhisper(
+      { kind: "raid-forming", initial: false, cohort: cohort(), number: 28 },
+      ["horde"],
+      AREA,
+    );
     expect(forming).toContain("Orgrimmar");
+    expect(forming).toContain("Raid #28 has formed");
     const left = formatBuffWhisper(
       { kind: "raid-left", cohort: cohort({ count: 0, peak: 20 }) },
       ["alliance", "horde"],

@@ -21,7 +21,7 @@ import {
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
 import { groupByRelevantCities } from "./notify/faction-routing.js";
-import { clearedRaidEvent, type RaidEvent } from "./watcher/raid-tracker.js";
+import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
@@ -491,11 +491,6 @@ async function runConnection(
         logger.info(`census ${lane.label}: ${obs.change.present} in zone${arrPart}${depPart}${truncPart}`);
       }
 
-      // The configured detector drives the FORMING alert; the other is shadow-logged.
-      const useTemporal = config.raidDetector === "temporal";
-      const events = useTemporal ? obs.temporalEvents : obs.countEvents;
-      const shadow = useTemporal ? obs.countEvents : obs.temporalEvents;
-
       // Gate an event against the candidate cities' buff state and the per-cycle dedup, then
       // announce it (channel post + that side's subscribers + a city yell) and record it.
       // Returns the cities where a fresh buff is still possible (the first gate) — an empty
@@ -534,20 +529,26 @@ async function runConnection(
         return open;
       };
 
-      // Only the FORMING alert comes from the count/temporal detector. Its per-cohort
-      // "raid-left" is prone to false clears — a guild crossing the 15-member split line
-      // empties the cohort it left (nobody actually leaves the lair), a flickery /who dips
-      // the count, a wipe drops it below the floor. The "cleared, park now" alert instead
-      // comes from the ClearTracker's roster-based confirmed clear (obs.clear, below), which
-      // survives all three, so a detector "raid-left" no longer alerts.
-      for (const event of events) {
-        if (event.kind === "raid-left") continue;
-        await gateAndAnnounce(event);
+      // Both authoritative alerts now come from the ClearTracker's roster-based state, not the
+      // count/temporal detector — the detector's per-cohort events are prone to false transitions
+      // (a guild crossing the split line, a flickery /who, a wipe). The detector's events are only
+      // shadow-logged now:
+      //  - FORMING fires from obs.formed — the poll a raid reaches STRENGTH and first has a number,
+      //    so the alert names it the same #N its clear will (the detector's forming fires earlier,
+      //    at minRaidSize, where the raid has no number yet);
+      //  - CLEAR fires from obs.clear (below), the sustained roster departure.
+      if (obs.formed) {
+        await gateAndAnnounce(formedRaidEvent(obs.formed.peak, obs.formed.number));
       }
-      for (const event of shadow) {
-        logger.info(
-          `${useTemporal ? "count" : "temporal"}(shadow) ${lane.label}: would ${event.kind} — ${event.cohort.label} peak ${event.cohort.peak}`,
-        );
+      // The count/temporal detectors no longer DRIVE anything — both are shadow-logged for
+      // comparison against the ClearTracker-driven alerts above.
+      for (const [name, evs] of [
+        ["count", obs.countEvents],
+        ["temporal", obs.temporalEvents],
+      ] as const) {
+        for (const event of evs) {
+          logger.info(`${lane.label} ${name}(detector): would ${event.kind} — ${event.cohort.label} peak ${event.cohort.peak}`);
+        }
       }
 
       // A real, COMPLETED clear drives the park-now alert, the recap, and the duration sample.

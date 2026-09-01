@@ -83,13 +83,16 @@ describe("RaidWatch", () => {
 
     const M = 60_000; // steps stay <= the 3-min blackout gap
 
-    it("fires forming at the forming size but does NOT start the clock until strength", () => {
+    it("reports the formation only at strength, when the number exists — not at the forming size", () => {
       const watch = new RaidWatch(opts);
       const forming = watch.observe(raid(20, "Nightfall", 1), M, true);
-      expect(forming.countEvents.map((e) => e.kind)).toEqual(["raid-forming"]); // alert at 20
+      expect(forming.countEvents.map((e) => e.kind)).toEqual(["raid-forming"]); // detector event at 20
+      expect(forming.formed).toBeNull(); // but no formation reported yet (< 23, no number)
       expect(watch.raidElapsedMs(M)).toBeNull(); // clock not started (< 23)
-      watch.observe(raid(23, "Nightfall", 1), 2 * M, true); // reaches strength
+      const strong = watch.observe(raid(23, "Nightfall", 1), 2 * M, true); // reaches strength
       expect(watch.raidElapsedMs(2 * M)).toBe(0); // clock started here
+      expect(strong.formed).not.toBeNull(); // and the "raid has formed" alert fires HERE
+      expect(strong.formed?.peak).toBe(23);
     });
 
     it("does not read normal churn above the left floor as leaving", () => {

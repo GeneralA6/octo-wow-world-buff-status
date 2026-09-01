@@ -177,12 +177,14 @@ function cityList(cities: readonly Faction[]): string {
 export function formatBuffAlert(event: RaidEvent, cities: readonly Faction[], areaName: string): NotifyMessage {
   const where = cityList(cities);
   if (event.kind === "raid-forming") {
-    const verb = event.initial ? "is underway" : "is forming";
+    // Fires when the raid reaches strength and gets its number (via formedRaidEvent), so it can
+    // name the raid the same #N its clear will — not the raw member count, which meant nothing.
+    const id = event.number != null ? `Raid #${event.number}` : "A raid";
     return {
       kind: "entered",
       title: "🐉 Rallying Cry may be coming",
       body:
-        `A raid ${verb} in ${areaName} (${event.cohort.count}). ` +
+        `${id} has formed in ${areaName}. ` +
         `A Rallying Cry buff may drop in ${where} when they clear it and turn in the head - ` +
         `get ready to park.`,
     };
@@ -209,6 +211,6 @@ export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], 
       ? `A raid just downed Onyxia in ${areaName} (kill confirmed) - park in ${where} for the Rallying Cry buff.`
       : `A raid just cleared ${areaName} - park in ${where} for a possible Rallying Cry buff.`;
   }
-  const verb = event.initial ? "underway" : "forming";
-  return `A raid is ${verb} in ${areaName} (${event.cohort.count}) - get ready to park in ${where} for the buff.`;
+  const id = event.number != null ? `Raid #${event.number}` : "A raid";
+  return `${id} has formed in ${areaName} - get ready to park in ${where} for the buff.`;
 }
