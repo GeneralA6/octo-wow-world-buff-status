@@ -9,6 +9,18 @@ import type { ActiveRaid } from "../watcher/raid-tracker.js";
 import { CITY_FOR, humanClock } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
 
+/** The exact words that subscribe a caller (also handled in `handle`'s switch). */
+const SUBSCRIBE_COMMANDS = new Set(["subscribe", "sub", "start"]);
+
+/** Whether a whisper is a request to subscribe — the exact command, or a natural-language
+ *  subscribe intent. Lets the onboarding skip the "whisper subscribe" pitch for a caller who is
+ *  already subscribing in the same breath (telling a subscriber to subscribe reads as a bug). */
+export function isSubscribeRequest(text: string): boolean {
+  const command = text.trim().replace(/^[!./]+/, "").split(/\s+/)[0]?.toLowerCase() ?? "";
+  if (SUBSCRIBE_COMMANDS.has(command)) return true;
+  return parseIntent(text) === "subscribe";
+}
+
 /** Per-faction buff cooldown for the status query. */
 export interface BuffCooldown {
   readonly faction: Faction;

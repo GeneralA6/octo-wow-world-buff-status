@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
 import { RaidTracker } from "../watcher/raid-tracker.js";
 import type { WhoPlayer } from "../protocol/who.js";
-import { CommandRouter, type BuffCooldown } from "./command-router.js";
+import { CommandRouter, isSubscribeRequest, type BuffCooldown } from "./command-router.js";
 
 function deps(
   opts: {
@@ -36,6 +36,19 @@ function crowd(guild: string, count: number): WhoPlayer[] {
     name: `${guild}${i}`, guild, level: 60, classId: 1, raceId: 1, areaId: 2159,
   }));
 }
+
+describe("isSubscribeRequest", () => {
+  it("is true for the exact commands (with a leading !/./ tolerated) and the subscribe intent", () => {
+    for (const t of ["subscribe", "sub", "start", "!subscribe", ".sub", "sign me up", "notify me"]) {
+      expect(isSubscribeRequest(t)).toBe(true);
+    }
+  });
+  it("is false for other messages", () => {
+    for (const t of ["status", "help", "unsubscribe", "when's the buff", "hi", ""]) {
+      expect(isSubscribeRequest(t)).toBe(false);
+    }
+  });
+});
 
 describe("CommandRouter", () => {
   it("subscribes a player and is idempotent", async () => {

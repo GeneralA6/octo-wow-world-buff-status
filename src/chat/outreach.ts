@@ -1,5 +1,6 @@
 import type { Logger } from "../logger.js";
 import type { Faction } from "../subscribers/store.js";
+import { isSubscribeRequest } from "./command-router.js";
 import type { IntroStore } from "./intro-store.js";
 
 export interface OutreachConfig {
@@ -24,10 +25,17 @@ export type IsSubscribedFn = (name: string) => Promise<boolean>;
  *  it is, who runs it (the guild, for the community), that the guild is recruiting, and how to
  *  opt in. Sent ONCE per player (see `IntroStore`) — not every message — so it can afford the
  *  attribution and recruiting that the terse command replies deliberately drop. No tips: those
- *  ride the buff-drop message. Two short whispers, each well under the client's line limit. */
-export function introLines(config: OutreachConfig): string[] {
+ *  ride the buff-drop message. Two short whispers, each well under the client's line limit.
+ *
+ *  When the first contact IS a subscribe (`subscribing`), the "whisper subscribe" pitch would be
+ *  telling a subscriber to subscribe, so line 1 welcomes them instead — the "You're subscribed!"
+ *  confirmation that follows carries the pinging detail. */
+export function introLines(config: OutreachConfig, subscribing = false): string[] {
+  const identity = subscribing
+    ? `Welcome! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild. Whisper "help" any time to see everything I can do.`
+    : `Hi! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild - I ping you in-game just before the Rallying Cry drops. Whisper "subscribe" for pings, or "help" for more.`;
   return [
-    `Hi! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild - I ping you in-game just before the Rallying Cry drops. Whisper "subscribe" for pings, or "help" for more.`,
+    identity,
     `<${config.guildName}> is recruiting, too - whisper "invite" any time and I'll send you a guild invite.`,
   ];
 }
@@ -88,7 +96,8 @@ export class Outreach {
     // `introduceOnce` is atomic, so back-to-back whispers can't double-send.
     if (!(await this.#isSubscribed(playerName)) && (await this.#introStore.introduceOnce(playerName))) {
       this.#logger.info(`outreach: introducing Bufftracker to ${playerName}`);
-      for (const line of introLines(this.#config)) whisper(playerName, line);
+      // A first contact that IS a subscribe gets the welcome variant — never a pitch to subscribe.
+      for (const line of introLines(this.#config, isSubscribeRequest(text))) whisper(playerName, line);
       // Invite silently — no "I sent you an invite" whisper. If they accept, they're welcomed in
       // guild chat instead (the join is detected server-side). Gated on the watcher being guilded.
       if (this.#config.guildInviteEnabled && this.#guildInvite) {

@@ -29,6 +29,14 @@ describe("introLines", () => {
     expect(lines.join(" ")).not.toMatch(/gold|tip/i);
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(255); // client line limit
   });
+
+  it("does NOT pitch 'subscribe' when the contact is itself a subscribe — welcomes instead", () => {
+    const lines = introLines(config, true).join(" ");
+    expect(lines).not.toMatch(/whisper "subscribe"/i); // no telling a subscriber to subscribe
+    expect(lines).toMatch(/welcome/i);
+    expect(lines).toMatch(/world-buff tracker/i); // still identifies itself
+    expect(lines).toMatch(/recruit/i); // still recruits
+  });
 });
 
 describe("Outreach", () => {
@@ -62,8 +70,17 @@ describe("Outreach", () => {
     const { outreach, whispers, routed } = make();
     await outreach.onListenerContact("Raider", "hi");
     expect(whispers.some((w) => isIntro(w.msg))).toBe(true); // the onboarding intro
+    expect(whispers.some((w) => /whisper "subscribe"/i.test(w.msg))).toBe(true); // pitches subscribe
     expect(whispers.some((w) => w.msg === "reply to hi")).toBe(true); // routed reply
     expect(routed).toEqual([{ sender: "Raider", text: "hi" }]);
+  });
+
+  it("welcomes a first-contact subscriber instead of telling them to subscribe", async () => {
+    const { outreach, whispers } = make();
+    await outreach.onListenerContact("Raider", "subscribe", "horde"); // their FIRST message is subscribe
+    const intro = whispers.filter((w) => isIntro(w.msg)).map((w) => w.msg).join(" ");
+    expect(intro).toMatch(/welcome/i);
+    expect(intro).not.toMatch(/whisper "subscribe"/i); // never pitch subscribe to a subscriber
   });
 
   it("forwards the listener's faction to the command engine as the source hint", async () => {
