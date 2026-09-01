@@ -69,6 +69,7 @@ import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
 import { subscriberKey, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
+import { DownTracker } from "./down-tracker.js";
 
 /** Client identity values that self-heal from the CDN across OctoWoW patches. */
 interface ClientValues {
@@ -93,6 +94,10 @@ const HEAL_CHECK_COOLDOWN_MS = 5 * 60_000;
 
 /** How many recent clears the timer self-evaluation replays each heartbeat. */
 const TIMER_EVAL_WINDOW = 200;
+
+/** Consecutive reconnect failures before a supervisor alerts the errors channel that it's
+ *  down (backoff caps at 60s, so this is a couple of minutes of sustained failure, not a blip). */
+const DOWN_ALERT_THRESHOLD = 5;
 
 /** Max time from connecting to reaching in-world before the handshake is deemed stalled. */
 const WORLD_READY_TIMEOUT_MS = 30_000;
@@ -1199,6 +1204,7 @@ async function main(): Promise<void> {
   const watcherLog = prefixed(logger, config.characterName);
   const runWatcher = async (): Promise<void> => {
     const heal: HealState = { lastCheckMs: 0, alertedStuck: false };
+    const down = new DownTracker(DOWN_ALERT_THRESHOLD);
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
@@ -1206,11 +1212,13 @@ async function main(): Promise<void> {
         watcherLog.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
         heal.alertedStuck = false; // a clean run clears the "stuck" latch
+        if (down.recover()) await notifyAdmin("✅ Watcher back online", "Reconnected and watching again.");
       } catch (error) {
         if (error instanceof VersionMismatchError) {
           if (await selfHeal(error, config, logger, client, notifyAdmin, heal)) {
             backoffMs = 5_000; // resolved — retry promptly with the new build
           } else if (!config.autoResolve) {
+            await notifyAdmin("🛑 Bot stopping", "Client version rejected and auto-resolve is off — can't self-heal.");
             process.exit(1); // can't self-heal and it's disabled: stop
           } else {
             await delay(backoffMs); // can't heal right now; back off and retry quietly
@@ -1222,6 +1230,12 @@ async function main(): Promise<void> {
           process.exit(1);
         } else {
           watcherLog.warn(`connection error: ${describeError(error)}; retrying in ${backoffMs / 1000}s`);
+          if (down.fail()) {
+            await notifyAdmin(
+              "⚠️ Watcher down",
+              `Unable to connect after ${down.failures} tries: ${describeError(error)}. Still retrying.`,
+            );
+          }
           await delay(backoffMs);
           backoffMs = Math.min(backoffMs * 2, 60_000);
         }
@@ -1236,18 +1250,28 @@ async function main(): Promise<void> {
     // line names its source even when the three characters' logs interleave.
     const onBuff = (faction: Faction, source: string, text: string): void =>
       recordBuff(faction, source, text, listener.characterName);
+    const down = new DownTracker(DOWN_ALERT_THRESHOLD);
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
         await runListener(config, listener, log, client, onBuff, outreach, yellSink);
         log.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
+        if (down.recover()) {
+          await notifyAdmin(`✅ Listener back online: ${listener.characterName}`, "Reconnected; its capital's buff detection is live again.");
+        }
       } catch (error) {
         if (error instanceof VersionMismatchError) {
-          // The watcher's self-heal fixes the shared client build; wait and retry.
+          // The watcher's self-heal fixes the shared client build; wait and retry (not a listener fault).
           log.warn(`${error.message}; waiting for the watcher to resolve the build`);
         } else {
           log.warn(`${describeError(error)}; retrying in ${backoffMs / 1000}s`);
+          if (down.fail()) {
+            await notifyAdmin(
+              `⚠️ Listener down: ${listener.characterName}`,
+              `Unable to connect after ${down.failures} tries: ${describeError(error)}. Its capital's buff detection is offline until it recovers. Still retrying.`,
+            );
+          }
         }
         await delay(backoffMs);
         backoffMs = Math.min(backoffMs * 2, 60_000);
