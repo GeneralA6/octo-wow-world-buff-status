@@ -161,7 +161,7 @@ describe("formatCapitalStatusYell", () => {
 
   it("ready + no raid (idle): JUST the self-promo — no cooldown, no raid", () => {
     const y = formatCapitalStatusYell("alliance", null, null, false);
-    expect(y).toBe(`[Onyxia] Whisper Bufftracker "subscribe" for Onyxia buff pings ("discord" for discord notifications).`);
+    expect(y).toBe(`[Onyxia] Whisper Bufftracker "subscribe" for pings, "discord" for discord notifications.`);
   });
 
   it("ready + raid: no cooldown mention, raid + park nudge", () => {
