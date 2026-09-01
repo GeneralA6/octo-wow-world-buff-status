@@ -12,8 +12,9 @@ export interface OutreachConfig {
 export type WhisperFn = (target: string, message: string) => void;
 export type GuildInviteFn = (target: string) => void;
 /** Runs a player's message through the command engine and returns the reply line(s).
- *  `sourceFaction` is the player's certain side when they reached us through a faction-specific
- *  listener (a cross-faction whisper is impossible), so the engine can skip the /who. */
+ *  `sourceFaction` is the player's side when they reached us through a faction-specific listener —
+ *  safe to assume it's theirs (that listener serves one faction's capital), so the engine can skip
+ *  the /who. */
 export type HandleFn = (sender: string, text: string, sourceFaction: Faction | null) => Promise<string[]>;
 /** Whether a player is already a subscriber — subscribers are onboarded, so they skip the intro. */
 export type IsSubscribedFn = (name: string) => Promise<boolean>;
@@ -66,8 +67,8 @@ export class Outreach {
 
   /** A player whispered a listener — introduce Bufftracker unless they're already subscribed,
    *  then route their message through Bufftracker's command engine and whisper back the reply.
-   *  `sourceFaction` is the listener's side (the player's, for certain), passed to the engine so
-   *  it can set/tailor the side without a /who; null for a faction-less listener. */
+   *  `sourceFaction` is the listener's side (the player's, safe to assume), passed to the engine
+   *  so it can set/tailor the side without a /who; null for a faction-less listener. */
   async onListenerContact(playerName: string, text: string, sourceFaction: Faction | null = null): Promise<void> {
     const whisper = this.#whisper;
     if (!whisper) {

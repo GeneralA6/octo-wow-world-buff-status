@@ -89,10 +89,11 @@ export class CommandRouter {
   }
 
   /**
-   * `sourceFaction` is the caller's known side when it can be trusted without a lookup — set when
-   * the player reached us through a faction-specific listener (a cross-faction whisper is
-   * impossible in-game, so the listener's side IS the player's). It lets subscribe/status skip the
-   * /who; null means fall back to a lookup.
+   * `sourceFaction` is the caller's side when it can be trusted without a lookup — set when the
+   * player reached us through a faction-specific listener. That listener lives in and yells from
+   * one faction's capital, so its whisperers are that faction in practice (a safe assumption even
+   * on a cross-faction realm where a whisper could technically cross). It lets subscribe/status
+   * skip the /who; null means fall back to a lookup.
    */
   async handle(sender: string, text: string, sourceFaction: Faction | null = null): Promise<string[]> {
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
@@ -181,9 +182,11 @@ export class CommandRouter {
         .filter((cd) => factions.includes(cd.faction))
         .map((cd) =>
           // "on cooldown" (not "up"): to a WoW player "buff up" reads as READY; here it means
-          // one is active in the city, so a fresh one can't drop until it wears off.
+          // one is active in the city, so a fresh one can't drop until it wears off. When it's
+          // off cooldown, say a raid must still clear — "can drop now" would read as an imminent
+          // CTA when the next raid could be many hours away.
           cd.activeMsLeft === null
-            ? `${CITY_FOR[cd.faction]}: a fresh buff can drop now`
+            ? `${CITY_FOR[cd.faction]}: off cooldown - a fresh one can drop once a raid clears Onyxia`
             : `${CITY_FOR[cd.faction]}: buff on cooldown, ~${humanClock(cd.activeMsLeft)} until the next can drop`,
         )
         .join(" | ");
@@ -193,8 +196,8 @@ export class CommandRouter {
   }
 
   /** The capital side(s) relevant to a player: their subscribed side(s) if subscribed (we already
-   *  know it); else the listener's side if they came through one (certain, no /who); else resolved
-   *  from a /who — falling back to both if we can't tell. */
+   *  know it); else the listener's side if they came through one (safe to assume, no /who); else
+   *  resolved from a /who — falling back to both if we can't tell. */
   async #relevantFactions(sender: string, sourceFaction: Faction | null): Promise<readonly Faction[]> {
     const sub = await this.#deps.store.get(sender);
     if (sub) return sub.factions;
@@ -203,8 +206,8 @@ export class CommandRouter {
     return detected ? [detected] : DEFAULT_FACTIONS;
   }
 
-  /** Set a fresh subscriber's side: from the listener they came through if known (certain — a
-   *  cross-faction whisper is impossible, so no /who), else fire the best-effort /who lookup. */
+  /** Set a fresh subscriber's side: from the listener they came through if known (safe to assume,
+   *  so no /who — see `handle`), else fire the best-effort /who lookup. */
   async #autoSetFaction(sender: string, sourceFaction: Faction | null): Promise<void> {
     if (sourceFaction) {
       await this.#deps.store.update(sender, { factions: [sourceFaction] });

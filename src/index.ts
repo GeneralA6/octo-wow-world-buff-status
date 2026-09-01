@@ -953,8 +953,9 @@ async function runListener(
         // just the ear; Bufftracker does the thinking and the whispering back.
         onWhisper: (sender, text) => {
           logger.info(`whisper from ${sender}: ${JSON.stringify(text)} -> routed to ${config.characterName}`);
-          // The listener's side IS the whisperer's (cross-faction whispers are impossible), so
-          // pass it as a certain faction hint — the command engine then skips the faction /who.
+          // The listener serves one faction's capital, so its whisperer is that faction in
+          // practice (safe to assume even on a cross-faction realm) — pass it as a faction hint so
+          // the command engine skips the faction /who.
           void outreach
             .onListenerContact(sender, text, listener.faction)
             .catch((error) => logger.error(`outreach: ${describeError(error)}`));

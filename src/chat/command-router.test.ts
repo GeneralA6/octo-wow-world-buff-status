@@ -99,7 +99,8 @@ describe("CommandRouter", () => {
     const reply = await router.handle("Raider", "status");
     expect(reply[0]).toMatch(/raid #834.*in for ~42m/);
     expect(reply[0]).not.toMatch(/\b20\b/); // player count is redundant to a user — omitted
-    expect(reply[1]).toContain("Stormwind: a fresh buff can drop now");
+    expect(reply[1]).toContain("Stormwind: off cooldown");
+    expect(reply[1]).not.toMatch(/drop now/); // no imminent CTA — a raid must still clear
     expect(reply[1]).toMatch(/Orgrimmar: buff on cooldown, ~1h12m/); // "on cooldown", not "up"
   });
 
@@ -126,7 +127,7 @@ describe("CommandRouter", () => {
     });
     router.setFactionDetect(async () => "alliance"); // /who resolves them to alliance
     const reply = (await router.handle("Ghost", "status")).join(" ");
-    expect(reply).toMatch(/Stormwind: a fresh buff can drop now/);
+    expect(reply).toMatch(/Stormwind: off cooldown/);
     expect(reply).not.toMatch(/Orgrimmar/);
   });
 
@@ -183,7 +184,11 @@ describe("CommandRouter", () => {
     });
     const reply = await router.handle("Raider", "status");
     expect(reply[0]).toMatch(/No raid in Onyxia's Lair/);
-    expect(reply[1]).toContain("a fresh buff can drop now");
+    // Off cooldown with no raid in: state a raid must still clear, never "drop now" (the next
+    // raid could be many hours away, so an imminent CTA would be misleading).
+    expect(reply[1]).toContain("off cooldown");
+    expect(reply[1]).toContain("once a raid clears Onyxia");
+    expect(reply[1]).not.toMatch(/drop now/);
   });
 
   it("understands natural phrasing: 'sign me up' subscribes", async () => {
