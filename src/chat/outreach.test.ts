@@ -1,33 +1,33 @@
 import { describe, expect, it } from "vitest";
 import { silentLogger } from "../logger.js";
 import { Outreach, introLines } from "./outreach.js";
+import { InMemoryIntroStore } from "./intro-store.js";
 import type { Faction } from "../subscribers/store.js";
 
 const config = { guildName: "Rage Quit", community: "OctoWoW", guildInviteEnabled: false, author: "Gibom" };
 
 describe("introLines", () => {
-  it("identifies as the community world buff tracker and says, concisely, what it does", () => {
+  it("introduces itself, says what it does, and points at subscribe/help", () => {
     const lines = introLines(config).join(" ");
-    expect(lines).toContain("OctoWoW-Community World Buff Tracker");
-    expect(lines).toMatch(/alert you before/i); // "alert", not "warn"
-    expect(lines).toContain("Onyxia Rallying Cry");
+    expect(lines).toMatch(/world-?buff tracker/i);
+    expect(lines).toContain("Rallying Cry");
     expect(lines).toMatch(/subscribe/i);
+    expect(lines).toMatch(/"help" for more/);
   });
 
-  it("is a single line pointing only at 'help' for more — no Discord in the onboarding", () => {
-    const lines = introLines(config);
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/"help" for more/);
-    expect(lines[0]).not.toMatch(/discord/i);
-    expect(lines[0]).not.toMatch(/alliance|horde|@/i);
-  });
-
-  it("is stripped of attribution, recruiting, tips, and the park-fluff", () => {
+  it("attributes to the guild for the community, and states recruiting", () => {
     const lines = introLines(config).join(" ");
-    expect(lines).not.toMatch(/made by|Rage Quit|recruit/i);
-    expect(lines).not.toMatch(/gold|tip/i);
-    expect(lines).not.toMatch(/park|grab it/i);
-    expect(lines).not.toMatch(/DM you|link Discord/i);
+    expect(lines).toContain("Rage Quit"); // the guild running it
+    expect(lines).toContain("OctoWoW"); // the community it serves
+    expect(lines).toMatch(/recruit/i); // recruiting
+    expect(lines).toMatch(/invite/i); // and how to get an invite
+  });
+
+  it("keeps it to two whispers and carries no tips (those ride the buff-drop message)", () => {
+    const lines = introLines(config);
+    expect(lines).toHaveLength(2);
+    expect(lines.join(" ")).not.toMatch(/gold|tip/i);
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(255); // client line limit
   });
 });
 
@@ -38,7 +38,12 @@ describe("Outreach", () => {
     const routed: { sender: string; text: string }[] = [];
     const hints: (Faction | null)[] = [];
     const subs = new Set(subscribed.map((n) => n.toLowerCase()));
-    const outreach = new Outreach(cfg, async (name) => subs.has(name.toLowerCase()), silentLogger);
+    const outreach = new Outreach(
+      cfg,
+      async (name) => subs.has(name.toLowerCase()),
+      new InMemoryIntroStore(),
+      silentLogger,
+    );
     outreach.setChannel(
       (to, msg) => whispers.push({ to, msg }),
       (to) => invites.push(to),
@@ -51,7 +56,7 @@ describe("Outreach", () => {
     return { outreach, whispers, invites, routed, hints, subs };
   }
 
-  const isIntro = (msg: string): boolean => /World Buff Tracker/.test(msg);
+  const isIntro = (msg: string): boolean => /world-buff tracker/i.test(msg);
 
   it("introduces itself to a non-subscriber AND routes the message to the command engine", async () => {
     const { outreach, whispers, routed } = make();
@@ -73,12 +78,12 @@ describe("Outreach", () => {
     expect(hints).toEqual([null]);
   });
 
-  it("greets a non-subscriber on EVERY contact — the once-limit is gone", async () => {
+  it("introduces itself ONCE, then keeps answering without re-introducing", async () => {
     const { outreach, whispers, routed } = make();
     await outreach.onListenerContact("Raider", "hi");
     await outreach.onListenerContact("RAIDER", "yo"); // case-insensitive, still not subscribed
-    expect(whispers.filter((w) => isIntro(w.msg)).length).toBe(2); // intro BOTH times
-    expect(routed.map((r) => r.text)).toEqual(["hi", "yo"]); // both routed too
+    expect(whispers.filter((w) => isIntro(w.msg)).length).toBe(1); // intro only the FIRST time
+    expect(routed.map((r) => r.text)).toEqual(["hi", "yo"]); // but both routed and answered
   });
 
   it("does NOT greet a subscriber, but still routes and answers", async () => {
@@ -92,7 +97,7 @@ describe("Outreach", () => {
   it("does nothing while the watcher channel is unavailable, then works once it is", async () => {
     const whispers: string[] = [];
     const routed: string[] = [];
-    const outreach = new Outreach(config, async () => false, silentLogger);
+    const outreach = new Outreach(config, async () => false, new InMemoryIntroStore(), silentLogger);
     outreach.setHandler(async (_s, t) => {
       routed.push(t);
       return ["ok"];
@@ -110,7 +115,15 @@ describe("Outreach", () => {
     const { outreach, whispers, invites } = make({ ...config, guildInviteEnabled: true });
     await outreach.onListenerContact("Raider", "hi");
     expect(invites).toEqual(["Raider"]); // invited
-    expect(whispers.some((w) => /invite/i.test(w.msg))).toBe(false); // but not told about it
+    // The intro mentions the "invite" command (recruiting), but nothing CONFIRMS one was sent.
+    expect(whispers.some((w) => /sent you|i'?ve invited|invited you/i.test(w.msg))).toBe(false);
+  });
+
+  it("invites only ONCE, on first contact", async () => {
+    const { outreach, invites } = make({ ...config, guildInviteEnabled: true });
+    await outreach.onListenerContact("Raider", "hi");
+    await outreach.onListenerContact("Raider", "still here"); // second contact
+    expect(invites).toEqual(["Raider"]); // not invited again
   });
 
   it("does not invite when disabled", async () => {

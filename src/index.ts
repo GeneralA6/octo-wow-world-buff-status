@@ -70,6 +70,7 @@ import {
 } from "./watcher/broadcast-ledger.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
+import { InMemoryIntroStore, MongoIntroStore, type IntroStore } from "./chat/intro-store.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
 import { WhisperPool } from "./chat/whisper-pool.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
@@ -1279,6 +1280,17 @@ async function main(): Promise<void> {
       logger.error(`feedback: MongoDB connect failed (${describeError(error)}); recording in memory`);
     }
   }
+  // Who Bufftracker has already introduced itself to, so the intro + auto-invite fire once per
+  // player rather than every whisper. In memory without Mongo (re-introduces after a redeploy).
+  let introStore: IntroStore = new InMemoryIntroStore();
+  if (config.mongodbUri) {
+    try {
+      introStore = await MongoIntroStore.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("intros: remembering greeted players in MongoDB");
+    } catch (error) {
+      logger.error(`intros: MongoDB connect failed (${describeError(error)}); remembering in memory`);
+    }
+  }
 
   // Chronicle early-confirm: during a departure WE detect, a fresh kill log by one of the raid's
   // roster confirms the clear and lets processLane skip the sustained wait (never a trigger on its
@@ -1379,8 +1391,9 @@ async function main(): Promise<void> {
       guildInviteEnabled: config.guildInviteEnabled,
       author: config.author,
     },
-    // Greet anyone who isn't a subscriber yet — every contact — and stop once they join.
+    // Introduce Bufftracker to anyone who isn't a subscriber yet — once per player (introStore).
     (name) => store.has(name),
+    introStore,
     logger,
   );
   // A whisper to a listener is transferred to Bufftracker's command engine and answered.
@@ -1436,6 +1449,7 @@ async function main(): Promise<void> {
       broadcasts.close(),
       durationStore.close(),
       feedbackStore.close(),
+      introStore.close(),
       raidCounterStore.close(),
       raidStateStore.close(),
       chronicleStore ? chronicleStore.close() : Promise.resolve(),
