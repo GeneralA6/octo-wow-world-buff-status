@@ -38,7 +38,9 @@ export interface CommandDeps {
   /** Raids in progress across all factions — for the status command. */
   readonly activeRaids: () => readonly ActiveRaid[];
   readonly areaName: string;
-  /** Guild + community named in recruiting/intent replies. */
+  /** Guild + community identity. `guildName` names the guild only on the "invite" help line
+   *  ("join <guild>"); guild attribution was otherwise pulled from the replies. `community` is
+   *  unused here now (the outreach intro carries it). Kept wired for the deferred guild discussion. */
   readonly guildName: string;
   readonly community: string;
   /** The community Discord server invite link, shared by the "discord" command.
@@ -139,7 +141,7 @@ export class CommandRouter {
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
           `discord - our Discord invite link`,
           `feedback <message> - send a suggestion or bug report`,
-          `invite - join <${this.#deps.guildName}> (we're recruiting)`,
+          `invite - join <${this.#deps.guildName}>`,
         ];
       default: {
         // Natural-language intent detection over the whole message.
@@ -230,31 +232,30 @@ export class CommandRouter {
    *  feedback channel by the caller). Empty text just shows how to use it. */
   #feedback(sender: string, text: string): string[] {
     if (text === "") {
-      return [`Whisper "feedback <your message>" and I'll pass your suggestion to <${this.#deps.guildName}>.`];
+      return [`Whisper "feedback <your message>" and I'll pass your suggestion along.`];
     }
     if (!this.#deps.onFeedback) {
       return [`Feedback isn't set up on this bot right now - sorry about that!`];
     }
     this.#deps.onFeedback(sender, text);
-    return [`Thanks for the feedback - I've passed it along to <${this.#deps.guildName}>. Much appreciated!`];
+    return [`Thanks for the feedback - I've passed it along.`];
   }
 
   /** Send the caller a guild invite. Only works while the watcher is in world; if it
    *  is offline, or Bufftracker lacks invite rights in the guild, nothing is sent. */
   #invite(sender: string): string[] {
-    const { guildName } = this.#deps;
     if (!this.#guildInvite) {
       return [`I can't send a guild invite right now - try again in a moment.`];
     }
     this.#guildInvite(sender);
-    return [`Invite to <${guildName}> sent - accept the popup and you're in. Welcome aboard!`];
+    return [`Guild invite sent - accept the popup and you're in.`];
   }
 
   /** Act on a natural-language intent — re-dispatching to the canonical command where one
    *  exists. `text` is the whole original message, used when an intent carries a payload
    *  (feedback). */
   async #handleIntent(intent: Intent, sender: string, text: string): Promise<string[]> {
-    const { areaName, guildName, community } = this.#deps;
+    const { areaName } = this.#deps;
     switch (intent) {
       case "subscribe":
       case "unsubscribe":
@@ -267,8 +268,7 @@ export class CommandRouter {
         return this.#feedback(sender, text.trim());
       case "guild":
         return [
-          `We're <${guildName}>, a ${community} community guild, and we're recruiting! ` +
-            `Whisper "invite" and I'll send you an invite right now - and "subscribe" for buff alerts.`,
+          `Whisper "invite" and I'll send you a guild invite right now - and "subscribe" for buff alerts.`,
         ];
       case "buff":
         return [

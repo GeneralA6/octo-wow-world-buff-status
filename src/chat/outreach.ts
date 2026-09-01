@@ -76,7 +76,7 @@ export class Outreach {
       for (const line of introLines(this.#config)) whisper(playerName, line);
       if (this.#config.guildInviteEnabled && this.#guildInvite) {
         this.#guildInvite(playerName);
-        whisper(playerName, `And I've sent you an invite to <${this.#config.guildName}> - welcome aboard!`);
+        whisper(playerName, `And I've sent you a guild invite - accept the popup to join!`);
       }
     }
     // Every message is transferred to Bufftracker's command engine and answered.

@@ -149,11 +149,12 @@ describe("CommandRouter", () => {
     expect(await store.has("Raider")).toBe(true);
   });
 
-  it("understands a guild question and pitches recruiting", async () => {
+  it("answers a guild question with a plain invite offer — no guild name, no recruiting pitch", async () => {
     const { router } = deps();
     const reply = (await router.handle("Raider", "how do I join?"))[0];
-    expect(reply).toContain("Rage Quit");
-    expect(reply).toMatch(/recruit/i);
+    expect(reply).toMatch(/invite/i); // offers the guild-invite command
+    expect(reply).toMatch(/subscribe/i); // and buff alerts
+    expect(reply).not.toMatch(/Rage Quit|recruit/i); // guild attribution removed
   });
 
   it("sends a guild invite on 'invite' when the capability is wired, else says it can't", async () => {
@@ -163,7 +164,8 @@ describe("CommandRouter", () => {
     router.setGuildInvite((name) => invited.push(name));
     const reply = (await router.handle("Raider", "invite"))[0];
     expect(invited).toEqual(["Raider"]);
-    expect(reply).toContain("Rage Quit");
+    expect(reply).toMatch(/invite sent/i); // confirms it, without naming the guild
+    expect(reply).not.toMatch(/Rage Quit/); // guild attribution removed
     router.setGuildInvite(null);
     expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
   });
