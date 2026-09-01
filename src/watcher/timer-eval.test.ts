@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateTimer } from "./timer-eval.js";
+import { evaluateTimer, improvedEstimate } from "./timer-eval.js";
 
 const M = 60_000; // one minute in ms
 
@@ -48,5 +48,37 @@ describe("evaluateTimer", () => {
     expect(evaln.evaluated).toBe(1);
     expect(evaln.maeMs).toBe(6 * M);
     expect(evaln.biasMs).toBe(6 * M);
+  });
+
+  it("exposes the improved estimate, which equals the median for a steady series", () => {
+    const evaln = evaluateTimer(Array(10).fill(45 * M), 3);
+    expect(evaln.improvedEstimateMs).toBe(45 * M); // no bias to correct
+  });
+});
+
+describe("improvedEstimate", () => {
+  it("returns null below the sample floor, like the plain median", () => {
+    expect(improvedEstimate([40 * M, 50 * M], 5)).toBeNull();
+  });
+
+  it("equals the median when the predictor has been unbiased", () => {
+    expect(improvedEstimate(Array(10).fill(45 * M), 3)).toBe(45 * M);
+  });
+
+  it("nudges the estimate up by a modest, unclamped positive bias", () => {
+    // base median 43m; median residual +6m; cap is 43*0.15≈6.45m, so +6m applies whole.
+    expect(improvedEstimate([40 * M, 40 * M, 40 * M, 46 * M, 46 * M, 46 * M], 3)).toBe(49 * M);
+  });
+
+  it("caps a large predict-LONGER correction tightly (+15% of the base)", () => {
+    // base median 40m, median residual +60m → clamped to +40*0.15 = +6m → 46m.
+    const series = [40 * M, 40 * M, 40 * M, 40 * M, 40 * M, 100 * M, 100 * M, 100 * M];
+    expect(improvedEstimate(series, 3)).toBe(46 * M);
+  });
+
+  it("allows a larger predict-SHORTER correction (−25% of the base), the safe direction", () => {
+    // base median 100m, median residual −60m → clamped to −100*0.25 = −25m → 75m.
+    const series = [100 * M, 100 * M, 100 * M, 100 * M, 100 * M, 40 * M, 40 * M, 40 * M];
+    expect(improvedEstimate(series, 3)).toBe(75 * M);
   });
 });

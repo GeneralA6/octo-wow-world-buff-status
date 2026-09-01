@@ -28,6 +28,9 @@ export interface HeartbeatStats {
   readonly samples: number;
   /** The learned median clear-time once >= minSamples are on record, else null. */
   readonly learnedMedianMs: number | null;
+  /** The bias-corrected estimate actually used by the live timer, else null. Shown next to the
+   *  median when the correction moved it, so the log says what the timer is really predicting. */
+  readonly improvedMs?: number | null;
   readonly estimateMs: number;
   readonly minSamples: number;
   readonly buffs: readonly HeartbeatBuff[];
@@ -40,9 +43,15 @@ const signedMins = (ms: number): string => `${ms >= 0 ? "+" : "-"}${Math.abs(min
 
 /** One log line: `monitor: 12 subs; raid timer learned median 43m (18 samples); accuracy MAE 6m bias +2m over 15; buffs alliance up 74m left, horde clear`. */
 export function formatHeartbeat(stats: HeartbeatStats): string {
+  // When the bias correction actually moved the estimate, show both: the raw median and the
+  // number the timer now uses. When it didn't (or isn't available), just the median.
+  const corrected =
+    stats.improvedMs != null && stats.learnedMedianMs !== null && stats.improvedMs !== stats.learnedMedianMs
+      ? ` -> uses ${mins(stats.improvedMs)}m`
+      : "";
   const timer =
     stats.learnedMedianMs !== null
-      ? `learned median ${mins(stats.learnedMedianMs)}m (${stats.samples} samples)`
+      ? `learned median ${mins(stats.learnedMedianMs)}m${corrected} (${stats.samples} samples)`
       : `${mins(stats.estimateMs)}m estimate (${stats.samples}/${stats.minSamples} to learn)`;
   const accuracy =
     stats.accuracy && stats.accuracy.evaluated > 0

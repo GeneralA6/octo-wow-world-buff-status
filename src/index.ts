@@ -43,7 +43,7 @@ import {
   type DurationStore,
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
-import { evaluateTimer } from "./watcher/timer-eval.js";
+import { evaluateTimer, improvedEstimate } from "./watcher/timer-eval.js";
 import { isCommandError, isWhisperThrottle } from "./chat/system-error.js";
 import { HttpChronicleClient, type ChronicleClient } from "./chronicle/client.js";
 import { cleanOnyxiaKills } from "./chronicle/parse.js";
@@ -421,6 +421,14 @@ async function runConnection(
       return null;
     };
 
+    // The clear time a forming raid is predicted to take: the self-improving estimate (the
+    // learned median with its measured bias corrected out) once enough clears are on record,
+    // else the config guess. One place, so both the status yell and the alert gate agree.
+    const predictRaidDurationMs = async (): Promise<number> => {
+      const series = await durationStore.recent(TIMER_EVAL_WINDOW).catch(() => []);
+      return improvedEstimate(series.map((d) => d.ms), config.raidLearnMinSamples) ?? config.raidDurationEstimateMs;
+    };
+
     // Every ~10 min, yell a buff-status board in each capital: the cooldown clock, the raid
     // in the lair, a "park" nudge only when a fresh buff is genuinely possible at their clear,
     // and a subscribe/discord CTA. Reaches everyone standing in the city, not just subscribers.
@@ -428,8 +436,7 @@ async function runConnection(
       if (!config.whispersEnabled) return;
       const now = Date.now();
       const nowDate = new Date(now);
-      const learnedMs = await durationStore.median(config.raidLearnMinSamples).catch(() => null);
-      const raidDurationMs = learnedMs ?? config.raidDurationEstimateMs;
+      const raidDurationMs = await predictRaidDurationMs();
       for (const faction of FACTIONS) {
         const yell = yellSink[faction];
         if (!yell) continue; // no listener parked in this capital right now
@@ -659,6 +666,7 @@ async function runConnection(
           subscribers,
           samples: evaln.samples,
           learnedMedianMs,
+          improvedMs: evaln.improvedEstimateMs,
           estimateMs: config.raidDurationEstimateMs,
           minSamples: config.raidLearnMinSamples,
           buffs,
@@ -692,10 +700,9 @@ async function runConnection(
         void logHeartbeat(now).catch((error) => logger.debug(`monitor: ${describeError(error)}`));
       }
 
-      // The forming heads-up predicts a raid's end from the LEARNED median clear time
-      // once enough raids are on record, else the config estimate.
-      const learnedMs = await durationStore.median(config.raidLearnMinSamples).catch(() => null);
-      const raidDurationMs = learnedMs ?? config.raidDurationEstimateMs;
+      // The forming heads-up predicts a raid's end from the self-improving estimate (learned
+      // median, bias-corrected) once enough raids are on record, else the config estimate.
+      const raidDurationMs = await predictRaidDurationMs();
 
       const split = splitByFaction(inZone);
       // In faction mode unmapped races belong to no lane; log them so a custom Turtle/

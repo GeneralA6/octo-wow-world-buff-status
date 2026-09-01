@@ -16,13 +16,18 @@ import { medianOf } from "./duration-store.js";
  *     short, so it fires late (people can miss the window) — the worse failure.
  *   - `p90ErrorMs` — the 90th-percentile miss, the tail a reader should size for.
  *
- * Pure over the chronological series, so it is unit-tested without a clock or a database.
+ * And it CLOSES the loop: `improvedEstimate` is the median with that measured bias pulled back
+ * out, which is the number the live timer actually uses — so the more the bot sees, the better
+ * its prediction, not just its self-report. Pure over the chronological series, so both are
+ * unit-tested without a clock or a database.
  */
 export interface TimerEvaluation {
   /** Total clears on record. */
   readonly samples: number;
-  /** The current median estimate (ms), or null while still below `minSamples`. */
+  /** The plain learned median estimate (ms), or null while still below `minSamples`. */
   readonly estimateMs: number | null;
+  /** The bias-corrected estimate the live timer uses (ms), or null below `minSamples`. */
+  readonly improvedEstimateMs: number | null;
   /** How many past clears were scored (those with at least `minSamples` priors). */
   readonly evaluated: number;
   /** Mean absolute prediction error (ms), or null if nothing was scored. */
@@ -45,27 +50,62 @@ function percentile(values: readonly number[], q: number): number {
 }
 
 /**
- * @param seriesChrono clear durations (ms) in the order they happened, oldest first.
- * @param minSamples   the same floor the live estimate uses before it trusts the median.
+ * Honest expanding-window residuals: for each clear from `minSamples` on, `actual − median(of
+ * only the clears before it)` — the prediction the bot could have made at that moment. Shared
+ * by the evaluation and the improved estimate so they never disagree about the past.
  */
-export function evaluateTimer(seriesChrono: readonly number[], minSamples: number): TimerEvaluation {
-  const samples = seriesChrono.length;
-  const estimateMs = samples >= minSamples ? medianOf(seriesChrono) : null;
-
-  const abs: number[] = [];
+function residuals(seriesChrono: readonly number[], minSamples: number): { signed: number[]; abs: number[] } {
   const signed: number[] = [];
-  for (let i = Math.max(minSamples, 1); i < samples; i += 1) {
+  const abs: number[] = [];
+  for (let i = Math.max(minSamples, 1); i < seriesChrono.length; i += 1) {
     const predicted = medianOf(seriesChrono.slice(0, i));
     if (predicted === null) continue;
     const error = seriesChrono[i]! - predicted;
     signed.push(error);
     abs.push(Math.abs(error));
   }
+  return { signed, abs };
+}
 
+/** How far the bias correction may move the estimate, as a fraction of the base median.
+ *  ASYMMETRIC on purpose: predicting SHORTER (raids ran short) fires the heads-up earlier,
+ *  which is safe, so it's allowed further; predicting LONGER delays the heads-up — the worse
+ *  failure — so it's capped tighter. Both keep thin/noisy history from swinging the estimate. */
+const MAX_DOWN_FRACTION = 0.25;
+const MAX_UP_FRACTION = 0.15;
+
+/**
+ * The self-IMPROVING estimate: the learned median, corrected by the MEDIAN of its own past
+ * residuals so a systematic miss (a cadence that shifted, a stale window) is pulled out. The
+ * median residual is used, not the mean, for the same reason the base predictor is a median —
+ * a wipe or a stalled raid is an outlier that must not drag the correction. The correction is
+ * clamped (asymmetrically, above), so it can only nudge the estimate, never dominate it.
+ * Returns null below `minSamples`, exactly like the plain median, so the caller falls back to
+ * the config estimate identically.
+ */
+export function improvedEstimate(seriesChrono: readonly number[], minSamples: number): number | null {
+  if (seriesChrono.length < minSamples) return null;
+  const base = medianOf(seriesChrono);
+  if (base === null) return null;
+  const { signed } = residuals(seriesChrono, minSamples);
+  const correction = signed.length ? medianOf(signed)! : 0;
+  const clamped = Math.max(-base * MAX_DOWN_FRACTION, Math.min(base * MAX_UP_FRACTION, correction));
+  return Math.round(base + clamped);
+}
+
+/**
+ * @param seriesChrono clear durations (ms) in the order they happened, oldest first.
+ * @param minSamples   the same floor the live estimate uses before it trusts the median.
+ */
+export function evaluateTimer(seriesChrono: readonly number[], minSamples: number): TimerEvaluation {
+  const samples = seriesChrono.length;
+  const estimateMs = samples >= minSamples ? medianOf(seriesChrono) : null;
+  const { signed, abs } = residuals(seriesChrono, minSamples);
   const evaluated = abs.length;
   return {
     samples,
     estimateMs,
+    improvedEstimateMs: improvedEstimate(seriesChrono, minSamples),
     evaluated,
     maeMs: evaluated ? mean(abs) : null,
     biasMs: evaluated ? mean(signed) : null,

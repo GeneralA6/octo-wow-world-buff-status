@@ -26,6 +26,27 @@ describe("formatHeartbeat", () => {
     expect(line).toContain("learned median 43m (18 samples)");
   });
 
+  it("shows the bias-corrected estimate the timer uses when it differs from the median", () => {
+    const line = formatHeartbeat({
+      ...base,
+      samples: 18,
+      learnedMedianMs: 43 * 60_000,
+      improvedMs: 46 * 60_000,
+    });
+    expect(line).toContain("learned median 43m -> uses 46m (18 samples)");
+  });
+
+  it("omits the '-> uses' clause when the correction changed nothing", () => {
+    const line = formatHeartbeat({
+      ...base,
+      samples: 18,
+      learnedMedianMs: 43 * 60_000,
+      improvedMs: 43 * 60_000,
+    });
+    expect(line).toContain("learned median 43m (18 samples)");
+    expect(line).not.toContain("-> uses");
+  });
+
   it("reports each faction's buff as up-with-minutes or clear", () => {
     const line = formatHeartbeat({
       ...base,
