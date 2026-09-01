@@ -11,12 +11,17 @@
  * socket error) is reported and skipped, never stalling the rest of the queue.
  */
 
+import type { Faction } from "../subscribers/store.js";
+
 export type WhisperSend = (target: string, message: string) => void;
 export type WhisperError = (error: unknown, target: string, message: string) => void;
 
 interface QueuedWhisper {
   readonly target: string;
   readonly message: string;
+  /** Capitals this message is about (a "park now" alert). Lets a buff drop in one of them purge
+   *  the now-stale queued park alerts for that side. Undefined for messages nothing supersedes. */
+  readonly cities?: readonly Faction[];
 }
 
 /** How long to pause after the server throttles us, letting its distinct-recipient window reset. */
@@ -45,9 +50,23 @@ export class WhisperQueue {
     return this.#queue.length;
   }
 
-  enqueue(target: string, message: string): void {
-    this.#queue.push({ target, message });
+  enqueue(target: string, message: string, cities?: readonly Faction[]): void {
+    this.#queue.push({ target, message, cities });
     if (!this.#timer) this.#pump();
+  }
+
+  /**
+   * Drop still-queued messages ABOUT this capital — a fresh buff dropped there, so the pending
+   * "park now to catch it" alerts for that side are stale. Returns how many were dropped. Only
+   * pending items are affected; anything already sent is gone. Messages with no `cities` (command
+   * replies, the drop message itself) are never touched.
+   */
+  dropForFaction(faction: Faction): number {
+    const before = this.#queue.length;
+    const kept = this.#queue.filter((w) => !w.cities?.includes(faction));
+    this.#queue.length = 0;
+    this.#queue.push(...kept);
+    return before - this.#queue.length;
   }
 
   /** Send the same message to many targets, paced. */

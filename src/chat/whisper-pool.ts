@@ -36,14 +36,27 @@ export class WhisperPool {
    * members first). Each member's own queue paces and throttle-handles its share independently.
    * Returns how many members carried the load — 0 if the pool is empty (caller should fall back).
    */
-  fanOut(targets: readonly string[], message: string, faction: Faction | null = null): number {
+  fanOut(
+    targets: readonly string[],
+    message: string,
+    faction: Faction | null = null,
+    cities?: readonly Faction[],
+  ): number {
     const members = [...this.#members.values()];
     if (members.length === 0 || targets.length === 0) return 0;
     // Same-faction members first, the rest after — a stable preference, not a hard requirement.
     members.sort((a, b) => Number(b.faction === faction) - Number(a.faction === faction));
     targets.forEach((target, i) => {
-      members[i % members.length]?.queue.enqueue(target, message);
+      members[i % members.length]?.queue.enqueue(target, message, cities);
     });
     return members.length;
+  }
+
+  /** Purge the pending park alerts about `faction`'s capital across every member (a buff dropped
+   *  there). Returns the total dropped. */
+  dropForFaction(faction: Faction): number {
+    let dropped = 0;
+    for (const member of this.#members.values()) dropped += member.queue.dropForFaction(faction);
+    return dropped;
   }
 }

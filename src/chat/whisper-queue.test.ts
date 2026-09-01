@@ -60,6 +60,21 @@ describe("WhisperQueue", () => {
     expect(queue.size).toBe(0);
   });
 
+  it("dropForFaction purges only the pending park alerts about that capital", () => {
+    const sent: string[] = [];
+    const queue = new WhisperQueue((t) => sent.push(t), 1000);
+    queue.enqueue("A", "park SW", ["alliance"]); // sent immediately (idle)
+    queue.enqueue("B", "park SW", ["alliance"]); // queued
+    queue.enqueue("C", "park OG", ["horde"]); // queued, other side
+    queue.enqueue("D", "your status: ..."); // queued, untagged (a command reply)
+    expect(sent).toEqual(["A"]);
+
+    const dropped = queue.dropForFaction("alliance"); // alliance buff dropped → its park alerts stale
+    expect(dropped).toBe(1); // only B (still queued, alliance)
+    vi.advanceTimersByTime(5000);
+    expect(sent).toEqual(["A", "C", "D"]); // B gone; the horde park and the reply still delivered
+  });
+
   it("retries a throttled whisper after a cooldown instead of dropping it", () => {
     const sent: string[] = [];
     const queue = new WhisperQueue((t) => sent.push(t), 1000);

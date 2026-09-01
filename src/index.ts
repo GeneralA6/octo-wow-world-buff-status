@@ -317,9 +317,17 @@ async function runConnection(
     };
 
     // Broadcast a whisper to many subscribers via the listener pool (splitting the load across
-    // their separate throttle budgets), falling back to Bufftracker's own queue if no listener is up.
-    const broadcastWhisper = (names: readonly string[], message: string, faction: Faction | null): void => {
-      if (whisperPool.fanOut(names, message, faction) === 0) whisperQueue?.enqueueAll(names, message);
+    // their separate throttle budgets), falling back to Bufftracker's own queue if no listener is
+    // up. `cities` tags a park-now alert so a later buff drop there can purge it as stale.
+    const broadcastWhisper = (
+      names: readonly string[],
+      message: string,
+      faction: Faction | null,
+      cities?: readonly Faction[],
+    ): void => {
+      if (whisperPool.fanOut(names, message, faction, cities) === 0) {
+        for (const name of names) whisperQueue?.enqueue(name, message, cities);
+      }
     };
 
     // A buff-parking alert: post to the Onyxia channel (pinging @alliance/@horde per open
@@ -345,7 +353,8 @@ async function runConnection(
       if (subscribers.length === 0) return;
       for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, cities)) {
         const line = formatBuffWhisper(event, groupCities, config.watchAreaName);
-        broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null);
+        // Tag with the cities this park-now is about, so a buff dropping there purges it as stale.
+        broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities);
       }
     };
 
@@ -365,8 +374,14 @@ async function runConnection(
     };
 
     // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
-    const announceBuffDrop = (faction: Faction): Promise<void> =>
-      notifyFactionSubscribers(faction, formatBuffDroppedWhisper(faction, config.buffDurationMs, config.author));
+    const announceBuffDrop = (faction: Faction): Promise<void> => {
+      // The buff is UP now, so any still-queued "park now to catch it" whispers for this side are
+      // stale — purge them before sending the "it's up" message, or a subscriber would be told to
+      // park after being told it already dropped.
+      const dropped = whisperPool.dropForFaction(faction) + (whisperQueue?.dropForFaction(faction) ?? 0);
+      if (dropped > 0) logger.info(`dropped ${dropped} stale park-now whisper(s) for ${faction} — buff is up`);
+      return notifyFactionSubscribers(faction, formatBuffDroppedWhisper(faction, config.buffDurationMs, config.author));
+    };
 
     // When a buff's window elapses, a fresh one can drop — announce the cooldown is up to
     // the Discord channel, that side's subscribers, and via a /yell in that capital.

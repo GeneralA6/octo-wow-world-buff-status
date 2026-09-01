@@ -34,6 +34,21 @@ describe("WhisperPool", () => {
     expect(b.length).toBeGreaterThan(0);
   });
 
+  it("dropForFaction purges stale park alerts across every member", () => {
+    const a: string[] = [];
+    const b: string[] = [];
+    const pool = new WhisperPool();
+    pool.register("X", null, new WhisperQueue((t) => a.push(t), 1000));
+    pool.register("Y", null, new WhisperQueue((t) => b.push(t), 1000));
+    // A park alert for alliance, fanned across both members (targets 0..3).
+    pool.fanOut(["1", "2", "3", "4"], "park SW", "alliance", ["alliance"]);
+    const dropped = pool.dropForFaction("alliance"); // alliance buff dropped
+    expect(dropped).toBeGreaterThan(0); // pending ones across both members purged
+    vi.advanceTimersByTime(5000);
+    // Only the first each member sent immediately survive; the rest were dropped.
+    expect(a.length + b.length).toBeLessThan(4);
+  });
+
   it("returns 0 (caller falls back) when the pool is empty, and drops a member on unregister", () => {
     const pool = new WhisperPool();
     expect(pool.fanOut(["1"], "m")).toBe(0);
