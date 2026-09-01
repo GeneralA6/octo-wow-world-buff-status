@@ -110,6 +110,9 @@ export interface BotConfig {
   readonly discordFeedbackChannelId: string | null;
   /** Channel the bot posts Onyxia buff notifications to (via the bot token). */
   readonly discordOnyxiaChannelId: string | null;
+  /** Channel the bot posts OPERATIONAL/error notices to (bot stopped, auth failure, self-heal,
+   *  store outage). Null = those stay log-only. Kept separate from the public buff channel. */
+  readonly discordErrorsChannelId: string | null;
   /** Role pinged for alliance (Stormwind) notifications, and horde (Orgrimmar) notifications —
    *  a Discord-side opt-in, unrelated to any in-game character's chosen side. */
   readonly discordAllianceRoleId: string | null;
@@ -292,6 +295,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordServerInvite = env.DISCORD_SERVER_INVITE_URL?.trim() || null;
   const discordFeedbackChannelId = env.DISCORD_FEEDBACK_CHANNEL_ID?.trim() || null;
   const discordOnyxiaChannelId = env.DISCORD_ONYXIA_CHANNEL_ID?.trim() || null;
+  const discordErrorsChannelId = env.DISCORD_ERRORS_CHANNEL_ID?.trim() || null;
   const discordAllianceRoleId = env.DISCORD_ALLIANCE_ROLE_ID?.trim() || null;
   const discordHordeRoleId = env.DISCORD_HORDE_ROLE_ID?.trim() || null;
   for (const [name, value] of [
@@ -364,6 +368,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordServerInvite,
     discordFeedbackChannelId,
     discordOnyxiaChannelId,
+    discordErrorsChannelId,
     discordAllianceRoleId,
     discordHordeRoleId,
     mongodbUri,

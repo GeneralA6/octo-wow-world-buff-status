@@ -325,6 +325,7 @@ describe("loadConfig", () => {
     expect(bare.author).toBe("Gibom");
     expect(bare.discordFeedbackChannelId).toBeNull();
     expect(bare.discordOnyxiaChannelId).toBeNull();
+    expect(bare.discordErrorsChannelId).toBeNull();
     expect(bare.discordAllianceRoleId).toBeNull();
     expect(bare.discordHordeRoleId).toBeNull();
     expect(bare.guildInviteEnabled).toBe(false);
@@ -336,6 +337,7 @@ describe("loadConfig", () => {
       WOW_GUILD_INVITE: "true",
       DISCORD_FEEDBACK_CHANNEL_ID: "1543926066907844729",
       DISCORD_ONYXIA_CHANNEL_ID: "1544021433720635392",
+      DISCORD_ERRORS_CHANNEL_ID: "1544243835771551794",
       DISCORD_ALLIANCE_ROLE_ID: "111",
       DISCORD_HORDE_ROLE_ID: "222",
     });
@@ -344,6 +346,7 @@ describe("loadConfig", () => {
     expect(configured.author).toBe("Someone");
     expect(configured.discordFeedbackChannelId).toBe("1543926066907844729");
     expect(configured.discordOnyxiaChannelId).toBe("1544021433720635392");
+    expect(configured.discordErrorsChannelId).toBe("1544243835771551794");
     expect(configured.discordAllianceRoleId).toBe("111");
     expect(configured.discordHordeRoleId).toBe("222");
     expect(configured.guildInviteEnabled).toBe(true);

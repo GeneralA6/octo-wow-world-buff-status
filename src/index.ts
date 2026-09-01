@@ -988,10 +988,14 @@ async function main(): Promise<void> {
     const result = await dm.postToChannel(config.discordOnyxiaChannelId, content, roleIds);
     if (!result.ok) logger.error(`onyxia notify failed (${result.kind}): ${message.title}`);
   };
-  // Operational/error notices (auth failures, store outages, self-heal, "bot stopped") are
-  // logged only now — no DMs, and the public channel is for buff content, not errors.
+  // Operational/error notices (auth failures, store outages, self-heal, "bot stopped") — always
+  // logged, and posted to the dedicated errors channel when one is configured. Never DMed, and
+  // never to the public buff channel (which is for buff content, not error spam).
   const notifyAdmin = async (title: string, body: string): Promise<void> => {
     logger.warn(`[ops] ${title} - ${body}`);
+    if (!config.discordErrorsChannelId) return;
+    const result = await dm.postToChannel(config.discordErrorsChannelId, `**${title}**\n${body}`);
+    if (!result.ok) logger.error(`ops notify failed (${result.kind}): ${title}`);
   };
 
   const store = config.whispersEnabled
