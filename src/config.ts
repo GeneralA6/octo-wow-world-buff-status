@@ -81,7 +81,7 @@ export interface BotConfig {
    *  and are dropped so they can't poison the learned median downward. */
   readonly raidMinClearMs: number;
   /** How long the raid's roster must stay gone to count a departure as a real clear rather
-   *  than a wipe (they run back). ~5 min — enough time to corpse-run back to the instance. */
+   *  than a wipe (they run back). ~4 min — enough time to corpse-run back to the instance. */
   readonly raidClearSustainedMs: number;
   /** How often the buff-status board is yelled in each capital (default 10 min). */
   readonly statusYellMs: number;
@@ -266,7 +266,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
   const raidLearnMinSamples = intWithDefault("WOW_RAID_LEARN_MIN_SAMPLES", 15, 1);
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
-  const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 5, 1) * 60_000;
+  const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // Default to the buff window: within one head-block cycle we should speak once.
   const broadcastDedupMs = intWithDefault("WOW_BROADCAST_DEDUP_MINUTES", 120, 1) * 60_000;

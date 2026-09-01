@@ -172,8 +172,8 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_MIN_CLEAR_MINUTES: "8" }).raidMinClearMs).toBe(8 * 60_000);
   });
 
-  it("defaults the clear-sustained window to 5 minutes and accepts an override", () => {
-    expect(loadConfig({ ...minimalEnv }).raidClearSustainedMs).toBe(5 * 60_000);
+  it("defaults the clear-sustained window to 4 minutes and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidClearSustainedMs).toBe(4 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_RAID_CLEAR_SUSTAINED_MINUTES: "7" }).raidClearSustainedMs).toBe(7 * 60_000);
   });
 
