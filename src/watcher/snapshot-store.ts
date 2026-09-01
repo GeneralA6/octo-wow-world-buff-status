@@ -19,9 +19,6 @@ export interface SnapshotStore {
   record(snapshot: PollSnapshot): Promise<void>;
   /** The most recent `limit` snapshots in chronological (ascending) order, for replay. */
   recent(limit: number): Promise<PollSnapshot[]>;
-  /** Snapshots whose ts falls in [from, to], chronological (ascending) — for reconciling an
-   *  event against the rosters around WHEN it happened, however long ago that was. */
-  between(from: Date, to: Date): Promise<PollSnapshot[]>;
   close(): Promise<void>;
 }
 
@@ -34,11 +31,6 @@ export class InMemorySnapshotStore implements SnapshotStore {
   }
   async recent(limit: number): Promise<PollSnapshot[]> {
     return this.#all.slice(Math.max(0, this.#all.length - limit));
-  }
-  async between(from: Date, to: Date): Promise<PollSnapshot[]> {
-    return this.#all
-      .filter((s) => s.ts.getTime() >= from.getTime() && s.ts.getTime() <= to.getTime())
-      .sort((a, b) => a.ts.getTime() - b.ts.getTime());
   }
   async close(): Promise<void> {
     // nothing to release
@@ -56,7 +48,6 @@ interface SnapshotDoc {
 export interface SnapshotDb {
   insert(doc: SnapshotDoc): Promise<void>;
   latest(limit: number): Promise<SnapshotDoc[]>; // descending by ts
-  range(from: Date, to: Date): Promise<SnapshotDoc[]>; // ascending by ts, ts in [from, to]
   close(): Promise<void>;
 }
 
@@ -83,7 +74,6 @@ export class MongoSnapshotStore implements SnapshotStore {
     const db: SnapshotDb = {
       insert: (doc) => collection.insertOne(doc).then(() => undefined),
       latest: (limit) => collection.find().sort({ ts: -1 }).limit(limit).toArray(),
-      range: (from, to) => collection.find({ ts: { $gte: from, $lte: to } }).sort({ ts: 1 }).toArray(),
       close: () => client.close(),
     };
     return new MongoSnapshotStore(db);
@@ -103,11 +93,6 @@ export class MongoSnapshotStore implements SnapshotStore {
     return docs
       .reverse()
       .map((doc) => ({ ts: doc.ts, present: doc.present, complete: doc.complete, names: doc.names }));
-  }
-
-  async between(from: Date, to: Date): Promise<PollSnapshot[]> {
-    const docs = await this.#db.range(from, to);
-    return docs.map((doc) => ({ ts: doc.ts, present: doc.present, complete: doc.complete, names: doc.names }));
   }
 
   async close(): Promise<void> {

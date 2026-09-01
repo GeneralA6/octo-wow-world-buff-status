@@ -43,9 +43,11 @@ import {
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
 import { evaluateTimer } from "./watcher/timer-eval.js";
-import { HttpChronicleClient } from "./chronicle/client.js";
-import { pollChronicleOnce } from "./chronicle/poller.js";
+import { HttpChronicleClient, type ChronicleClient } from "./chronicle/client.js";
+import { cleanOnyxiaKills } from "./chronicle/parse.js";
+import { confirmingKills } from "./chronicle/confirm.js";
 import { MongoChronicleStore, type ChronicleStore } from "./chronicle/store.js";
+import type { ConfirmedClear, PendingDeparture } from "./watcher/clear-tracker.js";
 import {
   InMemoryRaidCounterStore,
   MongoRaidCounterStore,
@@ -177,9 +179,20 @@ interface BuffDropSink {
  *  it knows it; the watcher yells through it to broadcast to everyone nearby in the city. */
 type YellSink = Partial<Record<Faction, (message: string) => void>>;
 
+/** Chronicle early-confirm dependencies, or null when it's off (no Mongo / disabled). */
+interface LaneChronicle {
+  readonly client: ChronicleClient;
+  readonly store: ChronicleStore;
+  readonly realm: string;
+  /** How far a kill's pull time may sit from the raid's span and still count as this raid's. */
+  readonly matchWindowMs: number;
+}
+
 /** Everything a connection needs beyond config: shared state and the alert sinks. */
 interface ConnectionServices {
   readonly lanes: readonly DetectionLane[];
+  /** Chronicle early-confirm, or null when off. */
+  readonly chronicle: LaneChronicle | null;
   readonly buffStore: BuffStore;
   readonly broadcasts: BroadcastLedger;
   readonly raidStateStore: RaidStateStore;
@@ -223,8 +236,10 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, client } =
+  const { lanes, chronicle, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, router, dm, outreach, buffDropSink, yellSink, push, client } =
     services;
+  // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
+  const lastChronicleCheck = new Map<string, number>();
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -467,41 +482,94 @@ async function runConnection(
         );
       }
 
-      // Self-improving timer: record a real, COMPLETED clear. The ClearTracker confirms one
-      // only when the raid's roster leaves and stays gone past the wipe-runback window — so
-      // wipes (they run back), gave-ups mid-run, ambient traffic and blackouts yield nothing.
-      // Then log the learned median vs the estimate in use.
-      if (obs.clear) {
-        const clear = obs.clear;
+      // A real, COMPLETED clear drives the park-now alert, the recap, and the duration sample.
+      // It arrives one of two ways: the ClearTracker's sustained wait (roster gone past the
+      // wipe-runback window), or a Chronicle early-confirm below. Same handling either way; the
+      // plausibility floor/ceiling guard both. `killConfirmed` only changes the alert wording.
+      const handleConfirmedClear = async (clear: ConfirmedClear, killConfirmed: boolean): Promise<void> => {
         const ms = clear.durationMs;
         const CEILING_MS = 6 * 60 * 60_000; // a single Onyxia clear is not 6h+ — that's a merge/bug
         if (!isPlausibleClear(ms, config.raidMinClearMs)) {
           logger.info(
             `raid clear ignored: ~${mins(ms)}m is below the ${mins(config.raidMinClearMs)}m floor — churn, not a real clear`,
           );
-        } else if (ms > CEILING_MS) {
+          return;
+        }
+        if (ms > CEILING_MS) {
           logger.info(`raid clear ignored: ~${mins(ms)}m exceeds the ${mins(CEILING_MS)}m ceiling — likely a merge`);
-        } else {
-          // A real, completed clear — the reliable signal (roster-based, so immune to the
-          // cohort-reassignment / flicker / wipe false clears the detector's raid-left has).
-          // It drives the park-now alert as well as the recap and the duration sample.
-          await gateAndAnnounce(clearedRaidEvent(clear.peak));
-          // Post the recap (with the raid # and how long it took).
-          void push(formatRaidFinished(clear.number, ms, config.watchAreaName));
-          void (async () => {
-            await durationStore.record({ ms, ts: new Date(now) });
-            const [learned, samples] = await Promise.all([
-              durationStore.median(config.raidLearnMinSamples),
-              durationStore.count(),
-            ]);
+          return;
+        }
+        await gateAndAnnounce(clearedRaidEvent(clear.peak, killConfirmed));
+        void push(formatRaidFinished(clear.number, ms, config.watchAreaName));
+        void (async () => {
+          await durationStore.record({ ms, ts: new Date(now) });
+          const [learned, samples] = await Promise.all([
+            durationStore.median(config.raidLearnMinSamples),
+            durationStore.count(),
+          ]);
+          logger.info(
+            `raid clear recorded: ~${mins(ms)}m (peak ${clear.peak}, ${samples} samples; ` +
+              (learned
+                ? `learned median ${mins(learned)}m now driving the heads-up`
+                : `need ${config.raidLearnMinSamples} to switch off the ${mins(config.raidDurationEstimateMs)}m estimate`) +
+              ")",
+          );
+        })().catch((error) => logger.debug(`duration: ${describeError(error)}`));
+      };
+
+      // During a departure WE detected (roster below the floor, still inside the sustained wait),
+      // seek a Chronicle kill by one of this raid's roster to confirm the clear early. Throttled to
+      // ~once a minute; records every fresh clean kill it sees (marking which confirmed this raid)
+      // so `chroniclekills` keeps the history. Returns the early ConfirmedClear, or null — it can
+      // never manufacture one, since confirmClearNow only fires on a pending departure.
+      const tryChronicleConfirm = async (pending: PendingDeparture): Promise<ConfirmedClear | null> => {
+        if (!chronicle) return null;
+        const last = lastChronicleCheck.get(lane.label) ?? 0;
+        if (now - last < 55_000) return null; // ~once a minute even if /who polls faster
+        lastChronicleCheck.set(lane.label, now);
+        let kills;
+        try {
+          kills = cleanOnyxiaKills(await chronicle.client.fetchRecentOnyxia(), chronicle.realm);
+        } catch (error) {
+          logger.debug(`chronicle: fetch failed (${describeError(error)})`);
+          return null;
+        }
+        const known = await chronicle.store.knownLogIds(kills.map((k) => k.logId));
+        const fresh = kills.filter((k) => !known.has(k.logId));
+        if (fresh.length === 0) return null;
+        const from = pending.formedAt - chronicle.matchWindowMs;
+        const to = now + chronicle.matchWindowMs;
+        const confirming = confirmingKills(fresh, pending.roster, from, to);
+        const confirmingIds = new Set(confirming.map((k) => k.logId));
+        const processedAt = new Date(now);
+        for (const kill of fresh) {
+          await chronicle.store
+            .record({
+              logId: kill.logId,
+              realm: kill.realm,
+              uploader: kill.uploader,
+              at: kill.at,
+              playerCount: kill.playerCount,
+              matched: confirmingIds.has(kill.logId),
+              processedAt,
+            })
+            .catch((error) => logger.debug(`chronicle store: ${describeError(error)}`));
+        }
+        return confirming.length > 0 ? lane.watch.confirmClearNow() : null;
+      };
+
+      if (obs.clear) {
+        await handleConfirmedClear(obs.clear, false);
+      } else if (chronicle) {
+        const pending = lane.watch.pendingClear();
+        if (pending) {
+          const early = await tryChronicleConfirm(pending);
+          if (early) {
             logger.info(
-              `raid clear recorded: ~${mins(ms)}m (peak ${clear.peak}, ${samples} samples; ` +
-                (learned
-                  ? `learned median ${mins(learned)}m now driving the heads-up`
-                  : `need ${config.raidLearnMinSamples} to switch off the ${mins(config.raidDurationEstimateMs)}m estimate`) +
-                ")",
+              `${lane.label}: Chronicle-confirmed clear #${early.number ?? "?"} (peak ${early.peak}) — skipping the ${mins(config.raidClearSustainedMs)}m wait`,
             );
-          })().catch((error) => logger.debug(`duration: ${describeError(error)}`));
+            await handleConfirmedClear(early, true);
+          }
         }
       }
     };
@@ -1073,37 +1141,28 @@ async function main(): Promise<void> {
     }
   }
 
-  // Chronicle reconciler: an independent background poll (no WoW connection needed) that
-  // cross-references community raid logs against our /who snapshots to measure detection recall.
-  // Read-only and after-the-fact — it never alerts. Needs Mongo for the snapshot history and the
-  // dedup ledger, so it's skipped without it. ±30 min around a kill's pull covers the raid's
-  // presence in our rosters (the uploader is there from forming through the kill).
+  // Chronicle early-confirm: during a departure WE detect, a fresh kill log by one of the raid's
+  // roster confirms the clear and lets processLane skip the sustained wait (never a trigger on its
+  // own). Needs Mongo for the dedup ledger, so it's skipped without it. ±30 min around a kill's
+  // pull keeps a roster member's kill from an EARLIER raid out of the match.
   const CHRONICLE_MATCH_WINDOW_MS = 30 * 60_000;
   let chronicleStore: ChronicleStore | null = null;
+  let chronicle: LaneChronicle | null = null;
   if (config.chronicleEnabled && config.mongodbUri) {
     try {
-      const connected = await MongoChronicleStore.connect(config.mongodbUri, config.mongodbDb);
-      chronicleStore = connected;
-      const chronicleClient = new HttpChronicleClient();
-      const pollChronicle = (): void => {
-        void pollChronicleOnce({
-          client: chronicleClient,
-          snapshots,
-          store: connected,
-          realm: config.realm,
-          matchWindowMs: CHRONICLE_MATCH_WINDOW_MS,
-          logger,
-        }).catch((error) => logger.debug(`chronicle: poll failed (${describeError(error)})`));
+      chronicleStore = await MongoChronicleStore.connect(config.mongodbUri, config.mongodbDb);
+      chronicle = {
+        client: new HttpChronicleClient(),
+        store: chronicleStore,
+        realm: config.realm,
+        matchWindowMs: CHRONICLE_MATCH_WINDOW_MS,
       };
-      const chronicleTimer = setInterval(pollChronicle, config.chroniclePollMs);
-      chronicleTimer.unref?.();
-      logger.info(`chronicle: reconciling ${config.realm} kills every ${config.chroniclePollMs / 1000}s`);
-      pollChronicle(); // first pass now, don't wait a full interval
+      logger.info(`chronicle: early-confirm armed for ${config.realm} (kill-confirms a detected clear)`);
     } catch (error) {
-      logger.error(`chronicle: MongoDB connect failed (${describeError(error)}); reconciler off`);
+      logger.error(`chronicle: MongoDB connect failed (${describeError(error)}); early-confirm off`);
     }
   } else if (config.chronicleEnabled) {
-    logger.info("chronicle: reconciler needs MONGODB_URI for /who history — off");
+    logger.info("chronicle: early-confirm needs MONGODB_URI — off");
   }
 
   // The watcher fills this once in world, so a listener-heard buff drop can be whispered.
@@ -1183,6 +1242,7 @@ async function main(): Promise<void> {
   outreach.setHandler((sender, text) => router.handle(sender, text));
   const services: ConnectionServices = {
     lanes,
+    chronicle,
     buffStore,
     broadcasts,
     raidStateStore,
