@@ -69,13 +69,16 @@ describe("Outreach", () => {
 
   const isIntro = (msg: string): boolean => /world-buff tracker/i.test(msg);
 
-  it("introduces itself to a non-subscriber AND routes the message to the command engine", async () => {
+  it("answers a non-subscriber FIRST, then introduces itself as a follow-up", async () => {
     const { outreach, whispers, routed } = make();
-    await outreach.onListenerContact("Raider", "hi");
-    expect(whispers.some((w) => isIntro(w.msg))).toBe(true); // the onboarding intro
-    expect(whispers.some((w) => /whisper "subscribe"/i.test(w.msg))).toBe(true); // pitches subscribe
-    expect(whispers.some((w) => w.msg === "reply to hi")).toBe(true); // routed reply
-    expect(routed).toEqual([{ sender: "Raider", text: "hi" }]);
+    await outreach.onListenerContact("Raider", "discord"); // a specific request
+    const msgs = whispers.map((w) => w.msg);
+    expect(msgs).toContain("reply to discord"); // their answer
+    expect(msgs.some((m) => isIntro(m))).toBe(true); // the onboarding intro
+    expect(msgs.some((m) => /whisper "subscribe"/i.test(m))).toBe(true); // still pitches subscribe
+    // the answer leads; the intro follows so it never buries what they asked for
+    expect(msgs.indexOf("reply to discord")).toBeLessThan(msgs.findIndex((m) => isIntro(m)));
+    expect(routed).toEqual([{ sender: "Raider", text: "discord" }]);
   });
 
   it("a first-contact subscribe gets NO intro — just the reply, then a recruiting follow-up", async () => {

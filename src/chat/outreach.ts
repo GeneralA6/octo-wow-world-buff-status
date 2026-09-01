@@ -99,24 +99,23 @@ export class Outreach {
     const firstContact = !(await this.#isSubscribed(playerName)) && (await this.#introStore.introduceOnce(playerName));
     const subscribing = isSubscribeRequest(text);
 
-    // A NON-subscribe first contact gets the full intro (identity + recruiting) BEFORE the reply.
-    // A subscribe first contact skips it entirely — the "You're subscribed!" reply stands alone,
-    // identical to the "hey" then "subscribe" path, and the recruiting line follows it below.
-    if (firstContact && !subscribing) {
-      this.#logger.info(`outreach: introducing Bufftracker to ${playerName}`);
-      for (const line of introLines(this.#config)) whisper(playerName, line);
-      this.#autoInvite(playerName);
-    }
-
-    // Every message is transferred to Bufftracker's command engine and answered.
+    // ANSWER FIRST. Their message goes to the command engine and the reply is whispered before any
+    // introduction, so a specific request (discord, help, status, subscribe) is served first — the
+    // intro never buries what they actually asked for.
     if (this.#handle) {
       for (const reply of await this.#handle(playerName, text, sourceFaction)) whisper(playerName, reply);
     }
 
-    // A subscribe first contact: after the confirmation, a recruiting follow-up + the invite.
-    if (firstContact && subscribing) {
-      this.#logger.info(`outreach: welcoming new subscriber ${playerName}`);
-      whisper(playerName, recruitingLine(this.#config));
+    // THEN introduce, once, as a follow-up. A subscriber gets just the recruiting line (they plainly
+    // know what it is); everyone else gets the full identity + recruiting. Then the silent invite.
+    if (firstContact) {
+      if (subscribing) {
+        this.#logger.info(`outreach: welcoming new subscriber ${playerName}`);
+        whisper(playerName, recruitingLine(this.#config));
+      } else {
+        this.#logger.info(`outreach: introducing Bufftracker to ${playerName}`);
+        for (const line of introLines(this.#config)) whisper(playerName, line);
+      }
       this.#autoInvite(playerName);
     }
   }
