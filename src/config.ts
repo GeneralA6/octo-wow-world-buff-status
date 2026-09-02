@@ -71,10 +71,13 @@ export interface BotConfig {
   readonly raidLeftFloor: number;
   /** Hysteresis floor: an active raid clears (and re-arms) when it drops below this. */
   readonly raidClearSize: number;
-  /** Estimated Onyxia clear time, used to predict a forming raid's end until learned. */
+  /** Estimated Onyxia clear time, used to predict a raid's end until learned. */
   readonly raidDurationEstimateMs: number;
   /** Learned-median clear time replaces the estimate once this many raids are recorded. */
   readonly raidLearnMinSamples: number;
+  /** Lead time for the "about to clear" heads-up: it fires once a raid still in the lair has been
+   *  in to within this much of its predicted clear time, so a fresh Rallying Cry should drop soon. */
+  readonly raidEndingLeadMs: number;
   /** Floor on a plausible clear: shorter form→clear samples are churn, not a real raid,
    *  and are dropped so they can't poison the learned median downward. */
   readonly raidMinClearMs: number;
@@ -272,6 +275,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
   const raidLearnMinSamples = intWithDefault("WOW_RAID_LEARN_MIN_SAMPLES", 15, 1);
+  const raidEndingLeadMs = intWithDefault("WOW_RAID_ENDING_LEAD_MINUTES", 10, 1) * 60_000;
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
   const raidDisbandMs = intWithDefault("WOW_RAID_DISBAND_MINUTES", 20, 1) * 60_000;
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
@@ -372,6 +376,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidClearSize,
     raidDurationEstimateMs,
     raidLearnMinSamples,
+    raidEndingLeadMs,
     raidMinClearMs,
     raidDisbandMs,
     raidClearSustainedMs,

@@ -17,8 +17,10 @@ import type { RaidEvent } from "./raid-tracker.js";
  */
 
 export type RaidEventKind = RaidEvent["kind"];
-/** The dedup keys the ledger tracks: one per raid-event alert (forming, cleared). */
-export type BroadcastKind = RaidEventKind;
+/** The dedup keys the ledger tracks: one per raid-event alert (forming, cleared), plus the
+ *  "about to clear" heads-up, which has no RaidEvent of its own (it fires from a raid's elapsed
+ *  time crossing its predicted-clear lead, not from a detector). */
+export type BroadcastKind = RaidEventKind | "raid-ending";
 
 export interface BroadcastRecord {
   readonly city: Faction;

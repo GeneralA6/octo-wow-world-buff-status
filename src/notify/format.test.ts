@@ -5,6 +5,8 @@ import {
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
+  formatRaidEnding,
+  formatRaidEndingWhisper,
   formatRaidDisbanded,
   formatRaidDisbandedWhisper,
   formatCapitalStatusYell,
@@ -158,6 +160,38 @@ describe("formatRaidFinished", () => {
     const msg = formatRaidFinished(1, 60 * 60_000, "Onyxia's Lair");
     expect(msg.body).toContain("may drop soon");
     expect(msg.body).not.toContain("already up"); // no buff-state model any more
+  });
+});
+
+describe("formatRaidEnding", () => {
+  it("names the raid, how long it's been in, the open capital, and a park-now CTA", () => {
+    const msg = formatRaidEnding(28, ["alliance"], 28 * 60_000, "Onyxia's Lair");
+    expect(msg.title).toContain("⏰");
+    expect(msg.title).toContain("Raid #28");
+    expect(msg.body).toContain("~28m");
+    expect(msg.body).toContain("Stormwind");
+    expect(msg.body).not.toContain("Orgrimmar");
+    expect(msg.body).toMatch(/park now/i);
+  });
+
+  it("keeps the timing soft — no precise ETA that a wide spread would make wrong", () => {
+    const msg = formatRaidEnding(28, ["alliance"], 28 * 60_000, "Onyxia's Lair");
+    expect(msg.body).toMatch(/should drop.*soon/i);
+    expect(msg.body).not.toMatch(/~\d+m (?:left|to go|until)/i); // no "~10m left" promise
+  });
+
+  it("names both capitals when either could get it, and falls back to 'A raid' unnumbered", () => {
+    const msg = formatRaidEnding(null, ["alliance", "horde"], 30 * 60_000, "Onyxia's Lair");
+    expect(msg.title).toContain("A raid");
+    expect(msg.body).toContain("Stormwind or Orgrimmar");
+  });
+
+  it("the whisper twin names the raid, time in, capital, and 'about to clear'", () => {
+    const line = formatRaidEndingWhisper(28, ["horde"], 28 * 60_000, "Onyxia's Lair");
+    expect(line).toContain("Raid #28");
+    expect(line).toContain("~28m");
+    expect(line).toContain("Orgrimmar");
+    expect(line).toMatch(/about to clear/i);
   });
 });
 

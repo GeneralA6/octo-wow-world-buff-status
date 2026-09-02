@@ -150,6 +150,11 @@ describe("loadConfig", () => {
     ).toThrow(/WOW_RAID_LEFT_FLOOR must be <= WOW_RAID_STRENGTH_SIZE/);
   });
 
+  it("defaults the about-to-clear lead to 10m and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidEndingLeadMs).toBe(10 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_ENDING_LEAD_MINUTES: "15" }).raidEndingLeadMs).toBe(15 * 60_000);
+  });
+
   it("defaults the disband threshold to 20m and accepts an override", () => {
     expect(loadConfig({ ...minimalEnv }).raidDisbandMs).toBe(20 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_RAID_DISBAND_MINUTES: "25" }).raidDisbandMs).toBe(25 * 60_000);

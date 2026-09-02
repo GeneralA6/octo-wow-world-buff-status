@@ -183,3 +183,38 @@ export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], 
   const id = event.number != null ? `Raid #${event.number}` : "A raid";
   return `${id} has formed in ${areaName} - get ready to park in ${where} for the buff.`;
 }
+
+/**
+ * The "about to clear" heads-up: a raid still in the lair has been in about as long as raids
+ * usually take to clear, so a fresh Rallying Cry should drop soon when they finish. The pre-clear
+ * "park NOW" moment — earlier than the reactive "cleared" alert. Fired once per cycle. Discord
+ * channel post. Timing is soft ("about to clear", not a precise ETA) because clear times vary
+ * widely, so a promised minute count would often be wrong.
+ */
+export function formatRaidEnding(
+  raidNumber: number | null,
+  cities: readonly Faction[],
+  elapsedMs: number,
+  areaName: string,
+): NotifyMessage {
+  const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
+  const where = cityList(cities);
+  return {
+    kind: "entered",
+    title: `⏰ ${id} about to clear ${areaName}`,
+    body:
+      `${id} has been in ${areaName} ~${humanClock(elapsedMs)} - about how long raids take to clear. ` +
+      `A fresh Rallying Cry should drop in ${where} soon; park now to catch it.`,
+  };
+}
+
+/** The terse in-game whisper twin of the about-to-clear heads-up. */
+export function formatRaidEndingWhisper(
+  raidNumber: number | null,
+  cities: readonly Faction[],
+  elapsedMs: number,
+  areaName: string,
+): string {
+  const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
+  return `${id} is ~${humanClock(elapsedMs)} into ${areaName} and about to clear - park in ${cityList(cities)} now, the Rallying Cry should drop soon.`;
+}

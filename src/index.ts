@@ -12,6 +12,8 @@ import {
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
+  formatRaidEnding,
+  formatRaidEndingWhisper,
   formatRaidDisbanded,
   formatRaidDisbandedWhisper,
   formatCapitalStatusYell,
@@ -61,6 +63,7 @@ import {
   type RaidStateStore,
 } from "./watcher/raid-state-store.js";
 import { factionOfRace, splitByFaction, type FactionSplit } from "./watcher/faction.js";
+import { raidEndingDue } from "./watcher/raid-ending.js";
 import {
   InMemoryBroadcastLedger,
   MongoBroadcastLedger,
@@ -386,6 +389,15 @@ async function runConnection(
       return null;
     };
 
+    // The clear time a raid is predicted to take: the self-improving estimate (learned median with
+    // its measured bias corrected out) once enough raids are on record, else the config guess. Feeds
+    // the "about to clear" heads-up — which fires once a raid has been in the lair to within the
+    // configured lead of this prediction.
+    const predictRaidDurationMs = async (): Promise<number> => {
+      const series = await durationStore.recent(TIMER_EVAL_WINDOW).catch(() => []);
+      return improvedEstimate(series.map((d) => d.ms), config.raidLearnMinSamples) ?? config.raidDurationEstimateMs;
+    };
+
     // Every ~10 min, yell a buff-status board in each capital: the raid in the lair (with a
     // "park" nudge — every clear can drop a fresh buff) or, when empty, how a drop happens, plus
     // a subscribe/discord CTA. Reaches everyone standing in the city, not just subscribers.
@@ -457,6 +469,43 @@ async function runConnection(
               peak: event.cohort.peak,
               lastBroadcastAt: new Date(now),
             })
+            .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
+        }
+      };
+
+      // The "about to clear" heads-up: a raid STILL in the lair has been in to within the lead of
+      // its predicted clear, so a fresh Rallying Cry should drop soon. Deduped per cycle per city
+      // like the park alerts, and independent of the forming alert (which fired much earlier, at
+      // strength). Only ever called for a raid that is genuinely still in progress (the caller
+      // gates on that), so it never nudges people to park for a raid that has finished.
+      const announceRaidEnding = async (raidNumber: number | null, elapsedMs: number): Promise<void> => {
+        const fresh: Faction[] = [];
+        for (const city of lane.cities) {
+          const last = await broadcasts.last(city, "raid-ending");
+          const lastBuffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
+          if (shouldBroadcast(last, lastBuffDropAt, now, config.broadcastDedupMs)) fresh.push(city);
+        }
+        if (fresh.length === 0) return;
+        const message = formatRaidEnding(raidNumber, fresh, elapsedMs, config.watchAreaName);
+        logger.info(`ALERT raid-ending (${fresh.join("/")}): ${message.body}`);
+        await push(message, fresh);
+        if (config.whispersEnabled) {
+          for (const city of fresh) {
+            yellSink[city]?.(formatRaidEndingWhisper(raidNumber, [city], elapsedMs, config.watchAreaName));
+          }
+          try {
+            const subscribers = await store.all();
+            for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, fresh)) {
+              const line = formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, config.watchAreaName);
+              broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities);
+            }
+          } catch (error) {
+            logger.error(`subscribers: ${describeError(error)}`);
+          }
+        }
+        for (const city of fresh) {
+          await broadcasts
+            .record({ city, kind: "raid-ending", cohortLabel: "a raid", peak: 0, lastBroadcastAt: new Date(now) })
             .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
         }
       };
@@ -551,7 +600,7 @@ async function runConnection(
           logger.info(
             `raid clear recorded: ~${mins(ms)}m (peak ${clear.peak}, ${samples} samples; ` +
               (learned
-                ? `learned median ${mins(learned)}m now driving the heads-up`
+                ? `learned median ${mins(learned)}m now driving the about-to-clear heads-up`
                 : `need ${config.raidLearnMinSamples} to switch off the ${mins(config.raidDurationEstimateMs)}m estimate`) +
               ")",
           );
@@ -611,6 +660,17 @@ async function runConnection(
             );
             await handleConfirmedClear(early, true);
           }
+        }
+      }
+
+      // About-to-clear heads-up — LAST, and only for a raid that is genuinely still in the lair.
+      // If it just cleared above (elapsed is now null), or its roster is already leaving (a pending
+      // departure — clearing or wiping), there is no fresh buff to park for, so we stay quiet.
+      const endingElapsedMs = lane.watch.raidElapsedMs(now);
+      if (endingElapsedMs !== null && !lane.watch.pendingClear()) {
+        const predictedMs = await predictRaidDurationMs();
+        if (raidEndingDue(endingElapsedMs, predictedMs, config.raidEndingLeadMs)) {
+          await announceRaidEnding(lane.watch.raidNumber(), endingElapsedMs);
         }
       }
     };
