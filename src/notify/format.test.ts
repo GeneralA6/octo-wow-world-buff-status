@@ -227,9 +227,13 @@ describe("formatCapitalStatusYell", () => {
     expect(y).toMatch(/one may drop when they clear, park here!/);
   });
 
-  it("ready + no raid (idle): names the buff + self-promo, no cooldown, no raid", () => {
+  it("off cooldown + no raid: states it's off cooldown (no dangling 'world buff:' colon)", () => {
     const y = formatCapitalStatusYell("alliance", null, null, false);
-    expect(y).toBe(`[Onyxia] Rallying Cry world buff: Whisper "subscribe" for pings, "discord" for discord notifications.`);
+    expect(y).toBe(
+      `[Onyxia] Rallying Cry world buff: off cooldown - a fresh one can drop once a raid clears Onyxia. Whisper "subscribe" for pings, "discord" for discord notifications.`,
+    );
+    // the "world buff:" header must never be immediately followed by "Whisper" (the broken state)
+    expect(y).not.toMatch(/world buff: Whisper/);
   });
 
   it("ready + raid: no cooldown mention, raid + park nudge", () => {

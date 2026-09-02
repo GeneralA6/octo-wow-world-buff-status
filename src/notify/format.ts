@@ -144,9 +144,14 @@ export function formatCapitalStatusYell(
   const city = CITY_FOR[faction];
   // Lead: name the buff up front - the message is otherwise vague about what it's alerting on.
   const parts: string[] = [`Rallying Cry world buff:`];
-  // Cooldown: state the timer only while a buff is UP. Ready needs no mention (it's the norm).
+  // State the buff status: the timer while a buff is UP, else that it's off cooldown — but only
+  // when there's no raid to describe (a raid off cooldown gets the "may drop when they clear"
+  // line below, which says it better). Without this, an off-cooldown + empty-lair yell dangled
+  // the "world buff:" colon with nothing after it, reading as a broken/truncated message.
   if (cooldownActiveMsLeft !== null) {
     parts.push(`up in ${city}, ~${humanClock(cooldownActiveMsLeft)} until a fresh one can drop.`);
+  } else if (!raid) {
+    parts.push(`off cooldown - a fresh one can drop once a raid clears Onyxia.`);
   }
   // Raid: only when one is in the lair, with a park nudge when a fresh buff is genuinely possible.
   if (raid) {
