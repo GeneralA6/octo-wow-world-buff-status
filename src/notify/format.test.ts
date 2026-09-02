@@ -9,6 +9,8 @@ import {
   formatBuffImminent,
   formatBuffImminentWhisper,
   formatBuffWhisper,
+  formatRaidDisbanded,
+  formatRaidDisbandedWhisper,
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
@@ -199,6 +201,31 @@ describe("formatRaidFinished", () => {
     const msg = formatRaidFinished(1, 60 * 60_000, "Onyxia's Lair", false);
     expect(msg.body).toContain("already up");
     expect(msg.body).not.toContain("may drop soon");
+  });
+});
+
+describe("formatRaidDisbanded", () => {
+  it("names the raid, says it didn't clear, and tells the named cities to stop parking", () => {
+    const msg = formatRaidDisbanded(28, ["horde"], "Onyxia's Lair");
+    expect(msg.title).toContain("🚫");
+    expect(msg.title).toContain("Raid #28");
+    expect(msg.body).toMatch(/without clearing/i);
+    expect(msg.body).toMatch(/no Rallying Cry coming/i);
+    expect(msg.body).toContain("Orgrimmar");
+    expect(msg.body).not.toContain("Stormwind"); // only the city that was told to park
+  });
+
+  it("names both cities when both were told to park, and falls back to 'The raid' unnumbered", () => {
+    const msg = formatRaidDisbanded(null, ["alliance", "horde"], "Onyxia's Lair");
+    expect(msg.title).toContain("The raid");
+    expect(msg.body).toContain("Stormwind or Orgrimmar");
+  });
+
+  it("the whisper twin says no buff is coming and to stop parking", () => {
+    const line = formatRaidDisbandedWhisper(28, ["alliance"], "Onyxia's Lair");
+    expect(line).toContain("Raid #28");
+    expect(line).toMatch(/no buff coming/i);
+    expect(line).toMatch(/stop parking in Stormwind/i);
   });
 });
 

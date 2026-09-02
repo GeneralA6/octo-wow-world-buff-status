@@ -52,6 +52,12 @@ describe("formatHeartbeat", () => {
     expect(line).toContain("177 subs (210 all-time)");
   });
 
+  it("shows the lifetime guild-invite total when provided", () => {
+    const line = formatHeartbeat({ ...base, subscribers: 177, totalUsers: 210, totalInvites: 45 });
+    expect(line).toContain("177 subs (210 all-time)");
+    expect(line).toContain("45 invites all-time");
+  });
+
   it("reports each faction's buff as up-with-minutes or clear", () => {
     const line = formatHeartbeat({
       ...base,

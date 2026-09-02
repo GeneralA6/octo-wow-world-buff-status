@@ -2,11 +2,13 @@ import { MongoClient } from "mongodb";
 import { subscriberKey } from "./store.js";
 
 /**
- * An append-only ledger of every distinct player who has EVER subscribed — a lifetime user
- * count for statistics, unaffected by unsubscribing. The subscriber store removes an active
- * subscriber on unsubscribe (so alerts never reach them); this keeps the name so the total can't
- * shrink. Kept SEPARATE from the subscriber store on purpose: the active set decides who gets
- * alerts, and a lifetime metric must never be able to leak an unsubscribed person into that.
+ * An append-only ledger of distinct player names for a lifetime statistic — used for BOTH
+ * "distinct players who have ever subscribed" (collection `users`) and "distinct players ever
+ * guild-invited" (collection `invites`), one instance per collection. The point is a total that
+ * can't shrink: the subscriber store removes an active subscriber on unsubscribe (so alerts never
+ * reach them), and a guild invite is a one-shot event — neither leaves a running count, so this
+ * keeps the name. Kept SEPARATE from the active stores on purpose: those decide who gets alerts,
+ * and a lifetime metric must never leak an inactive person back into them.
  *
  * Keyed by the same case-insensitive character key as the subscriber store, so one person counts
  * once whatever the casing. Idempotent (a unique index), and — unlike the intro store — it never
@@ -58,10 +60,14 @@ export class MongoUserLedger implements UserLedger {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoUserLedger> {
+  static async connect(
+    uri: string,
+    dbName: string = DEFAULT_DB,
+    collectionName: string = COLLECTION,
+  ): Promise<MongoUserLedger> {
     const client = new MongoClient(uri);
     await client.connect();
-    const collection = client.db(dbName).collection<UserDoc>(COLLECTION);
+    const collection = client.db(dbName).collection<UserDoc>(collectionName);
     await collection.createIndex({ name: 1 }, { unique: true });
     const db: UserDb = {
       upsert: (key, firstSeen) =>

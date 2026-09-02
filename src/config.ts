@@ -83,6 +83,10 @@ export interface BotConfig {
   /** Floor on a plausible clear: shorter form→clear samples are churn, not a real raid,
    *  and are dropped so they can't poison the learned median downward. */
   readonly raidMinClearMs: number;
+  /** A form→clear shorter than this (and NOT Chronicle-kill-confirmed) is a DISBAND — a raid that
+   *  formed but gave up, not a kill. It fires no park-now and records no duration; if we alerted a
+   *  forming for it, a stand-down retracts that. Held above the fastest real clear on record. */
+  readonly raidDisbandMs: number;
   /** How long the raid's roster must stay gone to count a departure as a real clear rather
    *  than a wipe (they run back). ~4 min — enough time to corpse-run back to the instance. */
   readonly raidClearSustainedMs: number;
@@ -272,6 +276,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
   const raidLearnMinSamples = intWithDefault("WOW_RAID_LEARN_MIN_SAMPLES", 15, 1);
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
+  const raidDisbandMs = intWithDefault("WOW_RAID_DISBAND_MINUTES", 20, 1) * 60_000;
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // Default to the buff window: within one head-block cycle we should speak once.
@@ -370,6 +375,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidDurationEstimateMs,
     raidLearnMinSamples,
     raidMinClearMs,
+    raidDisbandMs,
     raidClearSustainedMs,
     statusYellMs,
     broadcastDedupMs,

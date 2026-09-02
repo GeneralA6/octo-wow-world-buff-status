@@ -27,6 +27,8 @@ export interface HeartbeatStats {
   readonly subscribers: number;
   /** Distinct people who have EVER subscribed (survives unsubscribing). Omitted = not shown. */
   readonly totalUsers?: number;
+  /** Distinct people ever guild-invited (lifetime). Omitted = not shown. */
+  readonly totalInvites?: number;
   readonly samples: number;
   /** The learned median clear-time once >= minSamples are on record, else null. */
   readonly learnedMedianMs: number | null;
@@ -69,5 +71,6 @@ export function formatHeartbeat(stats: HeartbeatStats): string {
     stats.totalUsers != null
       ? `${stats.subscribers} subs (${stats.totalUsers} all-time)`
       : `${stats.subscribers} subs`;
-  return `monitor: ${subs}; raid timer ${timer}${accuracy}; buffs ${buffs}`;
+  const invites = stats.totalInvites != null ? `; ${stats.totalInvites} invites all-time` : "";
+  return `monitor: ${subs}${invites}; raid timer ${timer}${accuracy}; buffs ${buffs}`;
 }

@@ -160,6 +160,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_BUFF_IMMINENT_MINUTES: "20" }).buffImminentMs).toBe(20 * 60_000);
   });
 
+  it("defaults the disband threshold to 20m and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidDisbandMs).toBe(20 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_DISBAND_MINUTES: "25" }).raidDisbandMs).toBe(25 * 60_000);
+  });
+
   it("defaults the raid-duration estimate to 45m and accepts an override", () => {
     expect(loadConfig({ ...minimalEnv }).raidDurationEstimateMs).toBe(45 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_RAID_DURATION_MINUTES: "30" }).raidDurationEstimateMs).toBe(

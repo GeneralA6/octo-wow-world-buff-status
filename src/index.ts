@@ -16,6 +16,8 @@ import {
   formatBuffImminent,
   formatBuffImminentWhisper,
   formatBuffWhisper,
+  formatRaidDisbanded,
+  formatRaidDisbandedWhisper,
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
@@ -245,6 +247,8 @@ interface ConnectionServices {
   readonly store: SubscriberStore;
   /** Lifetime distinct-subscriber count for the heartbeat stat (survives unsubscribing). */
   readonly userLedger: UserLedger;
+  /** Lifetime distinct guild-invite count for the heartbeat stat. */
+  readonly inviteLedger: UserLedger;
   readonly router: CommandRouter;
   readonly dm: DiscordDmSender;
   readonly outreach: Outreach;
@@ -284,7 +288,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
@@ -375,9 +379,12 @@ async function runConnection(
 
     // The "🔥 buff imminent" alert: a raid is in the lair AND the buff is about to wear off, so a
     // fresh Rallying Cry is coming when they clear — the highest-value "park now" moment. Fires
-    // once per buff cycle per city (its OWN dedup kind, so it's independent of the forming and
-    // cleared alerts), to Discord + that side's subscribers + a city yell. The whisper is tagged
-    // with the city so a buff dropping there purges it as stale, like the other park alerts.
+    // once per buff cycle per city, to Discord + that side's subscribers + a city yell. The whisper
+    // is tagged with the city so a buff dropping there purges it as stale, like the other park
+    // alerts. Its unique job is a raid the FORMING alert didn't already cover — a long-running one,
+    // or one that formed when the buff still had lots of time (so forming was gated). When forming
+    // DID alert this cycle (a raid that formed late, with the buff already ≤30m), it fires ~1 min
+    // before this and says the same thing, so this stays silent to avoid the redundant double-ping.
     const announceBuffImminent = async (
       faction: Faction,
       raidNumber: number | null,
@@ -387,6 +394,12 @@ async function runConnection(
     ): Promise<void> => {
       const last = await broadcasts.last(faction, "buff-imminent");
       if (!shouldBroadcast(last, buffAppliedAt, now, config.broadcastDedupMs)) return;
+      // Skip if the forming alert already told this city to park for a raid this cycle.
+      const forming = await broadcasts.last(faction, "raid-forming");
+      if (!shouldBroadcast(forming, buffAppliedAt, now, config.broadcastDedupMs)) {
+        logger.info(`buff-imminent (${faction}) suppressed — forming alert already covered this cycle`);
+        return;
+      }
       const message = formatBuffImminent(faction, raidNumber, buffMsLeft, config.watchAreaName);
       logger.info(`ALERT buff-imminent (${faction}): ${message.body}`);
       await push(message, [faction]);
@@ -613,6 +626,39 @@ async function runConnection(
       // It arrives one of two ways: the ClearTracker's sustained wait (roster gone past the
       // wipe-runback window), or a Chronicle early-confirm below. Same handling either way; the
       // plausibility floor/ceiling guard both. `killConfirmed` only changes the alert wording.
+      // A raid that formed and got a "get ready to park" alert, but left too soon to have really
+      // cleared Onyxia, is a DISBAND — no park-now, no duration sample, and a stand-down for the
+      // cities we told to park (found via the forming broadcast for this cycle; a city where a buff
+      // dropped won't match, so a real clear never triggers a stand-down). Purges the queued park
+      // whispers so nobody waits for a buff that isn't coming.
+      const handleDisband = async (clear: ConfirmedClear): Promise<void> => {
+        logger.info(
+          `raid #${clear.number ?? "?"} disbanded: left after ~${mins(clear.durationMs)}m (< ${mins(config.raidDisbandMs)}m) — not a real clear, not recorded`,
+        );
+        const notified: Faction[] = [];
+        for (const city of lane.cities) {
+          const forming = await broadcasts.last(city, "raid-forming");
+          const buffDropAt = (await buffStore.current(city, new Date(now)))?.appliedAt ?? null;
+          if (!shouldBroadcast(forming, buffDropAt, now, config.broadcastDedupMs)) notified.push(city);
+        }
+        if (notified.length === 0) return; // forming never alerted this cycle — nobody was told to park
+        const line = formatRaidDisbandedWhisper(clear.number, notified, config.watchAreaName);
+        for (const city of notified) {
+          whisperPool.dropForFaction(city);
+          whisperQueue?.dropForFaction(city);
+          yellSink[city]?.(line);
+        }
+        void push(formatRaidDisbanded(clear.number, notified, config.watchAreaName), notified);
+        if (config.whispersEnabled) {
+          try {
+            const subs = (await store.all()).filter((s) => notified.some((c) => s.factions.includes(c)));
+            if (subs.length > 0) broadcastWhisper(subs.map((s) => s.name), line, notified[0] ?? null);
+          } catch (error) {
+            logger.error(`subscribers: ${describeError(error)}`);
+          }
+        }
+      };
+
       const handleConfirmedClear = async (clear: ConfirmedClear, killConfirmed: boolean): Promise<void> => {
         const ms = clear.durationMs;
         const CEILING_MS = 6 * 60 * 60_000; // a single Onyxia clear is not 6h+ — that's a merge/bug
@@ -624,6 +670,11 @@ async function runConnection(
         }
         if (ms > CEILING_MS) {
           logger.info(`raid clear ignored: ~${mins(ms)}m exceeds the ${mins(CEILING_MS)}m ceiling — likely a merge`);
+          return;
+        }
+        // Too short to be a real Onyxia clear (unless Chronicle proved the kill) → a disband.
+        if (!killConfirmed && ms < config.raidDisbandMs) {
+          await handleDisband(clear);
           return;
         }
         // The park-now alert and the recap gate on the same fact: a raid that turned in a
@@ -705,11 +756,12 @@ async function runConnection(
     };
 
     const logHeartbeat = async (now: number): Promise<void> => {
-      const [series, learnedMedianMs, subscribers, totalUsers, buffs] = await Promise.all([
+      const [series, learnedMedianMs, subscribers, totalUsers, totalInvites, buffs] = await Promise.all([
         durationStore.recent(TIMER_EVAL_WINDOW),
         durationStore.median(config.raidLearnMinSamples),
         store.all().then((all) => all.length),
         userLedger.count().catch(() => 0),
+        inviteLedger.count().catch(() => 0),
         Promise.all(
           FACTIONS.map(async (faction) => {
             const state = await buffStore.current(faction, new Date(now));
@@ -725,6 +777,7 @@ async function runConnection(
         formatHeartbeat({
           subscribers,
           totalUsers,
+          totalInvites,
           samples: evaln.samples,
           learnedMedianMs,
           improvedMs: evaln.improvedEstimateMs,
@@ -805,12 +858,11 @@ async function runConnection(
     // Resolve a player's side with a targeted /who — they're online, having just whispered.
     // Null if it can't run, they're not found, or their race is custom. Used to tailor the
     // status to a non-subscriber's capital.
-    const detectFaction = async (name: string, viaBufftracker = false): Promise<Faction | null> => {
-      // Interactive lookups (subscribe, status) prefer a listener's socket so they never steal a
-      // slot from the raid poll. The background resolver passes `viaBufftracker` to run on
-      // Bufftracker's own /who instead — serialized behind the raid poll (its natural throttle),
-      // which is where a slow, low-priority backlog cleanup belongs.
-      const who = viaBufftracker ? queuedWho : (listenerWho.any() ?? queuedWho);
+    const detectFaction = async (name: string): Promise<Faction | null> => {
+      // Prefer a listener's socket so a /who never steals a slot from the raid poll — the
+      // listeners don't run the 20s/60s census, so their /who chain is idle. Falls back to
+      // Bufftracker's own /who only when no listener is in world.
+      const who = listenerWho.any() ?? queuedWho;
       try {
         const result = await who({ minLevel: 0, maxLevel: 100, playerName: name });
         const player = result.players.find((p) => subscriberKey(p.name) === subscriberKey(name));
@@ -821,8 +873,8 @@ async function runConnection(
       }
     };
     // Auto-set a new subscriber's side from the detected faction (leave "both" if unknown).
-    const lookupFaction = async (name: string, viaBufftracker = false): Promise<void> => {
-      const faction = await detectFaction(name, viaBufftracker);
+    const lookupFaction = async (name: string): Promise<void> => {
+      const faction = await detectFaction(name);
       if (!faction) return; // offline, not found, or a custom race — leave them on "both"
       if (await store.update(name, { factions: [faction], factionSource: "auto" })) {
         logger.info(`faction: detected ${name} as ${faction}`);
@@ -831,8 +883,8 @@ async function runConnection(
 
     // Actively clear the both-faction backlog: each tick, /who ONE subscriber still on the
     // unresolved "both" default and set their side — so they get the right city's alerts WITHOUT
-    // ever whispering us. Runs on BUFFTRACKER's own /who (serialized behind the raid poll, its
-    // natural throttle), slowly, as a low-priority background cleanup. Covers future stragglers
+    // ever whispering us. Runs through a LISTENER's /who (idle chain, so it never competes with or
+    // delays the raid poll), slowly, as a low-priority background cleanup. Covers future stragglers
     // too: a failed /who at subscribe, or a direct-to-Bufftracker whisper (no listener to infer
     // from), lands back on the both-default and is picked up on the next re-scan. Offline /
     // custom-race lookups return nothing and are retried on a later pass.
@@ -850,7 +902,7 @@ async function runConnection(
         logger.info(`faction: resolving ${resolveQueue.length} both-faction subscriber(s) in the background`);
       }
       const name = resolveQueue.shift();
-      if (name) await lookupFaction(name, true); // via Bufftracker, serialized behind the raid poll
+      if (name) await lookupFaction(name); // via a listener's /who — never competes with the raid poll
     };
 
     // Guild invites the bot sends, so a matching JOIN can be welcomed in guild chat. An invite not
@@ -860,6 +912,7 @@ async function runConnection(
     const guildInvite = (nameTo: string): void => {
       pendingGuildInvites.set(nameTo.toLowerCase(), Date.now());
       world.guildInvite(nameTo);
+      void inviteLedger.record(nameTo).catch((error) => logger.debug(`invites: record failed (${describeError(error)})`));
     };
     const welcomeIfWeInvited = (name: string): void => {
       const invitedAt = pendingGuildInvites.get(name.toLowerCase());
@@ -1408,6 +1461,18 @@ async function main(): Promise<void> {
     .then((subs) => Promise.all(subs.map((s) => userLedger.record(s.name))))
     .catch((error) => logger.debug(`users: seed failed (${describeError(error)})`));
 
+  // Lifetime count of distinct players we've guild-invited — the same shape as the user ledger,
+  // in its own `invites` collection.
+  let inviteLedger: UserLedger = new InMemoryUserLedger();
+  if (config.mongodbUri) {
+    try {
+      inviteLedger = await MongoUserLedger.connect(config.mongodbUri, config.mongodbDb, "invites");
+      logger.info("invites: counting lifetime guild invites in MongoDB");
+    } catch (error) {
+      logger.error(`invites: MongoDB connect failed (${describeError(error)}); counting in memory`);
+    }
+  }
+
   // Chronicle early-confirm: during a departure WE detect, a fresh kill log by one of the raid's
   // roster confirms the clear and lets processLane skip the sustained wait (never a trigger on its
   // own). Needs Mongo for the dedup ledger, so it's skipped without it. ±30 min around a kill's
@@ -1528,6 +1593,7 @@ async function main(): Promise<void> {
     snapshots,
     store,
     userLedger,
+    inviteLedger,
     router,
     dm,
     outreach,
@@ -1570,6 +1636,7 @@ async function main(): Promise<void> {
       feedbackStore.close(),
       introStore.close(),
       userLedger.close(),
+      inviteLedger.close(),
       raidCounterStore.close(),
       raidStateStore.close(),
       chronicleStore ? chronicleStore.close() : Promise.resolve(),

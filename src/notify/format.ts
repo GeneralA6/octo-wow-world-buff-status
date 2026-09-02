@@ -42,6 +42,32 @@ export function formatRaidFinished(
   };
 }
 
+/** A raid that formed and got a "get ready to park" alert, but left too soon to have cleared
+ *  Onyxia — a disband, not a kill. Retracts the park heads-up so nobody waits for a buff that
+ *  isn't coming. Only sent for the cities that were told to park. Discord channel post. */
+export function formatRaidDisbanded(
+  raidNumber: number | null,
+  cities: readonly Faction[],
+  areaName: string,
+): NotifyMessage {
+  const id = raidNumber !== null ? `Raid #${raidNumber}` : "The raid";
+  return {
+    kind: "info",
+    title: `🚫 ${id} disbanded`,
+    body: `${id} left ${areaName} without clearing it - no Rallying Cry coming from that one. You can stop parking in ${cityList(cities)}.`,
+  };
+}
+
+/** The terse in-game whisper twin of the disband stand-down. */
+export function formatRaidDisbandedWhisper(
+  raidNumber: number | null,
+  cities: readonly Faction[],
+  areaName: string,
+): string {
+  const id = raidNumber !== null ? `Raid #${raidNumber}` : "The raid";
+  return `${id} left ${areaName} without clearing - no buff coming, you can stop parking in ${cityList(cities)}.`;
+}
+
 /**
  * A buff just dropped (a listener heard the yell). Says which city it's up in and,
  * crucially, the earliest a fresh one can drop again — which is when this one wears
