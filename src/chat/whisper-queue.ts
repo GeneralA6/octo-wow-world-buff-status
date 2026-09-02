@@ -15,6 +15,10 @@ import type { Faction } from "../subscribers/store.js";
 
 export type WhisperSend = (target: string, message: string) => void;
 export type WhisperError = (error: unknown, target: string, message: string) => void;
+/** Optional measurement hook: called with a one-line summary when the server throttles this
+ *  character's whispers, and when a broadcast finishes draining — so the live distinct-recipient
+ *  cap and effective throughput can be read straight from the deploy logs. */
+export type WhisperMetric = (line: string) => void;
 
 interface QueuedWhisper {
   readonly target: string;
@@ -43,14 +47,23 @@ export class WhisperQueue {
   readonly #send: WhisperSend;
   readonly #intervalMs: number;
   readonly #onError?: WhisperError;
+  readonly #onMetric?: WhisperMetric;
   #timer: NodeJS.Timeout | null = null;
   /** While in a throttle cooldown, no whisper is sent before this timestamp. */
   #pausedUntil = 0;
+  // Measurement of the live server throttle (see WhisperMetric). An "active window" is one
+  // continuous drain from idle; counters reset when the queue next goes idle→active.
+  #activeSince = 0;
+  #sentSinceActive = 0;
+  /** Distinct recipients sent since the window opened OR the last throttle — at the FIRST throttle
+   *  this is the server's distinct-recipient cap for this character. */
+  #sentSinceThrottle = 0;
 
-  constructor(send: WhisperSend, intervalMs = 1200, onError?: WhisperError) {
+  constructor(send: WhisperSend, intervalMs = 1200, onError?: WhisperError, onMetric?: WhisperMetric) {
     this.#send = send;
     this.#intervalMs = intervalMs;
     this.#onError = onError;
+    this.#onMetric = onMetric;
   }
 
   get size(): number {
@@ -59,7 +72,13 @@ export class WhisperQueue {
 
   enqueue(target: string, message: string, cities?: readonly Faction[]): void {
     this.#queue.push({ target, message, cities });
-    if (!this.#timer) this.#pump();
+    if (!this.#timer) {
+      // Idle -> active: a new drain window opens, so reset the throttle measurement.
+      this.#activeSince = Date.now();
+      this.#sentSinceActive = 0;
+      this.#sentSinceThrottle = 0;
+      this.#pump();
+    }
   }
 
   /**
@@ -88,6 +107,15 @@ export class WhisperQueue {
    */
   notifyThrottled(): void {
     const now = Date.now();
+    // Measurement: at the first throttle of a window, #sentSinceThrottle is the server's
+    // distinct-recipient cap for this character; the elapsed time is the window it applied over.
+    if (this.#onMetric) {
+      const elapsedS = ((now - this.#activeSince) / 1000).toFixed(1);
+      this.#onMetric(
+        `THROTTLED after ${this.#sentSinceThrottle} distinct this window (${this.#sentSinceActive} total in ${elapsedS}s, interval ${this.#intervalMs}ms)`,
+      );
+    }
+    this.#sentSinceThrottle = 0;
     const cutoff = now - RETRY_WINDOW_MS;
     const queuedTargets = new Set(this.#queue.map((w) => w.target.toLowerCase()));
     const seen = new Set<string>();
@@ -130,11 +158,18 @@ export class WhisperQueue {
     }
     const next = this.#queue.shift();
     if (!next) {
+      // Window drained: report the effective throughput (total distinct sent / wall time).
+      if (this.#onMetric && this.#sentSinceActive > 0) {
+        const elapsedS = ((now - this.#activeSince) / 1000).toFixed(1);
+        this.#onMetric(`drained ${this.#sentSinceActive} whispers in ${elapsedS}s`);
+      }
       this.#timer = null;
       return;
     }
     try {
       this.#send(next.target, next.message);
+      this.#sentSinceActive++;
+      this.#sentSinceThrottle++;
       this.#recordSent(next, now);
     } catch (error) {
       this.#onError?.(error, next.target, next.message);

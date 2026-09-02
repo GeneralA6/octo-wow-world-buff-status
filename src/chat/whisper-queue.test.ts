@@ -50,6 +50,25 @@ describe("WhisperQueue", () => {
     expect(errors).toEqual(["B"]);
   });
 
+  it("reports the distinct-recipient count to the metric hook on throttle", () => {
+    const metrics: string[] = [];
+    const queue = new WhisperQueue(() => {}, 1000, undefined, (line) => metrics.push(line));
+    queue.enqueueAll(["A", "B", "C", "D"], "x"); // A sent immediately
+    vi.advanceTimersByTime(1000); // B
+    vi.advanceTimersByTime(1000); // C  -> 3 sent, D pending
+    queue.notifyThrottled();
+    expect(metrics.some((m) => m.includes("THROTTLED after 3 distinct"))).toBe(true);
+  });
+
+  it("reports the drained count and time to the metric hook", () => {
+    const metrics: string[] = [];
+    const queue = new WhisperQueue(() => {}, 1000, undefined, (line) => metrics.push(line));
+    queue.enqueueAll(["A", "B"], "x"); // A immediate, B pending
+    vi.advanceTimersByTime(1000); // B sent
+    vi.advanceTimersByTime(1000); // queue empties -> drain reported
+    expect(metrics.some((m) => /drained 2 whispers in [\d.]+s/.test(m))).toBe(true);
+  });
+
   it("drops pending whispers on stop", () => {
     const sent: string[] = [];
     const queue = new WhisperQueue((t) => sent.push(t), 1000);

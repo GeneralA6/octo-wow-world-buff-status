@@ -936,6 +936,7 @@ async function runConnection(
       (targetName, message) => world.whisper(targetName, message),
       config.whisperThrottleMs,
       (error, targetName) => logger.debug(`whisper to ${targetName} failed: ${describeError(error)}`),
+      (line) => logger.info(`whisper-meter [Bufftracker]: ${line}`),
     );
 
     world.start();
@@ -1024,6 +1025,7 @@ async function runListener(
       (targetName, message) => world.whisper(targetName, message),
       config.whisperThrottleMs,
       (error, targetName) => logger.debug(`whisper to ${targetName} failed: ${describeError(error)}`),
+      (line) => logger.info(`whisper-meter [${listener.characterName}]: ${line}`),
     );
 
     const world = new WorldClient({
