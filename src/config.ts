@@ -143,6 +143,10 @@ export interface BotConfig {
   readonly interactEntry: number | null;
   /** Guild the bot represents — used in the intro whisper and for auto-invites. */
   readonly guildName: string;
+  /** A short region/timezone descriptor for the guild, woven into the recruiting line so a
+   *  prospective member knows when it plays (e.g. "an Aussie guild, ACST (UTC+9:30)"). Empty
+   *  omits it. */
+  readonly guildRegion: string;
   /** Community name used in the intro whisper. */
   readonly community: string;
   /** Who built the bot — credited in the intro whisper and named for optional gold tips. */
@@ -329,6 +333,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const interactEntry = interactEntryRaw && /^\d+$/.test(interactEntryRaw) ? Number(interactEntryRaw) : null;
 
   const guildName = env.WOW_GUILD_NAME?.trim() || "Rage Quit";
+  const guildRegion = env.WOW_GUILD_REGION?.trim() ?? "an Aussie guild, ACST (UTC+9:30)";
   const community = env.WOW_COMMUNITY?.trim() || "OctoWoW";
   const author = env.WOW_AUTHOR?.trim() || "Gibom";
   const inviteRaw = env.WOW_GUILD_INVITE?.trim().toLowerCase();
@@ -399,6 +404,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     interactMaxYd,
     interactEntry,
     guildName,
+    guildRegion,
     community,
     author,
     guildInviteEnabled,

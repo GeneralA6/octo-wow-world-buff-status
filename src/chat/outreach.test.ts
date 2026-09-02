@@ -4,7 +4,13 @@ import { Outreach, introLines, recruitingLine } from "./outreach.js";
 import { InMemoryIntroStore } from "./intro-store.js";
 import type { Faction } from "../subscribers/store.js";
 
-const config = { guildName: "Rage Quit", community: "OctoWoW", guildInviteEnabled: false, author: "Gibom" };
+const config = {
+  guildName: "Rage Quit",
+  guildRegion: "an Aussie guild, ACST (UTC+9:30)",
+  community: "OctoWoW",
+  guildInviteEnabled: false,
+  author: "Gibom",
+};
 
 describe("introLines", () => {
   it("introduces itself, says what it does, and points at subscribe/help", () => {
@@ -33,12 +39,18 @@ describe("introLines", () => {
 });
 
 describe("recruitingLine", () => {
-  it("names the guild, recruits, and points at the invite command — no subscribe pitch", () => {
+  it("names the guild + its region, recruits, and points at the invite command — no subscribe pitch", () => {
     const line = recruitingLine(config);
     expect(line).toContain("Rage Quit");
+    expect(line).toContain("an Aussie guild, ACST (UTC+9:30)"); // region woven in
     expect(line).toMatch(/recruit/i);
     expect(line).toMatch(/invite/i);
     expect(line).not.toMatch(/whisper "subscribe"/i);
+  });
+
+  it("omits the region cleanly when it's empty", () => {
+    const line = recruitingLine({ ...config, guildRegion: "" });
+    expect(line).toBe(`<Rage Quit> is recruiting, too - whisper "invite" any time and I'll send you a guild invite.`);
   });
 });
 

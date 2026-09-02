@@ -1598,6 +1598,7 @@ async function main(): Promise<void> {
   const outreach = new Outreach(
     {
       guildName: config.guildName,
+      guildRegion: config.guildRegion,
       community: config.community,
       guildInviteEnabled: config.guildInviteEnabled,
       author: config.author,

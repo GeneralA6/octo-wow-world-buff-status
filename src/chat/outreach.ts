@@ -5,6 +5,9 @@ import type { IntroStore } from "./intro-store.js";
 
 export interface OutreachConfig {
   readonly guildName: string;
+  /** Short region/timezone descriptor woven into the recruiting line (e.g. "an Aussie guild,
+   *  ACST (UTC+9:30)"). Empty omits it. */
+  readonly guildRegion: string;
   readonly community: string;
   readonly guildInviteEnabled: boolean;
   /** Who made the bot — credited in the intro and named for optional gold tips. */
@@ -40,7 +43,8 @@ export function introLines(config: OutreachConfig): string[] {
 /** The recruiting nudge — line 2 of the intro, and the standalone follow-up sent after a
  *  first-contact subscribe's confirmation. */
 export function recruitingLine(config: OutreachConfig): string {
-  return `<${config.guildName}> is recruiting, too - whisper "invite" any time and I'll send you a guild invite.`;
+  const region = config.guildRegion ? `, ${config.guildRegion},` : "";
+  return `<${config.guildName}>${region} is recruiting, too - whisper "invite" any time and I'll send you a guild invite.`;
 }
 
 /**
