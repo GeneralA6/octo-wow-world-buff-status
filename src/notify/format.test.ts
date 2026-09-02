@@ -2,12 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { RaidCohortSnapshot } from "../watcher/raid-tracker.js";
 import {
   formatBuffAlert,
-  formatBuffCooldownRefreshed,
-  formatBuffCooldownRefreshedWhisper,
   formatBuffDropped,
   formatBuffDroppedWhisper,
-  formatBuffImminent,
-  formatBuffImminentWhisper,
   formatBuffWhisper,
   formatRaidDisbanded,
   formatRaidDisbandedWhisper,
@@ -85,28 +81,24 @@ describe("formatBuffAlert", () => {
 });
 
 describe("formatBuffDropped", () => {
-  it("titles the buff up in the city; body gives the window without repeating the title", () => {
+  it("titles the buff up in the city and carries a live relative timestamp of the drop", () => {
     const appliedAt = new Date("2026-08-30T20:00:00Z");
-    const twoHours = 120 * 60_000;
-    const message = formatBuffDropped("alliance", appliedAt, twoHours, "Gibom");
+    const message = formatBuffDropped("alliance", appliedAt, "Gibom");
     expect(message.title).toBe("🎉 Rallying Cry just dropped in Stormwind");
-    expect(message.body).not.toMatch(/Rallying Cry|Stormwind/); // title carries name + city; body doesn't repeat
-    expect(message.body).toContain("A 2h cooldown has started"); // the drop starts the cooldown, not "good for"
-    // expiry = 22:00Z that day -> unix 1788472800
-    const expiresUnix = Math.floor((appliedAt.getTime() + twoHours) / 1000);
-    expect(message.body).toContain(`<t:${expiresUnix}:t>`);
-    expect(message.body).toContain(`<t:${expiresUnix}:R>`);
+    expect(message.body).toContain("is up in Stormwind");
+    const droppedUnix = Math.floor(appliedAt.getTime() / 1000);
+    expect(message.body).toContain(`<t:${droppedUnix}:R>`); // when it dropped, live in each timezone
   });
 
-  it("renders a non-round window as minutes", () => {
-    const message = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), 90 * 60_000, "Gibom");
+  it("makes NO cooldown / duration claim — we track drops, not the buff on players", () => {
+    const message = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), "Gibom");
     expect(message.title).toContain("Orgrimmar");
-    expect(message.body).toContain("90 min cooldown");
+    expect(message.body).not.toMatch(/cooldown|2h|wears off|until/i);
   });
 
   it("carries the same tips line as the whisper (consistent everywhere the drop reaches)", () => {
-    const body = formatBuffDropped("alliance", new Date("2026-08-30T20:00:00Z"), 120 * 60_000, "Gibom").body;
-    const whisper = formatBuffDroppedWhisper("alliance", 120 * 60_000, "Gibom");
+    const body = formatBuffDropped("alliance", new Date("2026-08-30T20:00:00Z"), "Gibom").body;
+    const whisper = formatBuffDroppedWhisper("alliance", "Gibom");
     const tip = "Did you get it? A tip to Gibom is appreciated.";
     expect(body).toContain(tip);
     expect(whisper).toContain(tip);
@@ -114,23 +106,21 @@ describe("formatBuffDropped", () => {
 });
 
 describe("formatBuffDroppedWhisper", () => {
-  it("names the city and the next-window floor, with NO absolute clock time (the bot's clock isn't the player's)", () => {
-    const line = formatBuffDroppedWhisper("alliance", 120 * 60_000, "Gibom");
+  it("names the city, no absolute clock time and no Discord timestamp (the bot's clock isn't the player's)", () => {
+    const line = formatBuffDroppedWhisper("alliance", "Gibom");
     expect(line).toContain("Stormwind");
-    expect(line).toMatch(/at least 2h/);
     expect(line).not.toMatch(/\d{1,2}:\d{2}/); // no HH:MM
     expect(line).not.toMatch(/<t:/); // no Discord timestamp (WoW can't render it)
   });
 
-  it("doesn't overpromise: no 'go grab it', and the next window is a floor ('at least', 'usually longer')", () => {
-    const line = formatBuffDroppedWhisper("alliance", 120 * 60_000, "Gibom");
-    expect(line).not.toMatch(/go grab/i);
-    expect(line).toMatch(/at least/i);
-    expect(line).toMatch(/usually longer/i);
+  it("makes no cooldown claim; says the next one will be alerted", () => {
+    const line = formatBuffDroppedWhisper("alliance", "Gibom");
+    expect(line).not.toMatch(/cooldown|at least|2h/i);
+    expect(line).toMatch(/alert you when the next/i);
   });
 
   it("names the buff in full, so a reader knows which buff it is", () => {
-    expect(formatBuffDroppedWhisper("horde", 120 * 60_000, "Gibom")).toContain("Rallying Cry of the Dragonslayer");
+    expect(formatBuffDroppedWhisper("horde", "Gibom")).toContain("Rallying Cry of the Dragonslayer");
   });
 });
 
@@ -140,35 +130,6 @@ describe("formatGuildWelcome", () => {
     expect(line).toContain("Raider");
     expect(line).toMatch(/welcome/i);
     expect(line).not.toContain("\n");
-  });
-});
-
-describe("formatBuffCooldownRefreshed", () => {
-  it("titles it off-cooldown in the city and names both ways it can drop, not repeating the title", () => {
-    const message = formatBuffCooldownRefreshed("horde", null, AREA);
-    expect(message.title).toBe("🔄 Onyxia buff off cooldown in Orgrimmar");
-    expect(message.body).toContain("saved head"); // a held head can be turned in now
-    expect(message.body).toContain("next clear"); // or the next raid's clear
-    expect(message.body).not.toMatch(/cooldown/i); // the title already said it
-    expect(message.body).not.toContain("Stormwind"); // right side only
-  });
-
-  it("closes with 'no raid' when the lair is empty", () => {
-    const body = formatBuffCooldownRefreshed("horde", null, AREA).body;
-    expect(body).toContain(`Currently no raid in ${AREA}`);
-  });
-
-  it("closes with the live raid - its number and time in - when one is in the lair", () => {
-    const body = formatBuffCooldownRefreshed("horde", { number: 834, elapsedMs: 42 * 60_000 }, AREA).body;
-    expect(body).toContain(`A raid's in ${AREA} now`);
-    expect(body).toContain("raid #834");
-    expect(body).toMatch(/in for ~42m/);
-  });
-
-  it("drops the raid number when it isn't known, keeping the time in", () => {
-    const body = formatBuffCooldownRefreshed("alliance", { number: null, elapsedMs: 12 * 60_000 }, AREA).body;
-    expect(body).not.toMatch(/raid #/);
-    expect(body).toMatch(/in for ~12m/);
   });
 });
 
@@ -193,14 +154,10 @@ describe("formatRaidFinished", () => {
     expect(formatRaidFinished(null, 60 * 60_000, "Onyxia's Lair").title).toContain("A raid");
   });
 
-  it("promises a fresh drop when a buff is still possible (default)", () => {
-    expect(formatRaidFinished(1, 60 * 60_000, "Onyxia's Lair").body).toContain("may drop soon");
-  });
-
-  it("says the buff is already up when no fresh drop is possible", () => {
-    const msg = formatRaidFinished(1, 60 * 60_000, "Onyxia's Lair", false);
-    expect(msg.body).toContain("already up");
-    expect(msg.body).not.toContain("may drop soon");
+  it("always promises a fresh drop may come (every clear can drop one — no lockout)", () => {
+    const msg = formatRaidFinished(1, 60 * 60_000, "Onyxia's Lair");
+    expect(msg.body).toContain("may drop soon");
+    expect(msg.body).not.toContain("already up"); // no buff-state model any more
   });
 });
 
@@ -232,46 +189,37 @@ describe("formatRaidDisbanded", () => {
 describe("formatCapitalStatusYell", () => {
   const raid = { number: 834, elapsedMs: 42 * 60_000 };
 
-  it("names the buff, shows the cooldown timer, and no raid mention when none is in", () => {
-    const y = formatCapitalStatusYell("alliance", 72 * 60_000, null, false);
+  it("names the buff and, with a raid in the lair, shows its number, time in, and a park nudge", () => {
+    const y = formatCapitalStatusYell("horde", raid);
     expect(y).toContain("Rallying Cry world buff:"); // named up front, no longer vague
-    expect(y).toContain("up in Stormwind, ~1h12m until a fresh one can drop");
-    expect(y).not.toMatch(/raid/i); // no raid → not mentioned at all
+    expect(y).toContain("raid #834");
+    expect(y).toContain("in for ~42m");
+    expect(y).toMatch(/one may drop when they clear, park here!/);
     expect(y).toMatch(/subscribe.*discord/);
   });
 
-  it("buff up + raid, but a fresh one can't come in time: raid # shown, NO park nudge", () => {
-    const y = formatCapitalStatusYell("horde", 72 * 60_000, raid, false);
-    expect(y).toContain("~1h12m until a fresh one can drop");
-    expect(y).toContain("raid #834");
-    expect(y).toContain("in for ~42m");
-    expect(y).not.toMatch(/park here/);
+  it("makes no cooldown/timer claim at all — we track drops, not the buff on players", () => {
+    expect(formatCapitalStatusYell("horde", raid)).not.toMatch(/cooldown/i);
+    expect(formatCapitalStatusYell("alliance", null)).not.toMatch(/cooldown/i);
   });
 
-  it("cooldown about to clear + raid: shows the park nudge", () => {
-    const y = formatCapitalStatusYell("horde", 15 * 60_000, raid, true);
-    expect(y).toContain("~15m until a fresh one can drop");
-    expect(y).toMatch(/one may drop when they clear, park here!/);
-  });
-
-  it("off cooldown + no raid: states it's off cooldown (no dangling 'world buff:' colon)", () => {
-    const y = formatCapitalStatusYell("alliance", null, null, false);
+  it("no raid in: says how a drop happens, no dangling 'world buff:' colon before the CTA", () => {
+    const y = formatCapitalStatusYell("alliance", null);
     expect(y).toBe(
-      `[Onyxia] Rallying Cry world buff: off cooldown - a fresh one can drop once a raid clears Onyxia. Whisper "subscribe" for pings, "discord" for discord notifications.`,
+      `[Onyxia] Rallying Cry world buff: a fresh one drops when a raid clears Onyxia. No raid in the lair right now. Whisper "subscribe" for pings, "discord" for discord notifications.`,
     );
-    // the "world buff:" header must never be immediately followed by "Whisper" (the broken state)
-    expect(y).not.toMatch(/world buff: Whisper/);
+    expect(y).not.toMatch(/world buff: Whisper/); // the broken/truncated state
   });
 
-  it("ready + raid: no cooldown mention, raid + park nudge", () => {
-    const y = formatCapitalStatusYell("alliance", null, raid, true);
-    expect(y).not.toMatch(/cooldown/i);
-    expect(y).toContain("raid #834");
+  it("drops the raid number when it isn't known, keeping the time in", () => {
+    const y = formatCapitalStatusYell("alliance", { number: null, elapsedMs: 12 * 60_000 });
+    expect(y).not.toMatch(/raid #/);
+    expect(y).toContain("in for ~12m");
     expect(y).toMatch(/park here!/);
   });
 
   it("stays within the 255-char yell cap even in the busiest state", () => {
-    const y = formatCapitalStatusYell("horde", 119 * 60_000, { number: 99999, elapsedMs: 135 * 60_000 }, true);
+    const y = formatCapitalStatusYell("horde", { number: 99999, elapsedMs: 135 * 60_000 });
     expect(y.length).toBeLessThanOrEqual(255);
   });
 });
@@ -293,16 +241,6 @@ describe("formatFeedbackPost", () => {
   });
 });
 
-describe("formatBuffCooldownRefreshedWhisper", () => {
-  it("spells out the full buff and its Onyxia source for a city yell, no clock time", () => {
-    const line = formatBuffCooldownRefreshedWhisper("alliance");
-    expect(line).toContain("Rallying Cry of the Dragonslayer");
-    expect(line).toContain("Onyxia");
-    expect(line).toContain("Stormwind");
-    expect(line).not.toMatch(/<t:/); // WoW can't render Discord timestamps
-  });
-});
-
 describe("formatBuffWhisper", () => {
   it("gives a terse park-in-the-city line naming the open capital, with the raid number", () => {
     const forming = formatBuffWhisper(
@@ -318,29 +256,5 @@ describe("formatBuffWhisper", () => {
       AREA,
     );
     expect(left).toContain("Stormwind or Orgrimmar");
-  });
-});
-
-describe("formatBuffImminent", () => {
-  it("titles the imminent buff in the city and names the raid, time left, and 'park now'", () => {
-    const message = formatBuffImminent("alliance", 28, 25 * 60_000, AREA);
-    expect(message.title).toContain("🔥");
-    expect(message.title).toContain("Stormwind");
-    expect(message.body).toContain("Raid #28");
-    expect(message.body).toContain("Onyxia's Lair");
-    expect(message.body).toContain("~25m");
-    expect(message.body).toMatch(/park now/i);
-  });
-
-  it("falls back to 'A raid' when the raid is unnumbered", () => {
-    expect(formatBuffImminent("horde", null, 10 * 60_000, AREA).body).toContain("A raid");
-  });
-
-  it("the whisper twin names the city, the time left, and that a raid is in", () => {
-    const line = formatBuffImminentWhisper("horde", 25 * 60_000);
-    expect(line).toContain("Orgrimmar");
-    expect(line).toContain("~25m");
-    expect(line).toMatch(/raid'?s in the lair/i);
-    expect(line).toMatch(/park now/i);
   });
 });

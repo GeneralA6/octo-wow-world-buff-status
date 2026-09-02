@@ -107,13 +107,13 @@ describe("CommandRouter", () => {
     expect(reply[0]).toMatch(/isn't set up/i);
   });
 
-  it("reports the raid #, how long it's been in, and the buff cooldown on status", async () => {
+  it("reports the raid #, how long it's been in, and when the buff last dropped on status", async () => {
     const { tracker, router } = deps({
       raidElapsed: () => 42 * 60_000,
       raidNumber: () => 834,
       buffCooldowns: async () => [
-        { faction: "alliance", activeMsLeft: null }, // ready now
-        { faction: "horde", activeMsLeft: 72 * 60_000 }, // up, 1h12m left
+        { faction: "alliance", sinceLastDropMs: null }, // none seen yet
+        { faction: "horde", sinceLastDropMs: 72 * 60_000 }, // last dropped 1h12m ago
       ],
     });
     tracker.update(crowd("Nightfall", 20));
@@ -121,35 +121,35 @@ describe("CommandRouter", () => {
     const reply = await router.handle("Raider", "status");
     expect(reply[0]).toMatch(/raid #834.*in for ~42m/);
     expect(reply[0]).not.toMatch(/\b20\b/); // player count is redundant to a user — omitted
-    expect(reply[1]).toContain("Stormwind: off cooldown");
-    expect(reply[1]).not.toMatch(/drop now/); // no imminent CTA — a raid must still clear
-    expect(reply[1]).toMatch(/Orgrimmar: buff on cooldown, ~1h12m/); // "on cooldown", not "up"
+    expect(reply[1]).toContain("Stormwind: no Rallying Cry seen yet");
+    expect(reply[1]).not.toMatch(/cooldown/); // no cooldown concept on this server
+    expect(reply[1]).toMatch(/Orgrimmar: last Rallying Cry ~1h12m ago/);
   });
 
-  it("shows only the subscriber's own side's cooldown, not both", async () => {
+  it("shows only the subscriber's own side's last drop, not both", async () => {
     const { store, router } = deps({
       buffCooldowns: async () => [
-        { faction: "alliance", activeMsLeft: null },
-        { faction: "horde", activeMsLeft: 72 * 60_000 },
+        { faction: "alliance", sinceLastDropMs: null },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000 },
       ],
     });
     await store.add("Raider");
     await store.update("Raider", { factions: ["horde"] }); // subscribed on the horde side
     const reply = (await router.handle("Raider", "status")).join(" ");
-    expect(reply).toMatch(/Orgrimmar: buff on cooldown/); // their capital
+    expect(reply).toMatch(/Orgrimmar: last Rallying Cry ~1h12m ago/); // their capital
     expect(reply).not.toMatch(/Stormwind/); // never the other side
   });
 
   it("detects a non-subscriber's side via /who and shows only that capital", async () => {
     const { router } = deps({
       buffCooldowns: async () => [
-        { faction: "alliance", activeMsLeft: null },
-        { faction: "horde", activeMsLeft: 72 * 60_000 },
+        { faction: "alliance", sinceLastDropMs: null },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000 },
       ],
     });
     router.setFactionDetect(async () => "alliance"); // /who resolves them to alliance
     const reply = (await router.handle("Ghost", "status")).join(" ");
-    expect(reply).toMatch(/Stormwind: off cooldown/);
+    expect(reply).toMatch(/Stormwind: no Rallying Cry seen yet/);
     expect(reply).not.toMatch(/Orgrimmar/);
   });
 
@@ -226,8 +226,8 @@ describe("CommandRouter", () => {
   it("status for a non-subscriber uses the listener hint instead of a /who", async () => {
     const { router } = deps({
       buffCooldowns: async () => [
-        { faction: "alliance", activeMsLeft: null },
-        { faction: "horde", activeMsLeft: 72 * 60_000 },
+        { faction: "alliance", sinceLastDropMs: null },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000 },
       ],
     });
     let detects = 0;
@@ -241,19 +241,19 @@ describe("CommandRouter", () => {
     expect(detects).toBe(0); // hint used, the /who was skipped
   });
 
-  it("status without a raid still reports the buff cooldowns", async () => {
+  it("status without a raid still reports when the buff last dropped", async () => {
     const { router } = deps({
       buffCooldowns: async () => [
-        { faction: "alliance", activeMsLeft: null },
-        { faction: "horde", activeMsLeft: null },
+        { faction: "alliance", sinceLastDropMs: null },
+        { faction: "horde", sinceLastDropMs: null },
       ],
     });
     const reply = await router.handle("Raider", "status");
     expect(reply[0]).toMatch(/No raid in Onyxia's Lair/);
-    // Off cooldown with no raid in: state a raid must still clear, never "drop now" (the next
-    // raid could be many hours away, so an imminent CTA would be misleading).
-    expect(reply[1]).toContain("off cooldown");
-    expect(reply[1]).toContain("once a raid clears Onyxia");
+    // None seen yet, no raid in: say a raid must still clear, never "drop now" (the next raid
+    // could be many hours away, so an imminent CTA would be misleading).
+    expect(reply[1]).toContain("no Rallying Cry seen yet");
+    expect(reply[1]).toContain("drops when a raid clears Onyxia");
     expect(reply[1]).not.toMatch(/drop now/);
   });
 

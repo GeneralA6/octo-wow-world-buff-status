@@ -63,20 +63,20 @@ describe("formatHeartbeat", () => {
     expect(line).toContain("45 invites all-time (12 in guild)");
   });
 
-  it("reports each faction's buff as up-with-minutes or clear", () => {
+  it("reports each faction's last drop as minutes-ago or none-yet", () => {
     const line = formatHeartbeat({
       ...base,
       buffs: [
-        { faction: "alliance", leftMs: 74 * 60_000 },
-        { faction: "horde", leftMs: null },
+        { faction: "alliance", sinceLastDropMs: 74 * 60_000 },
+        { faction: "horde", sinceLastDropMs: null },
       ],
     });
-    expect(line).toContain("alliance up 74m left, horde clear");
+    expect(line).toContain("alliance last drop 74m ago, horde no drop yet");
   });
 
   it("rounds partial minutes rather than truncating", () => {
-    const line = formatHeartbeat({ ...base, buffs: [{ faction: "horde", leftMs: 89_000 }] });
-    expect(line).toContain("horde up 1m left");
+    const line = formatHeartbeat({ ...base, buffs: [{ faction: "horde", sinceLastDropMs: 89_000 }] });
+    expect(line).toContain("horde last drop 1m ago");
   });
 
   it("appends the timer accuracy with a signed bias when clears have been scored", () => {

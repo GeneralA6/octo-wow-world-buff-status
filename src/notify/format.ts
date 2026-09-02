@@ -5,12 +5,6 @@ import type { NotifyMessage } from "./notifier.js";
 /** The capital whose buff a faction's turn-in drops. */
 export const CITY_FOR: Record<Faction, string> = { alliance: "Stormwind", horde: "Orgrimmar" };
 
-/** "2h" for whole hours, else "90 min". */
-function humanDuration(ms: number): string {
-  const m = Math.round(ms / 60_000);
-  return m % 60 === 0 ? `${m / 60}h` : `${m} min`;
-}
-
 /** Compact clock duration: "42m", "1h22m", "2h" — for status/yells/recaps. */
 export function humanClock(ms: number): string {
   const m = Math.max(0, Math.round(ms / 60_000));
@@ -22,23 +16,18 @@ export function humanClock(ms: number): string {
 
 /** A raid the ClearTracker confirmed as really finished — informational recap with the
  *  reference number and how long it took (spanning any wipes). Discord channel post.
- *  `buffPossible` gates the buff hint on the same check the park-now alert uses: when the
- *  buff is already up (a raid turned in a saved head before it left, so the drop landed
- *  before the clear confirmed), promising a fresh one "soon" is stale — say it's up instead. */
+ *  Every clear can produce a fresh Rallying Cry (no re-drop lockout on this server), so
+ *  the hint is unconditional. */
 export function formatRaidFinished(
   raidNumber: number | null,
   durationMs: number,
   areaName: string,
-  buffPossible = true,
 ): NotifyMessage {
   const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
-  const tail = buffPossible
-    ? "A Rallying Cry may drop soon once the head is turned in."
-    : "The Rallying Cry is already up.";
   return {
     kind: "info",
     title: `🏁 ${id} cleared ${areaName}`,
-    body: `${id} cleared ${areaName} after ~${humanClock(durationMs)}. ${tail}`,
+    body: `${id} cleared ${areaName} after ~${humanClock(durationMs)}. A Rallying Cry may drop soon once the head is turned in.`,
   };
 }
 
@@ -68,69 +57,37 @@ export function formatRaidDisbandedWhisper(
   return `${id} left ${areaName} without clearing - no buff coming, you can stop parking in ${cityList(cities)}.`;
 }
 
-/**
- * A buff just dropped (a listener heard the yell). Says which city it's up in and,
- * crucially, the earliest a fresh one can drop again — which is when this one wears
- * off, since a hanging head blocks the next turn-in. Discord dynamic timestamps
- * (`<t:unix:t>` / `<t:unix:R>`) render in each viewer's own timezone and stay live.
- */
 /** The tips line — identical on the channel post and the in-game whisper, so a reader sees
  *  the same words wherever the drop reaches them. Gold is mailed in-game to `author`. */
 function tipsLine(author: string): string {
   return `Did you get it? A tip to ${author} is appreciated.`;
 }
 
-export function formatBuffDropped(faction: Faction, appliedAt: Date, durationMs: number, author: string): NotifyMessage {
-  const expiresUnix = Math.floor((appliedAt.getTime() + durationMs) / 1000);
+/**
+ * A buff just dropped (a listener heard the turn-in yell). Says which city it's up in, with a
+ * live relative timestamp of the drop itself (`<t:unix:R>` renders in each viewer's timezone).
+ * No "good for 2h" / cooldown line — we track drops, not the buff on players, and a fresh one
+ * can drop again on the next clear.
+ */
+export function formatBuffDropped(faction: Faction, appliedAt: Date, author: string): NotifyMessage {
+  const droppedUnix = Math.floor(appliedAt.getTime() / 1000);
   return {
     kind: "info",
     title: `🎉 Rallying Cry just dropped in ${CITY_FOR[faction]}`,
     body:
-      `A ${humanDuration(durationMs)} cooldown has started, until <t:${expiresUnix}:t> (<t:${expiresUnix}:R>). ` +
+      `The Rallying Cry of the Dragonslayer is up in ${CITY_FOR[faction]} (dropped <t:${droppedUnix}:R>). ` +
       tipsLine(author),
   };
 }
 
-/** Plain-text in-game whisper of a buff drop — no absolute time (the bot's clock isn't
- *  the player's, and WoW can't render Discord timestamps), a duration instead. Sent to
- *  that side's subscribers when the yell fires. */
-export function formatBuffDroppedWhisper(faction: Faction, durationMs: number, author: string): string {
+/** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell
+ *  fires. No cooldown claim — I'll alert them again when the next one's on the way. */
+export function formatBuffDroppedWhisper(faction: Faction, author: string): string {
   const city = CITY_FOR[faction];
   return (
     `The Rallying Cry of the Dragonslayer just dropped in ${city}! ` +
-    `The next can't drop for at least ${humanDuration(durationMs)}, usually longer - I'll alert you before it does. ` +
+    `I'll alert you when the next one's on the way. ` +
     tipsLine(author)
-  );
-}
-
-/**
- * The buff's window just elapsed, so a fresh one can drop again. Discord channel post, kept
- * short: the title says it's off cooldown, the body names the two ways it can drop (a held head
- * turned in now, or the next clear) and closes with the live lair status. `raid` is the raid in
- * progress for this faction's lair, or null if none.
- */
-export function formatBuffCooldownRefreshed(
-  faction: Faction,
-  raid: CapitalStatusRaid | null,
-  areaName: string,
-): NotifyMessage {
-  const status = raid
-    ? `A raid's in ${areaName} now (${raid.number !== null ? `raid #${raid.number}, ` : ""}in for ~${humanClock(raid.elapsedMs)}).`
-    : `Currently no raid in ${areaName}.`;
-  return {
-    kind: "info",
-    title: `🔄 Onyxia buff off cooldown in ${CITY_FOR[faction]}`,
-    body: `A fresh one can drop any time now - from a saved head or the next clear. ${status}`,
-  };
-}
-
-/** Plain in-game line (whisper or yell) that the cooldown is up. Spells out the full buff
- *  name and its Onyxia source, since a city yell reaches people who weren't following. */
-export function formatBuffCooldownRefreshedWhisper(faction: Faction): string {
-  const city = CITY_FOR[faction];
-  return (
-    `Heads up - the Rallying Cry of the Dragonslayer (the Onyxia world buff) can drop again in ${city}: ` +
-    `the last one just wore off, so the next Onyxia clear can hand it out. Park up to catch it!`
   );
 }
 
@@ -155,38 +112,19 @@ export interface CapitalStatusRaid {
 
 /**
  * The periodic status board yelled in a capital. Leads by NAMING the buff, so a passer-by who
- * wasn't following knows what these alerts are for; then the cooldown clock while a buff is up,
- * then the raid in the lair (# and time in) with a "park" nudge ONLY when a fresh buff is
- * genuinely possible at their clear (the buff-gate decision), and always a subscribe/discord CTA.
- * `cooldownActiveMsLeft` is ms until the current buff wears off (a fresh one can then drop), or
- * null if one can drop now.
+ * wasn't following knows what these alerts are for; then the raid in the lair (# and time in)
+ * with a "park" nudge — every clear can drop a fresh Rallying Cry, so a raid present always
+ * means one may be coming — or, when the lair is empty, how a drop happens; and always a
+ * subscribe/discord CTA. No cooldown clock: we track drops, not the buff on players.
  */
-export function formatCapitalStatusYell(
-  faction: Faction,
-  cooldownActiveMsLeft: number | null,
-  raid: CapitalStatusRaid | null,
-  buffPossible: boolean,
-): string {
-  const city = CITY_FOR[faction];
+export function formatCapitalStatusYell(faction: Faction, raid: CapitalStatusRaid | null): string {
   // Lead: name the buff up front - the message is otherwise vague about what it's alerting on.
   const parts: string[] = [`Rallying Cry world buff:`];
-  // State the buff status: the timer while a buff is UP, else that it's off cooldown — but only
-  // when there's no raid to describe (a raid off cooldown gets the "may drop when they clear"
-  // line below, which says it better). Without this, an off-cooldown + empty-lair yell dangled
-  // the "world buff:" colon with nothing after it, reading as a broken/truncated message.
-  if (cooldownActiveMsLeft !== null) {
-    parts.push(`up in ${city}, ~${humanClock(cooldownActiveMsLeft)} until a fresh one can drop.`);
-  } else if (!raid) {
-    parts.push(`off cooldown - a fresh one can drop once a raid clears Onyxia.`);
-  }
-  // Raid: only when one is in the lair, with a park nudge when a fresh buff is genuinely possible.
   if (raid) {
     const id = raid.number !== null ? `raid #${raid.number}, ` : "";
-    parts.push(
-      buffPossible
-        ? `A raid's in the lair (${id}in for ~${humanClock(raid.elapsedMs)}) - one may drop when they clear, park here!`
-        : `A raid's in the lair (${id}in for ~${humanClock(raid.elapsedMs)}).`,
-    );
+    parts.push(`A raid's in the lair (${id}in for ~${humanClock(raid.elapsedMs)}) - one may drop when they clear, park here!`);
+  } else {
+    parts.push(`a fresh one drops when a raid clears Onyxia. No raid in the lair right now.`);
   }
   parts.push(`Whisper "subscribe" for pings, "discord" for discord notifications.`);
   return `[Onyxia] ${parts.join(" ")}`;
@@ -244,36 +182,4 @@ export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], 
   }
   const id = event.number != null ? `Raid #${event.number}` : "A raid";
   return `${id} has formed in ${areaName} - get ready to park in ${where} for the buff.`;
-}
-
-/**
- * The highest-value "go park NOW" moment: a raid is in the lair AND the buff is about to wear
- * off, so a fresh Rallying Cry is imminent — it'll drop the moment they clear and turn in the
- * head. Distinct from the forming heads-up (which fires early, at form), the off-cooldown alert
- * (at expiry) and the cleared alert (at the clear); this is the pre-expiry convergence, the
- * window to head to the capital before the refresh lands. Discord channel post.
- */
-export function formatBuffImminent(
-  faction: Faction,
-  raidNumber: number | null,
-  buffMsLeft: number,
-  areaName: string,
-): NotifyMessage {
-  const id = raidNumber != null ? `Raid #${raidNumber}` : "A raid";
-  const city = CITY_FOR[faction];
-  return {
-    kind: "entered",
-    title: `🔥 Rallying Cry buff imminent in ${city}`,
-    body:
-      `${id} is in ${areaName} and the buff wears off in ~${humanClock(buffMsLeft)} - ` +
-      `a fresh Rallying Cry should drop in ${city} the moment they clear. Park now to catch it.`,
-  };
-}
-
-/** The terse in-game whisper twin of the buff-imminent alert. */
-export function formatBuffImminentWhisper(faction: Faction, buffMsLeft: number): string {
-  return (
-    `${CITY_FOR[faction]} buff wears off in ~${humanClock(buffMsLeft)} and a raid's in the lair - ` +
-    `park now to catch the fresh Rallying Cry.`
-  );
 }

@@ -9,12 +9,8 @@ import type { NotifyMessage } from "./notify/notifier.js";
 import { DiscordDmSender } from "./notify/discord-dm.js";
 import {
   formatBuffAlert,
-  formatBuffCooldownRefreshed,
-  formatBuffCooldownRefreshedWhisper,
   formatBuffDropped,
   formatBuffDroppedWhisper,
-  formatBuffImminent,
-  formatBuffImminentWhisper,
   formatBuffWhisper,
   formatRaidDisbanded,
   formatRaidDisbandedWhisper,
@@ -65,7 +61,6 @@ import {
   type RaidStateStore,
 } from "./watcher/raid-state-store.js";
 import { factionOfRace, splitByFaction, type FactionSplit } from "./watcher/faction.js";
-import { shouldAlertForRaid } from "./watcher/buff-gate.js";
 import {
   InMemoryBroadcastLedger,
   MongoBroadcastLedger,
@@ -263,28 +258,6 @@ interface ConnectionServices {
   readonly client: ClientValues;
 }
 
-/**
- * The capitals where this raid could produce a FRESH buff — those whose buff has, or
- * will have by the time the raid finishes, expired. A forming raid is predicted to end
- * a clear-time from now; an ending raid is finishing now. Empty means stay silent
- * (every candidate city still has an active buff, so the head would be banked).
- */
-async function openCitiesFor(
-  event: RaidEvent,
-  cities: readonly Faction[],
-  buffStore: BuffStore,
-  now: number,
-  raidDurationMs: number,
-): Promise<Faction[]> {
-  const predictedEndMs = event.kind === "raid-forming" ? now + raidDurationMs : now;
-  const open: Faction[] = [];
-  for (const city of cities) {
-    const buff = await buffStore.current(city, new Date(now));
-    if (shouldAlertForRaid(buff, predictedEndMs, now).alert) open.push(city);
-  }
-  return open;
-}
-
 /** One connection lifetime: log in, enter world, poll /who and serve whispers. */
 async function runConnection(
   config: BotConfig,
@@ -309,7 +282,6 @@ async function runConnection(
 
   await new Promise<void>((resolve, reject) => {
     let pollTimer: NodeJS.Timeout | null = null;
-    let cooldownTimer: NodeJS.Timeout | null = null;
     let statusYellTimer: NodeJS.Timeout | null = null;
     let factionResolveTimer: NodeJS.Timeout | null = null;
     let whisperQueue: WhisperQueue | null = null;
@@ -324,7 +296,6 @@ async function runConnection(
       if (settled) return;
       settled = true;
       if (pollTimer) clearTimeout(pollTimer);
-      if (cooldownTimer) clearInterval(cooldownTimer);
       if (statusYellTimer) clearInterval(statusYellTimer);
       if (factionResolveTimer) clearInterval(factionResolveTimer);
       if (readyTimer) clearTimeout(readyTimer);
@@ -380,48 +351,7 @@ async function runConnection(
       }
     };
 
-    // The "🔥 buff imminent" alert: a raid is in the lair AND the buff is about to wear off, so a
-    // fresh Rallying Cry is coming when they clear — the highest-value "park now" moment. Fires
-    // once per buff cycle per city, to Discord + that side's subscribers + a city yell. The whisper
-    // is tagged with the city so a buff dropping there purges it as stale, like the other park
-    // alerts. Its unique job is a raid the FORMING alert didn't already cover — a long-running one,
-    // or one that formed when the buff still had lots of time (so forming was gated). When forming
-    // DID alert this cycle (a raid that formed late, with the buff already ≤30m), it fires ~1 min
-    // before this and says the same thing, so this stays silent to avoid the redundant double-ping.
-    const announceBuffImminent = async (
-      faction: Faction,
-      raidNumber: number | null,
-      buffMsLeft: number,
-      buffAppliedAt: Date,
-      now: number,
-    ): Promise<void> => {
-      const last = await broadcasts.last(faction, "buff-imminent");
-      if (!shouldBroadcast(last, buffAppliedAt, now, config.broadcastDedupMs)) return;
-      // Skip if the forming alert already told this city to park for a raid this cycle.
-      const forming = await broadcasts.last(faction, "raid-forming");
-      if (!shouldBroadcast(forming, buffAppliedAt, now, config.broadcastDedupMs)) {
-        logger.info(`buff-imminent (${faction}) suppressed — forming alert already covered this cycle`);
-        return;
-      }
-      const message = formatBuffImminent(faction, raidNumber, buffMsLeft, config.watchAreaName);
-      logger.info(`ALERT buff-imminent (${faction}): ${message.body}`);
-      await push(message, [faction]);
-      if (config.whispersEnabled) {
-        const line = formatBuffImminentWhisper(faction, buffMsLeft);
-        yellSink[faction]?.(line);
-        try {
-          const subscribers = (await store.all()).filter((s) => s.factions.includes(faction));
-          if (subscribers.length > 0) broadcastWhisper(subscribers.map((s) => s.name), line, faction, [faction]);
-        } catch (error) {
-          logger.error(`subscribers: ${describeError(error)}`);
-        }
-      }
-      await broadcasts
-        .record({ city: faction, kind: "buff-imminent", cohortLabel: "a raid", peak: 0, lastBroadcastAt: new Date(now) })
-        .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
-    };
-
-    // Whisper one side's in-game subscribers (used by buff drops and cooldown refreshes).
+    // Whisper one side's in-game subscribers (used by buff drops).
     const notifyFactionSubscribers = async (faction: Faction, whisperLine: string): Promise<void> => {
       if (!config.whispersEnabled) return;
       let subscribers: Subscriber[] = [];
@@ -443,46 +373,7 @@ async function runConnection(
       // park after being told it already dropped.
       const dropped = whisperPool.dropForFaction(faction) + (whisperQueue?.dropForFaction(faction) ?? 0);
       if (dropped > 0) logger.info(`dropped ${dropped} stale park-now whisper(s) for ${faction} — buff is up`);
-      return notifyFactionSubscribers(faction, formatBuffDroppedWhisper(faction, config.buffDurationMs, config.author));
-    };
-
-    // When a buff's window elapses, a fresh one can drop — announce the cooldown is up to
-    // the Discord channel, that side's subscribers, and via a /yell in that capital.
-    // Per-connection baseline; a refresh during a reconnect window is missed (minor — 2h buff).
-    const lastBuffActive = new Map<Faction, boolean>();
-    const checkCooldowns = async (): Promise<void> => {
-      const now = new Date();
-      const nowMs = now.getTime();
-      for (const faction of FACTIONS) {
-        let buff: Awaited<ReturnType<typeof buffStore.current>> = null;
-        try {
-          buff = await buffStore.current(faction, now);
-        } catch (error) {
-          logger.debug(`cooldown check ${faction}: ${describeError(error)}`);
-          continue;
-        }
-        const active = buff?.active ?? false;
-        const was = lastBuffActive.get(faction);
-        lastBuffActive.set(faction, active);
-        if (was === true && !active) {
-          logger.info(`Onyxia Rallying Cry cooldown refreshed for ${faction} (${faction === "alliance" ? "Stormwind" : "Orgrimmar"}) - a fresh one can drop again`);
-          const whisperLine = formatBuffCooldownRefreshedWhisper(faction);
-          const raid = raidStateFor(faction, nowMs); // the post closes with the live lair status
-          void push(formatBuffCooldownRefreshed(faction, raid, config.watchAreaName), [faction]); // channel, pinging that side's role
-          void notifyFactionSubscribers(faction, whisperLine); // in-game subscribers of that side
-          yellSink[faction]?.(whisperLine); // broadcast to the capital (task: yell)
-        }
-        // 🔥 buff imminent: the buff is still up but about to wear off AND a raid is in the lair,
-        // so a fresh Rallying Cry is coming when they clear — the pre-expiry "go park now" moment
-        // that no other alert covers. Deduped once per cycle inside announceBuffImminent.
-        if (buff?.active) {
-          const msLeft = buff.expiresAt.getTime() - nowMs;
-          const raid = raidStateFor(faction, nowMs);
-          if (raid && msLeft <= config.buffImminentMs) {
-            await announceBuffImminent(faction, raid.number, msLeft, buff.appliedAt, nowMs);
-          }
-        }
-      }
+      return notifyFactionSubscribers(faction, formatBuffDroppedWhisper(faction, config.author));
     };
 
     // The raid in progress for a faction (from the lane covering it), or null.
@@ -495,51 +386,26 @@ async function runConnection(
       return null;
     };
 
-    // The clear time a forming raid is predicted to take: the self-improving estimate (the
-    // learned median with its measured bias corrected out) once enough clears are on record,
-    // else the config guess. One place, so both the status yell and the alert gate agree.
-    const predictRaidDurationMs = async (): Promise<number> => {
-      const series = await durationStore.recent(TIMER_EVAL_WINDOW).catch(() => []);
-      return improvedEstimate(series.map((d) => d.ms), config.raidLearnMinSamples) ?? config.raidDurationEstimateMs;
-    };
-
-    // Every ~10 min, yell a buff-status board in each capital: the cooldown clock, the raid
-    // in the lair, a "park" nudge only when a fresh buff is genuinely possible at their clear,
-    // and a subscribe/discord CTA. Reaches everyone standing in the city, not just subscribers.
+    // Every ~10 min, yell a buff-status board in each capital: the raid in the lair (with a
+    // "park" nudge — every clear can drop a fresh buff) or, when empty, how a drop happens, plus
+    // a subscribe/discord CTA. Reaches everyone standing in the city, not just subscribers.
     const yellCapitalStatus = async (): Promise<void> => {
       if (!config.whispersEnabled) return;
       const now = Date.now();
-      const nowDate = new Date(now);
-      const raidDurationMs = await predictRaidDurationMs();
       for (const faction of FACTIONS) {
         const yell = yellSink[faction];
         if (!yell) continue; // no listener parked in this capital right now
-        let buff: Awaited<ReturnType<typeof buffStore.current>> = null;
-        try {
-          buff = await buffStore.current(faction, nowDate);
-        } catch (error) {
-          logger.debug(`status yell ${faction}: ${describeError(error)}`);
-          continue;
-        }
-        const cooldownActiveMsLeft = buff?.active ? buff.expiresAt.getTime() - now : null;
-        const raid = raidStateFor(faction, now);
-        // "may drop when they clear" = the buff gate: a fresh buff is possible by the time this
-        // in-progress raid is predicted to finish (form time + the learned/estimated clear time).
-        const buffPossible = raid
-          ? shouldAlertForRaid(buff, now - raid.elapsedMs + raidDurationMs, now).alert
-          : false;
-        yell(formatCapitalStatusYell(faction, cooldownActiveMsLeft, raid, buffPossible));
+        yell(formatCapitalStatusYell(faction, raidStateFor(faction, now)));
       }
     };
 
-    // One detection lane: census, then gate each raid event against its candidate
-    // city buffs before it becomes a park-in-the-city alert.
+    // One detection lane: census, then run each raid event through the per-cycle dedup
+    // before it becomes a park-in-the-city alert.
     const processLane = async (
       lane: DetectionLane,
       split: FactionSplit,
       complete: boolean,
       now: number,
-      raidDurationMs: number,
     ): Promise<void> => {
       const obs = lane.watch.observe(lane.players(split), now, complete);
 
@@ -565,29 +431,22 @@ async function runConnection(
         logger.info(`census ${lane.label}: ${obs.change.present} in zone${arrPart}${depPart}${truncPart}`);
       }
 
-      // Gate an event against the candidate cities' buff state and the per-cycle dedup, then
-      // announce it (channel post + that side's subscribers + a city yell) and record it.
-      // Returns the cities where a fresh buff is still possible (the first gate) — an empty
-      // array means every candidate city already has an active buff, which the clear recap
-      // uses to avoid promising a drop that has already landed.
-      const gateAndAnnounce = async (event: RaidEvent): Promise<Faction[]> => {
-        const open = await openCitiesFor(event, lane.cities, buffStore, now, raidDurationMs);
-        if (open.length === 0) {
-          logger.info(`${lane.label} ${event.kind} suppressed — every candidate city still has an active buff`);
-          return open;
-        }
-        // Second gate: drop any city we've already broadcast this kind for in the current
-        // buff cycle. Keyed to the cycle (persisted in Mongo), so a redeploy, a wipe or
-        // roster churn re-emitting the same event doesn't re-alert. A fresh drop for the
-        // city, or a stale record, reopens it.
+      // Gate an event against the per-cycle dedup, then announce it (channel post + that side's
+      // subscribers + a city yell) and record it. Every candidate city is a real drop opportunity
+      // (a clear can drop a fresh buff any time — no re-drop lockout on this server), so the only
+      // gate is the dedup: drop any city we've already broadcast this kind for in the current
+      // cycle. Keyed to the cycle (persisted in Mongo), so a redeploy, a wipe or roster churn
+      // re-emitting the same event doesn't re-alert. A fresh drop for the city, or a stale
+      // record, reopens it.
+      const gateAndAnnounce = async (event: RaidEvent): Promise<void> => {
         const fresh: Faction[] = [];
-        for (const city of open) {
+        for (const city of lane.cities) {
           const last = await broadcasts.last(city, event.kind);
-          const lastBuffDropAt = (await buffStore.current(city, new Date(now)))?.appliedAt ?? null;
+          const lastBuffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
           if (shouldBroadcast(last, lastBuffDropAt, now, config.broadcastDedupMs)) fresh.push(city);
           else logger.info(`${lane.label} ${event.kind} for ${city} suppressed — already broadcast this cycle`);
         }
-        if (fresh.length === 0) return open;
+        if (fresh.length === 0) return;
         await announceBuff(event, fresh);
         for (const city of fresh) {
           await broadcasts
@@ -600,7 +459,6 @@ async function runConnection(
             })
             .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
         }
-        return open;
       };
 
       // Both authoritative alerts now come from the ClearTracker's roster-based state, not the
@@ -641,7 +499,7 @@ async function runConnection(
         const notified: Faction[] = [];
         for (const city of lane.cities) {
           const forming = await broadcasts.last(city, "raid-forming");
-          const buffDropAt = (await buffStore.current(city, new Date(now)))?.appliedAt ?? null;
+          const buffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
           if (!shouldBroadcast(forming, buffDropAt, now, config.broadcastDedupMs)) notified.push(city);
         }
         if (notified.length === 0) return; // forming never alerted this cycle — nobody was told to park
@@ -680,11 +538,10 @@ async function runConnection(
           await handleDisband(clear);
           return;
         }
-        // The park-now alert and the recap gate on the same fact: a raid that turned in a
-        // saved head before it left drops the buff BEFORE the clear confirms, so both should
-        // go quiet about a "fresh buff soon" — the park-now suppresses, the recap says it's up.
-        const openNow = await gateAndAnnounce(clearedRaidEvent(clear.peak, killConfirmed));
-        void push(formatRaidFinished(clear.number, ms, config.watchAreaName, openNow.length > 0));
+        // The park-now alert (deduped per cycle) and the recap: a clear can always produce a
+        // fresh Rallying Cry, so the recap's hint is unconditional.
+        await gateAndAnnounce(clearedRaidEvent(clear.peak, killConfirmed));
+        void push(formatRaidFinished(clear.number, ms, config.watchAreaName));
         void (async () => {
           await durationStore.record({ ms, ts: new Date(now) });
           const [learned, samples] = await Promise.all([
@@ -768,9 +625,9 @@ async function runConnection(
         guildieStore.count().catch(() => 0),
         Promise.all(
           FACTIONS.map(async (faction) => {
-            const state = await buffStore.current(faction, new Date(now));
-            const leftMs = state?.active ? state.expiresAt.getTime() - now : null;
-            return { faction, leftMs };
+            const drop = await buffStore.current(faction);
+            const sinceLastDropMs = drop ? now - drop.appliedAt.getTime() : null;
+            return { faction, sinceLastDropMs };
           }),
         ),
       ]);
@@ -819,10 +676,6 @@ async function runConnection(
         void logHeartbeat(now).catch((error) => logger.debug(`monitor: ${describeError(error)}`));
       }
 
-      // The forming heads-up predicts a raid's end from the self-improving estimate (learned
-      // median, bias-corrected) once enough raids are on record, else the config estimate.
-      const raidDurationMs = await predictRaidDurationMs();
-
       const split = splitByFaction(inZone);
       // In faction mode unmapped races belong to no lane; log them so a custom Turtle/
       // Octo race id can be added to the map. (Crossfaction's lair lane includes them.)
@@ -831,7 +684,7 @@ async function runConnection(
         logger.info(`${split.unknown.length} in zone with unmapped race ids [${races}] — not attributed`);
       }
       for (const lane of lanes) {
-        await processLane(lane, split, complete, now, raidDurationMs);
+        await processLane(lane, split, complete, now);
       }
     };
 
@@ -978,11 +831,6 @@ async function runConnection(
             pollTimer.unref?.();
           };
           void poll();
-          // Watch for buff windows elapsing (cooldown refreshed), independent of /who.
-          cooldownTimer = setInterval(() => {
-            if (!settled) void checkCooldowns().catch((e) => logger.debug(`cooldown: ${describeError(e)}`));
-          }, 60_000);
-          cooldownTimer.unref?.();
           // Yell a buff-status board in the capitals on a slow cadence.
           statusYellTimer = setInterval(() => {
             if (!settled) void yellCapitalStatus().catch((e) => logger.debug(`status yell: ${describeError(e)}`));
@@ -1409,10 +1257,10 @@ async function main(): Promise<void> {
   }
 
   // Buff-drop times per faction, fed by the city listeners — Mongo when configured.
-  let buffStore: BuffStore = new InMemoryBuffStore(config.buffDurationMs);
+  let buffStore: BuffStore = new InMemoryBuffStore();
   if (config.mongodbUri) {
     try {
-      buffStore = await MongoBuffStore.connect(config.mongodbUri, config.mongodbDb, config.buffDurationMs);
+      buffStore = await MongoBuffStore.connect(config.mongodbUri, config.mongodbDb);
       logger.info("buffs: recording drop times to MongoDB");
     } catch (error) {
       logger.error(`buffs: MongoDB connect failed (${describeError(error)}); recording in memory`);
@@ -1544,7 +1392,7 @@ async function main(): Promise<void> {
       .record({ faction, appliedAt })
       .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
-    void push(formatBuffDropped(faction, appliedAt, config.buffDurationMs, config.author), [faction]); // channel, pinging that side's role
+    void push(formatBuffDropped(faction, appliedAt, config.author), [faction]); // channel, pinging that side's role
     buffDropSink.notify?.(faction, appliedAt);
   };
 
@@ -1579,11 +1427,11 @@ async function main(): Promise<void> {
       return null;
     },
     buffCooldowns: async () => {
-      const now = new Date();
+      const nowMs = Date.now();
       return Promise.all(
         FACTIONS.map(async (faction) => {
-          const state = await buffStore.current(faction, now);
-          return { faction, activeMsLeft: state?.active ? state.expiresAt.getTime() - now.getTime() : null };
+          const drop = await buffStore.current(faction);
+          return { faction, sinceLastDropMs: drop ? nowMs - drop.appliedAt.getTime() : null };
         }),
       );
     },

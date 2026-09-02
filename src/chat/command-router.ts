@@ -21,11 +21,11 @@ export function isSubscribeRequest(text: string): boolean {
   return parseIntent(text) === "subscribe";
 }
 
-/** Per-faction buff cooldown for the status query. */
+/** Per-faction last-drop info for the status query. */
 export interface BuffCooldown {
   readonly faction: Faction;
-  /** ms until the active buff wears off and a fresh one can drop, or null if one can drop now. */
-  readonly activeMsLeft: number | null;
+  /** ms since the last recorded Rallying Cry drop in this faction's capital, or null if none seen. */
+  readonly sinceLastDropMs: number | null;
 }
 
 /** A reader-friendly name for a set of subscribed sides. */
@@ -171,7 +171,7 @@ export class CommandRouter {
       case "?":
         // Concise, one command per whisper, status first and the guild invite last.
         return [
-          `status - what's raiding Onyxia now, and the buff cooldown`,
+          `status - what's raiding Onyxia now, and when the buff last dropped`,
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
           `discord - our Discord invite link`,
           `feedback <message> - send a suggestion or bug report`,
@@ -188,8 +188,8 @@ export class CommandRouter {
     }
   }
 
-  /** Live-state query for a player: what's raiding the lair now (and how long), and the
-   *  Rallying Cry cooldown for THEIR capital(s) only — not both, since a player can only use
+  /** Live-state query for a player: what's raiding the lair now (and how long), and when the
+   *  Rallying Cry last dropped in THEIR capital(s) only — not both, since a player can only use
    *  their own side's buff. */
   async #status(sender: string, sourceFaction: Faction | null = null): Promise<string[]> {
     const { activeRaids, areaName, raidElapsed, raidNumber, buffCooldowns } = this.#deps;
@@ -208,13 +208,11 @@ export class CommandRouter {
       const part = (await buffCooldowns())
         .filter((cd) => factions.includes(cd.faction))
         .map((cd) =>
-          // "on cooldown" (not "up"): to a WoW player "buff up" reads as READY; here it means
-          // one is active in the city, so a fresh one can't drop until it wears off. When it's
-          // off cooldown, say a raid must still clear — "can drop now" would read as an imminent
-          // CTA when the next raid could be many hours away.
-          cd.activeMsLeft === null
-            ? `${CITY_FOR[cd.faction]}: off cooldown - a fresh one can drop once a raid clears Onyxia`
-            : `${CITY_FOR[cd.faction]}: buff on cooldown, ~${humanClock(cd.activeMsLeft)} until the next can drop`,
+          // A fresh Rallying Cry drops whenever a raid clears Onyxia — there is no cooldown to
+          // report. Show when the last one dropped so a parker knows how fresh the city is.
+          cd.sinceLastDropMs === null
+            ? `${CITY_FOR[cd.faction]}: no Rallying Cry seen yet - one drops when a raid clears Onyxia`
+            : `${CITY_FOR[cd.faction]}: last Rallying Cry ~${humanClock(cd.sinceLastDropMs)} ago - a fresh one drops when a raid clears`,
         )
         .join(" | ");
       if (part) lines.push(`Rallying Cry - ${part}.`);

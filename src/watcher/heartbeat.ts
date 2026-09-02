@@ -9,8 +9,8 @@
 
 export interface HeartbeatBuff {
   readonly faction: string;
-  /** Milliseconds until the active buff expires, or null when no buff is up. */
-  readonly leftMs: number | null;
+  /** Milliseconds since the last recorded drop, or null when none has ever been seen. */
+  readonly sinceLastDropMs: number | null;
 }
 
 /** How well the learned timer has predicted past clears — the self-evaluation segment. */
@@ -47,7 +47,7 @@ export interface HeartbeatStats {
 const mins = (ms: number): number => Math.round(ms / 60_000);
 const signedMins = (ms: number): string => `${ms >= 0 ? "+" : "-"}${Math.abs(mins(ms))}m`;
 
-/** One log line: `monitor: 12 subs; raid timer learned median 43m (18 samples); accuracy MAE 6m bias +2m over 15; buffs alliance up 74m left, horde clear`. */
+/** One log line: `monitor: 12 subs; raid timer learned median 43m (18 samples); accuracy MAE 6m bias +2m over 15; buffs alliance last drop 74m ago, horde no drop yet`. */
 export function formatHeartbeat(stats: HeartbeatStats): string {
   // When the bias correction actually moved the estimate, show both: the raw median and the
   // number the timer now uses. When it didn't (or isn't available), just the median.
@@ -67,7 +67,7 @@ export function formatHeartbeat(stats: HeartbeatStats): string {
     stats.buffs.length === 0
       ? "none tracked"
       : stats.buffs
-          .map((b) => `${b.faction} ${b.leftMs === null ? "clear" : `up ${mins(b.leftMs)}m left`}`)
+          .map((b) => `${b.faction} ${b.sinceLastDropMs === null ? "no drop yet" : `last drop ${mins(b.sinceLastDropMs)}m ago`}`)
           .join(", ");
   const subs =
     stats.totalUsers != null

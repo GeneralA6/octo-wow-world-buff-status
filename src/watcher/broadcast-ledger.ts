@@ -17,9 +17,8 @@ import type { RaidEvent } from "./raid-tracker.js";
  */
 
 export type RaidEventKind = RaidEvent["kind"];
-/** The dedup keys the ledger tracks: the two raid-event alerts, plus the "buff imminent" alert,
- *  which has no RaidEvent of its own (it fires from the buff/raid convergence, not a detector). */
-export type BroadcastKind = RaidEventKind | "buff-imminent";
+/** The dedup keys the ledger tracks: one per raid-event alert (forming, cleared). */
+export type BroadcastKind = RaidEventKind;
 
 export interface BroadcastRecord {
   readonly city: Faction;

@@ -150,16 +150,6 @@ describe("loadConfig", () => {
     ).toThrow(/WOW_RAID_LEFT_FLOOR must be <= WOW_RAID_STRENGTH_SIZE/);
   });
 
-  it("defaults the buff duration to 2h and accepts an override in minutes", () => {
-    expect(loadConfig({ ...minimalEnv }).buffDurationMs).toBe(120 * 60_000);
-    expect(loadConfig({ ...minimalEnv, WOW_BUFF_DURATION_MINUTES: "90" }).buffDurationMs).toBe(90 * 60_000);
-  });
-
-  it("defaults the buff-imminent window to 30m and accepts an override", () => {
-    expect(loadConfig({ ...minimalEnv }).buffImminentMs).toBe(30 * 60_000);
-    expect(loadConfig({ ...minimalEnv, WOW_BUFF_IMMINENT_MINUTES: "20" }).buffImminentMs).toBe(20 * 60_000);
-  });
-
   it("defaults the disband threshold to 20m and accepts an override", () => {
     expect(loadConfig({ ...minimalEnv }).raidDisbandMs).toBe(20 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_RAID_DISBAND_MINUTES: "25" }).raidDisbandMs).toBe(25 * 60_000);

@@ -71,11 +71,6 @@ export interface BotConfig {
   readonly raidLeftFloor: number;
   /** Hysteresis floor: an active raid clears (and re-arms) when it drops below this. */
   readonly raidClearSize: number;
-  /** How long the Rallying Cry buff lasts, and blocks the next drop (the head window). */
-  readonly buffDurationMs: number;
-  /** Within this much of the active buff expiring, if a raid is in the lair, the "🔥 buff
-   *  imminent" alert fires (a fresh buff is about to be producible) — once per cycle. */
-  readonly buffImminentMs: number;
   /** Estimated Onyxia clear time, used to predict a forming raid's end until learned. */
   readonly raidDurationEstimateMs: number;
   /** Learned-median clear time replaces the estimate once this many raids are recorded. */
@@ -275,15 +270,15 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     errors.push("WOW_RAID_LEFT_FLOOR must be <= WOW_RAID_STRENGTH_SIZE");
   }
 
-  const buffDurationMs = intWithDefault("WOW_BUFF_DURATION_MINUTES", 120, 1) * 60_000;
-  const buffImminentMs = intWithDefault("WOW_BUFF_IMMINENT_MINUTES", 30, 1) * 60_000;
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
   const raidLearnMinSamples = intWithDefault("WOW_RAID_LEARN_MIN_SAMPLES", 15, 1);
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
   const raidDisbandMs = intWithDefault("WOW_RAID_DISBAND_MINUTES", 20, 1) * 60_000;
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
-  // Default to the buff window: within one head-block cycle we should speak once.
+  // Dedup window: how long a (city, kind) park-alert stays muted if no fresh drop is heard, so a
+  // redeploy/wipe/roster-churn re-emitting the same event doesn't re-alert. A drop reopens it
+  // sooner (new cycle); this is only the ceiling. Not a buff-duration — we model no cooldown.
   const broadcastDedupMs = intWithDefault("WOW_BROADCAST_DEDUP_MINUTES", 120, 1) * 60_000;
 
   const realmRaw = env.WOW_REALM_TYPE?.trim().toLowerCase();
@@ -375,8 +370,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidStrengthSize,
     raidLeftFloor,
     raidClearSize,
-    buffDurationMs,
-    buffImminentMs,
     raidDurationEstimateMs,
     raidLearnMinSamples,
     raidMinClearMs,
