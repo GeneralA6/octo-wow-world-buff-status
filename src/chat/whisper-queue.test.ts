@@ -99,6 +99,20 @@ describe("WhisperQueue", () => {
     expect(sent.length).toBeGreaterThan(1); // resumed delivering
   });
 
+  it("caps retries: a repeatedly-throttled whisper is re-sent at most once, never looped", () => {
+    const sent: string[] = [];
+    const queue = new WhisperQueue((t) => sent.push(t), 1000);
+    queue.enqueue("A", "park now");
+    expect(sent).toEqual(["A"]); // 1st send (idle)
+    queue.notifyThrottled(); // server dropped it → re-queue once
+    vi.advanceTimersByTime(31_000);
+    expect(sent).toEqual(["A", "A"]); // retried once
+    queue.notifyThrottled(); // throttled AGAIN → already at the cap → dropped, not re-queued
+    vi.advanceTimersByTime(31_000);
+    expect(sent).toEqual(["A", "A"]); // NOT sent a third time — the loop is broken
+    expect(queue.size).toBe(0); // queue drained, no livelock
+  });
+
   it("doesn't duplicate a retry for a target still pending in the queue", () => {
     const sent: string[] = [];
     const queue = new WhisperQueue((t) => sent.push(t), 1000);

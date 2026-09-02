@@ -22,12 +22,19 @@ interface QueuedWhisper {
   /** Capitals this message is about (a "park now" alert). Lets a buff drop in one of them purge
    *  the now-stale queued park alerts for that side. Undefined for messages nothing supersedes. */
   readonly cities?: readonly Faction[];
+  /** How many times a throttle has already re-queued this whisper. Capped at MAX_RETRIES so a
+   *  sustained throttle can't re-send the same recipient over and over (duplicate spam). */
+  readonly retries?: number;
 }
 
 /** How long to pause after the server throttles us, letting its distinct-recipient window reset. */
 const THROTTLE_COOLDOWN_MS = 30_000;
 /** How far back a throttle signal reaches — sends within this window are assumed dropped and retried. */
 const RETRY_WINDOW_MS = 6_000;
+/** Re-queue a throttled whisper at most this many times, then give up. Bounds the duplicates a
+ *  sustained throttle can produce: a large notification that keeps tripping the server's window
+ *  used to re-send its "boundary" recipients 3–5×; capped, it's at most one extra send. */
+const MAX_RETRIES = 1;
 
 export class WhisperQueue {
   readonly #queue: QueuedWhisper[] = [];
@@ -84,16 +91,18 @@ export class WhisperQueue {
     const cutoff = now - RETRY_WINDOW_MS;
     const queuedTargets = new Set(this.#queue.map((w) => w.target.toLowerCase()));
     const seen = new Set<string>();
-    const retries: QueuedWhisper[] = [];
+    const toRetry: QueuedWhisper[] = [];
     for (const { whisper, at } of this.#recent) {
       if (at < cutoff) continue;
       const key = whisper.target.toLowerCase();
       if (seen.has(key) || queuedTargets.has(key)) continue;
+      // Already retried its limit — drop rather than re-send it again (that was the duplicate spam).
+      if ((whisper.retries ?? 0) >= MAX_RETRIES) continue;
       seen.add(key);
-      retries.push(whisper);
+      toRetry.push({ ...whisper, retries: (whisper.retries ?? 0) + 1 });
     }
     this.#recent.length = 0;
-    this.#queue.unshift(...retries); // retry the dropped ones first, after the cooldown
+    this.#queue.unshift(...toRetry); // retry the dropped ones first, after the cooldown
 
     this.#pausedUntil = now + THROTTLE_COOLDOWN_MS;
     if (this.#timer) clearTimeout(this.#timer);
