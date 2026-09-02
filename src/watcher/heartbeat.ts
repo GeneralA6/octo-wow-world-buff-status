@@ -29,6 +29,8 @@ export interface HeartbeatStats {
   readonly totalUsers?: number;
   /** Distinct people ever guild-invited (lifetime). Omitted = not shown. */
   readonly totalInvites?: number;
+  /** Bot-invited players currently in the guild (active). Shown beside the invite total. */
+  readonly activeGuildies?: number;
   readonly samples: number;
   /** The learned median clear-time once >= minSamples are on record, else null. */
   readonly learnedMedianMs: number | null;
@@ -71,6 +73,9 @@ export function formatHeartbeat(stats: HeartbeatStats): string {
     stats.totalUsers != null
       ? `${stats.subscribers} subs (${stats.totalUsers} all-time)`
       : `${stats.subscribers} subs`;
-  const invites = stats.totalInvites != null ? `; ${stats.totalInvites} invites all-time` : "";
+  const invites =
+    stats.totalInvites != null
+      ? `; ${stats.totalInvites} invites all-time${stats.activeGuildies != null ? ` (${stats.activeGuildies} in guild)` : ""}`
+      : "";
   return `monitor: ${subs}${invites}; raid timer ${timer}${accuracy}; buffs ${buffs}`;
 }

@@ -76,6 +76,7 @@ import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
 import { InMemoryIntroStore, MongoIntroStore, type IntroStore } from "./chat/intro-store.js";
 import { InMemoryUserLedger, MongoUserLedger, type UserLedger } from "./subscribers/user-ledger.js";
+import { InMemoryGuildieStore, MongoGuildieStore, type GuildieStore } from "./subscribers/guildie-store.js";
 import { WhisperQueue } from "./chat/whisper-queue.js";
 import { WhisperPool } from "./chat/whisper-pool.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
@@ -249,6 +250,8 @@ interface ConnectionServices {
   readonly userLedger: UserLedger;
   /** Lifetime distinct guild-invite count for the heartbeat stat. */
   readonly inviteLedger: UserLedger;
+  /** Active count of bot-invited players currently in the guild (add on join, remove on leave). */
+  readonly guildieStore: GuildieStore;
   readonly router: CommandRouter;
   readonly dm: DiscordDmSender;
   readonly outreach: Outreach;
@@ -288,7 +291,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
@@ -756,12 +759,13 @@ async function runConnection(
     };
 
     const logHeartbeat = async (now: number): Promise<void> => {
-      const [series, learnedMedianMs, subscribers, totalUsers, totalInvites, buffs] = await Promise.all([
+      const [series, learnedMedianMs, subscribers, totalUsers, totalInvites, activeGuildies, buffs] = await Promise.all([
         durationStore.recent(TIMER_EVAL_WINDOW),
         durationStore.median(config.raidLearnMinSamples),
         store.all().then((all) => all.length),
         userLedger.count().catch(() => 0),
         inviteLedger.count().catch(() => 0),
+        guildieStore.count().catch(() => 0),
         Promise.all(
           FACTIONS.map(async (faction) => {
             const state = await buffStore.current(faction, new Date(now));
@@ -778,6 +782,7 @@ async function runConnection(
           subscribers,
           totalUsers,
           totalInvites,
+          activeGuildies,
           samples: evaln.samples,
           learnedMedianMs,
           improvedMs: evaln.improvedEstimateMs,
@@ -921,6 +926,17 @@ async function runConnection(
       if (Date.now() - invitedAt > GUILD_INVITE_TTL_MS) return; // accepted too late to be sure it's ours
       logger.info(`guild: ${name} accepted our invite — welcoming in /g`);
       world.guildChat(formatGuildWelcome(name));
+      // Count them among the active bot-invited guild members (removed if they later leave).
+      void guildieStore.add(name).catch((error) => logger.debug(`guildies: add failed (${describeError(error)})`));
+    };
+    // A member left / was removed from the guild — if they were one of ours, drop the count.
+    const onGuildLeave = (name: string): void => {
+      void guildieStore
+        .remove(name)
+        .then((removed) => {
+          if (removed) logger.info(`guild: ${name} left — was bot-invited, removed from the active count`);
+        })
+        .catch((error) => logger.debug(`guildies: remove failed (${describeError(error)})`));
     };
 
     const world = new WorldClient({
@@ -981,6 +997,7 @@ async function runConnection(
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
         // A player joined the guild — if we invited them, welcome them in /g (no whisper).
         onGuildJoin: (name) => welcomeIfWeInvited(name),
+        onGuildLeave: (name) => onGuildLeave(name),
         // Server SYSTEM messages report command results. Log every one (so real error wording can
         // be captured and added to the classifier), and alert the errors channel on a failure —
         // chiefly a guild invite that didn't take (no permission, target already guilded, etc.).
@@ -1472,6 +1489,17 @@ async function main(): Promise<void> {
       logger.error(`invites: MongoDB connect failed (${describeError(error)}); counting in memory`);
     }
   }
+  // Players CURRENTLY in the guild who joined via our invite — the "active subscribers" equivalent.
+  // Rises on an invited join, falls on a guild leave.
+  let guildieStore: GuildieStore = new InMemoryGuildieStore();
+  if (config.mongodbUri) {
+    try {
+      guildieStore = await MongoGuildieStore.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("guildies: tracking active bot-invited guild members in MongoDB");
+    } catch (error) {
+      logger.error(`guildies: MongoDB connect failed (${describeError(error)}); tracking in memory`);
+    }
+  }
 
   // Chronicle early-confirm: during a departure WE detect, a fresh kill log by one of the raid's
   // roster confirms the clear and lets processLane skip the sustained wait (never a trigger on its
@@ -1594,6 +1622,7 @@ async function main(): Promise<void> {
     store,
     userLedger,
     inviteLedger,
+    guildieStore,
     router,
     dm,
     outreach,
@@ -1637,6 +1666,7 @@ async function main(): Promise<void> {
       introStore.close(),
       userLedger.close(),
       inviteLedger.close(),
+      guildieStore.close(),
       raidCounterStore.close(),
       raidStateStore.close(),
       chronicleStore ? chronicleStore.close() : Promise.resolve(),

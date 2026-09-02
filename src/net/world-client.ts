@@ -49,6 +49,9 @@ export interface WorldClientHandlers {
   onSystemMessage?: (text: string) => void;
   /** A player just JOINED our guild (from SMSG_GUILD_EVENT) — e.g. accepted our invite. */
   onGuildJoin?: (name: string) => void;
+  /** A player LEFT or was removed from our guild (SMSG_GUILD_EVENT) — used to keep the count of
+   *  active guildies who joined via the bot accurate. */
+  onGuildLeave?: (name: string) => void;
   /** A decompressed nearby-object update block, for parsing GameObjects (e.g. a bench). */
   onWorldObjects?: (body: Buffer) => void;
   onError?: (error: Error) => void;
@@ -438,6 +441,8 @@ export class WorldClient {
       this.#logger.info(`guild event: type=${event.type} params=${JSON.stringify(event.params)}`);
       if (event.type === GuildEvent.Joined && event.params[0]) {
         this.#handlers.onGuildJoin?.(event.params[0]);
+      } else if ((event.type === GuildEvent.Left || event.type === GuildEvent.Removed) && event.params[0]) {
+        this.#handlers.onGuildLeave?.(event.params[0]);
       }
     } catch (error) {
       this.#logger.debug(`world: could not read guild event: ${(error as Error).message}`);

@@ -58,6 +58,11 @@ describe("formatHeartbeat", () => {
     expect(line).toContain("45 invites all-time");
   });
 
+  it("shows active guildies in parentheses beside the invite total", () => {
+    const line = formatHeartbeat({ ...base, totalInvites: 45, activeGuildies: 12 });
+    expect(line).toContain("45 invites all-time (12 in guild)");
+  });
+
   it("reports each faction's buff as up-with-minutes or clear", () => {
     const line = formatHeartbeat({
       ...base,
