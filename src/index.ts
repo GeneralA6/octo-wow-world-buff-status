@@ -1471,7 +1471,7 @@ async function main(): Promise<void> {
       .record({ faction, appliedAt })
       .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
-    void push(formatBuffDropped(faction, appliedAt, config.author), [faction]); // channel, pinging that side's role
+    void push(formatBuffDropped(faction, config.author), [faction]); // channel, pinging that side's role
     buffDropSink.notify?.(faction, appliedAt);
   };
 

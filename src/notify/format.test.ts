@@ -117,23 +117,22 @@ describe("formatRaidDisbanded", () => {
 });
 
 describe("formatBuffDropped", () => {
-  it("titles 'Onyxia buff dropped in <city>' and names the buff in full with a live drop timestamp", () => {
-    const appliedAt = new Date("2026-08-30T20:00:00Z");
-    const msg = formatBuffDropped("alliance", appliedAt, "Gibom");
+  it("titles 'Onyxia buff dropped in <city>' and names the buff in full, no in-body timestamp", () => {
+    const msg = formatBuffDropped("alliance", "Gibom");
     expect(msg.title).toBe("🎉 Onyxia buff dropped in Stormwind");
     expect(msg.body).toContain("The Rallying Cry of the Dragonslayer is up in Stormwind");
-    expect(msg.body).toContain(`<t:${Math.floor(appliedAt.getTime() / 1000)}:R>`);
+    expect(msg.body).not.toMatch(/<t:/); // Discord's own post-time is the drop time; no "N hours ago"
   });
 
   it("makes NO cooldown / duration claim", () => {
-    const msg = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), "Gibom");
+    const msg = formatBuffDropped("horde", "Gibom");
     expect(msg.title).toContain("Orgrimmar");
     expect(msg.body).not.toMatch(/cooldown|2h|wears off|until/i);
   });
 
   it("carries the same tips line on the channel post and the whisper", () => {
     const tip = "Did you get it? A tip to Gibom is appreciated.";
-    expect(formatBuffDropped("alliance", new Date(), "Gibom").body).toContain(tip);
+    expect(formatBuffDropped("alliance", "Gibom").body).toContain(tip);
     expect(formatBuffDroppedWhisper("alliance", "Gibom")).toContain(tip);
   });
 });

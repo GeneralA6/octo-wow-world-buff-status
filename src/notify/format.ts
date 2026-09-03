@@ -136,17 +136,17 @@ export function formatRaidDisbandedWhisper(
 }
 
 /**
- * A buff just dropped (a listener heard the turn-in yell). Names the buff in full and the city,
- * with a live relative timestamp of the drop itself (`<t:unix:R>` renders in each viewer's
- * timezone). No cooldown/duration line — we track drops, not the buff on players.
+ * A buff just dropped (a listener heard the turn-in yell). Names the buff in full and the city.
+ * No timestamp in the body — Discord stamps every message with its post time (= the drop time),
+ * so a `<t:R>` here only renders "N hours ago" on scroll-back and contradicts the title. No
+ * cooldown/duration line either — we track drops, not the buff on players.
  */
-export function formatBuffDropped(faction: Faction, appliedAt: Date, author: string): NotifyMessage {
-  const droppedUnix = Math.floor(appliedAt.getTime() / 1000);
+export function formatBuffDropped(faction: Faction, author: string): NotifyMessage {
   const city = CITY_FOR[faction];
   return {
     kind: "info",
     title: `🎉 Onyxia buff dropped in ${city}`,
-    body: `The Rallying Cry of the Dragonslayer is up in ${city} (dropped <t:${droppedUnix}:R>). ${tipsLine(author)}`,
+    body: `The Rallying Cry of the Dragonslayer is up in ${city}. ${tipsLine(author)}`,
   };
 }
 
