@@ -150,9 +150,12 @@ export function formatBuffDropped(faction: Faction, appliedAt: Date, author: str
   };
 }
 
-/** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell fires. */
-export function formatBuffDroppedWhisper(faction: Faction, author: string): string {
-  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}! ${tipsLine(author)}`;
+/** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell fires.
+ *  A "light" (non-urgent) broadcast, so it carries the Discord nudge — in-game pings are throttled
+ *  and can lag, Discord does not. `discordInvite` omitted leaves it off. */
+export function formatBuffDroppedWhisper(faction: Faction, author: string, discordInvite?: string): string {
+  const cta = discordInvite ? ` In-game pings can lag - Discord is instant: ${discordInvite}` : "";
+  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}! ${tipsLine(author)}${cta}`;
 }
 
 /** Guild-chat (/g) line welcoming a member who just accepted an invite. Everyone reading it is

@@ -319,9 +319,10 @@ async function runConnection(
       message: string,
       faction: Faction | null,
       cities?: readonly Faction[],
+      maxAgeMs?: number,
     ): void => {
-      if (whisperPool.fanOut(names, message, faction, cities) === 0) {
-        for (const name of names) whisperQueue?.enqueue(name, message, cities);
+      if (whisperPool.fanOut(names, message, faction, cities, maxAgeMs) === 0) {
+        for (const name of names) whisperQueue?.enqueue(name, message, cities, maxAgeMs);
       }
     };
 
@@ -352,7 +353,7 @@ async function runConnection(
       for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, cities)) {
         const line = formatBuffWhisper(event, groupCities, typical);
         // Tag with the cities this park-now is about, so a buff dropping there purges it as stale.
-        broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities);
+        broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities, config.whisperMaxAgeMs);
       }
     };
 
@@ -368,7 +369,8 @@ async function runConnection(
       }
       subscribers = subscribers.filter((s) => s.factions.includes(faction));
       if (subscribers.length === 0) return;
-      broadcastWhisper(subscribers.map((s) => s.name), whisperLine, faction);
+      // A drop whisper delivered minutes late (throttle backlog) is the Owlofelune case — expire it.
+      broadcastWhisper(subscribers.map((s) => s.name), whisperLine, faction, undefined, config.whisperMaxAgeMs);
     };
 
     // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
@@ -378,7 +380,10 @@ async function runConnection(
       // park after being told it already dropped.
       const dropped = whisperPool.dropForFaction(faction) + (whisperQueue?.dropForFaction(faction) ?? 0);
       if (dropped > 0) logger.info(`dropped ${dropped} stale park-now whisper(s) for ${faction} — buff is up`);
-      return notifyFactionSubscribers(faction, formatBuffDroppedWhisper(faction, config.author));
+      return notifyFactionSubscribers(
+        faction,
+        formatBuffDroppedWhisper(faction, config.author, config.discordServerInvite ?? undefined),
+      );
     };
 
     // The raid in progress for a faction (from the lane covering it), or null.
@@ -509,7 +514,7 @@ async function runConnection(
             const subscribers = await store.all();
             for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, fresh)) {
               const line = formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, typical);
-              broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities);
+              broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities, config.whisperMaxAgeMs);
             }
           } catch (error) {
             logger.error(`subscribers: ${describeError(error)}`);
@@ -574,7 +579,7 @@ async function runConnection(
         if (config.whispersEnabled) {
           try {
             const subs = (await store.all()).filter((s) => notified.some((c) => s.factions.includes(c)));
-            if (subs.length > 0) broadcastWhisper(subs.map((s) => s.name), line, notified[0] ?? null);
+            if (subs.length > 0) broadcastWhisper(subs.map((s) => s.name), line, notified[0] ?? null, notified, config.whisperMaxAgeMs);
           } catch (error) {
             logger.error(`subscribers: ${describeError(error)}`);
           }

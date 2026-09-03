@@ -90,6 +90,9 @@ export interface BotConfig {
   readonly raidClearSustainedMs: number;
   /** How often the buff-status board is yelled in each capital (default 10 min). */
   readonly statusYellMs: number;
+  /** A time-sensitive whisper still queued past this is dropped unsent (default 5 min), so a
+   *  throttled queue never delivers a "park now" long after the raid it was about cleared. */
+  readonly whisperMaxAgeMs: number;
   /** How long a sent park-alert suppresses a repeat for the same city+kind, so a redeploy,
    *  a wipe (count dipping and recovering) or roster churn can't re-broadcast the same
    *  cycle. Reset early when a fresh buff actually drops for that city. */
@@ -280,6 +283,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidDisbandMs = intWithDefault("WOW_RAID_DISBAND_MINUTES", 20, 1) * 60_000;
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
+  // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
+  // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
+  const whisperMaxAgeMs = intWithDefault("WOW_WHISPER_MAX_AGE_MINUTES", 5, 1) * 60_000;
   // Dedup window: how long a (city, kind) park-alert stays muted if no fresh drop is heard, so a
   // redeploy/wipe/roster-churn re-emitting the same event doesn't re-alert. A drop reopens it
   // sooner (new cycle); this is only the ceiling. Not a buff-duration — we model no cooldown.
@@ -381,6 +387,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidDisbandMs,
     raidClearSustainedMs,
     statusYellMs,
+    whisperMaxAgeMs,
     broadcastDedupMs,
     realmType,
     raidGrouping,

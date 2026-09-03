@@ -94,16 +94,16 @@ describe("WhisperQueue", () => {
     expect(sent).toEqual(["A", "C", "D"]); // B gone; the horde park and the reply still delivered
   });
 
-  it("retries a throttled whisper after a cooldown instead of dropping it", () => {
+  it("does NOT re-send around a throttle — resumes with the next recipient, no duplicate", () => {
     const sent: string[] = [];
     const queue = new WhisperQueue((t) => sent.push(t), 1000);
-    queue.enqueue("A", "park now");
-    expect(sent).toEqual(["A"]); // sent immediately, then the server drops it
-    queue.notifyThrottled();
-    vi.advanceTimersByTime(1000);
-    expect(sent).toEqual(["A"]); // paused during the cooldown — no resend yet
+    queue.enqueueAll(["A", "B", "C"], "x"); // A sent immediately, B/C queued
+    expect(sent).toEqual(["A"]);
+    queue.notifyThrottled(); // server accepted A then blocked — A must NOT be re-sent
     vi.advanceTimersByTime(30_000); // cooldown elapses
-    expect(sent).toEqual(["A", "A"]); // retried, not lost
+    vi.advanceTimersByTime(1000);
+    vi.advanceTimersByTime(1000);
+    expect(sent).toEqual(["A", "B", "C"]); // A once; resumed forward — no retry duplicate
   });
 
   it("sends nothing during the throttle cooldown, then resumes", () => {
@@ -118,28 +118,27 @@ describe("WhisperQueue", () => {
     expect(sent.length).toBeGreaterThan(1); // resumed delivering
   });
 
-  it("caps retries: a repeatedly-throttled whisper is re-sent at most once, never looped", () => {
+  it("drops a stale time-sensitive whisper but keeps an untagged reply through the same delay", () => {
     const sent: string[] = [];
     const queue = new WhisperQueue((t) => sent.push(t), 1000);
-    queue.enqueue("A", "park now");
-    expect(sent).toEqual(["A"]); // 1st send (idle)
-    queue.notifyThrottled(); // server dropped it → re-queue once
+    queue.enqueue("A", "immediate"); // sent right away (idle)
+    queue.enqueue("Park", "park now", ["alliance"], 5_000); // maxAge 5s
+    queue.enqueue("Reply", "you're subscribed"); // no maxAge — a command reply
+    expect(sent).toEqual(["A"]);
+    queue.notifyThrottled(); // 30s cooldown — Park will be >5s old when the queue resumes
     vi.advanceTimersByTime(31_000);
-    expect(sent).toEqual(["A", "A"]); // retried once
-    queue.notifyThrottled(); // throttled AGAIN → already at the cap → dropped, not re-queued
-    vi.advanceTimersByTime(31_000);
-    expect(sent).toEqual(["A", "A"]); // NOT sent a third time — the loop is broken
-    expect(queue.size).toBe(0); // queue drained, no livelock
+    vi.advanceTimersByTime(1000);
+    expect(sent).toEqual(["A", "Reply"]); // Park dropped as stale; the reply (no maxAge) survives
+    expect(queue.size).toBe(0);
   });
 
-  it("doesn't duplicate a retry for a target still pending in the queue", () => {
-    const sent: string[] = [];
-    const queue = new WhisperQueue((t) => sent.push(t), 1000);
-    queue.enqueueAll(["A", "B"], "x"); // A sent, B still queued
-    expect(sent).toEqual(["A"]);
-    queue.notifyThrottled(); // A is recent (re-queued); B is already queued (not re-added)
-    vi.advanceTimersByTime(31_000); // resume after cooldown
-    vi.advanceTimersByTime(1000);
-    expect(sent).toEqual(["A", "A", "B"]); // A retried once, B delivered once — not doubled
+  it("reports a dropped-stale whisper to the metric hook", () => {
+    const metrics: string[] = [];
+    const queue = new WhisperQueue(() => {}, 1000, undefined, (line) => metrics.push(line));
+    queue.enqueue("A", "immediate");
+    queue.enqueue("Park", "park now", ["alliance"], 5_000);
+    queue.notifyThrottled();
+    vi.advanceTimersByTime(31_000);
+    expect(metrics.some((m) => /dropped stale whisper to Park/.test(m))).toBe(true);
   });
 });

@@ -145,6 +145,13 @@ describe("formatBuffDroppedWhisper", () => {
     expect(line).not.toMatch(/<t:/);
     expect(line).not.toMatch(/cooldown|2h|at least/i);
   });
+
+  it("appends a short Discord CTA when an invite is given, and omits it otherwise", () => {
+    const withCta = formatBuffDroppedWhisper("alliance", "Gibom", "discord.gg/xyz");
+    expect(withCta).toContain("Discord is instant: discord.gg/xyz");
+    expect(withCta).toMatch(/lag/i); // explains why (server throttle)
+    expect(formatBuffDroppedWhisper("alliance", "Gibom")).not.toMatch(/discord/i);
+  });
 });
 
 describe("formatGuildWelcome", () => {

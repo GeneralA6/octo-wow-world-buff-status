@@ -41,13 +41,14 @@ export class WhisperPool {
     message: string,
     faction: Faction | null = null,
     cities?: readonly Faction[],
+    maxAgeMs?: number,
   ): number {
     const members = [...this.#members.values()];
     if (members.length === 0 || targets.length === 0) return 0;
     // Same-faction members first, the rest after — a stable preference, not a hard requirement.
     members.sort((a, b) => Number(b.faction === faction) - Number(a.faction === faction));
     targets.forEach((target, i) => {
-      members[i % members.length]?.queue.enqueue(target, message, cities);
+      members[i % members.length]?.queue.enqueue(target, message, cities, maxAgeMs);
     });
     return members.length;
   }

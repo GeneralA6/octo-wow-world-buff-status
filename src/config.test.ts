@@ -155,6 +155,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_ENDING_LEAD_MINUTES: "15" }).raidEndingLeadMs).toBe(15 * 60_000);
   });
 
+  it("defaults the whisper max-age to 5m and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).whisperMaxAgeMs).toBe(5 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_WHISPER_MAX_AGE_MINUTES: "3" }).whisperMaxAgeMs).toBe(3 * 60_000);
+  });
+
   it("defaults the disband threshold to 20m and accepts an override", () => {
     expect(loadConfig({ ...minimalEnv }).raidDisbandMs).toBe(20 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_RAID_DISBAND_MINUTES: "25" }).raidDisbandMs).toBe(25 * 60_000);
