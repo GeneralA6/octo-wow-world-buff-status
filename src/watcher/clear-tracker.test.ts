@@ -7,8 +7,8 @@ const R = (n: number): string[] => Array.from({ length: n }, (_, i) => `r${i}`);
 /** `n` DIFFERENT people c0..c(n-1) — a new crowd / ambient traffic. */
 const C = (n: number): string[] => Array.from({ length: n }, (_, i) => `c${i}`);
 
-function tracker() {
-  return new ClearTracker({ formAt: 15, sustainedMs: 5 * MIN });
+function tracker(over: Partial<ConstructorParameters<typeof ClearTracker>[0]> = {}) {
+  return new ClearTracker({ formAt: 15, sustainedMs: 5 * MIN, ...over });
 }
 
 describe("ClearTracker", () => {
@@ -81,9 +81,9 @@ describe("ClearTracker", () => {
   });
 
   it("sizes the raid by the plateau peak, not a wipe trough", () => {
-    const t = tracker();
+    const t = tracker({ rosterCap: 50 }); // room above the plateau so the cap isn't what's tested here
     t.observe(R(20), 0, false); // peak 20
-    t.observe(R(34), 2 * MIN, false); // grew
+    t.observe(R(34), 2 * MIN, false); // grew (within the fill window → absorbed)
     t.observe(R(34), 3 * MIN, false); // roster caught up → peak 34
     t.observe(R(5), 20 * MIN, false); // wipe trough (not the peak)
     const clear = t.observe(R(0), 26 * MIN, false).clear;
@@ -179,6 +179,49 @@ describe("ClearTracker", () => {
     t.observe(C(1), 50 * MIN, false); // departs
     const clear = t.observe(C(0), 56 * MIN, false).clear; // sustained 6 min
     expect(clear?.durationMs).toBe(20 * MIN); // 30m → 50m, proving the fresh formedAt
+  });
+});
+
+describe("ClearTracker arrival-cohort separation", () => {
+  it("a SECOND raid arriving late does not keep the first alive (the continuous-lair fix)", () => {
+    const t = tracker(); // fill window 5m, cap 30
+    t.observe(R(30), 0, false); // raid A forms — r0..r29
+    // 40 min later A is ending, but raid B (c0..c19) has arrived — the lair stays full
+    t.observe([...R(30), ...C(20)], 40 * MIN, false); // B arrived at 40m, well past A's 5m fill window
+    t.observe(C(20), 41 * MIN, false); // A leaves; only B remains — A's cohort is now 0
+    const clear = t.observe(C(20), 47 * MIN, false).clear; // sustained 6 min
+    expect(clear).not.toBeNull(); // A's departure detected despite B filling the lair
+    expect(clear?.durationMs).toBe(41 * MIN); // A ran 0 → 41m
+    expect(t.tracking).toBe(false);
+  });
+
+  it("absorbs a joiner within the fill window but excludes one arriving after it", () => {
+    const t = tracker();
+    t.observe(R(20), 0, false); // r0..r19
+    t.observe([...R(20), "early"], 3 * MIN, false); // 'early' at 3m — within 5m window → absorbed
+    t.observe([...R(20), "early", "late"], 10 * MIN, false); // 'late' at 10m — past window → excluded
+    t.observe([], 40 * MIN, false); // everyone leaves
+    const clear = t.observe([], 46 * MIN, false).clear;
+    expect(clear?.peak).toBe(21); // r0..r19 + early, but NOT late
+  });
+
+  it("caps the tracked roster as a backstop against absorbing a second raid", () => {
+    const t = tracker({ rosterCap: 25 });
+    t.observe(R(40), 0, false); // 40 present at formation → roster capped at 25
+    t.observe(R(0), 40 * MIN, false); // departs
+    const clear = t.observe(R(0), 46 * MIN, false).clear;
+    expect(clear?.peak).toBe(25);
+  });
+
+  it("a player seen early, gone, then back late is a FRESH arrival — it can't keep the old raid alive", () => {
+    const t = tracker();
+    t.observe(["w", "a", "b"], 0, false); // ambient traffic, w among it (below strength)
+    t.observe([], 15 * MIN, false); // all gone for > the stint gap → forgotten
+    t.observe(R(20), 30 * MIN, false); // raid forms at 30m, WITHOUT w
+    t.observe([...R(20), "w"], 40 * MIN, false); // w returns at 40m (past the 5m window) — must not be absorbed
+    t.observe(["w"], 41 * MIN, false); // the raid leaves; only w remains → its cohort is 0
+    const clear = t.observe(["w"], 47 * MIN, false).clear;
+    expect(clear).not.toBeNull(); // detected — w's stale early sighting did not keep the raid alive
   });
 });
 

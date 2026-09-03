@@ -1,6 +1,7 @@
 /**
  * Measures how long a raid actually takes to clear Onyxia — the ground truth for the
- * self-improving timer — by tracking the RAID'S MEMBERS, not just the head count.
+ * self-improving timer, and the trigger for the "raid ended / about to clear" alerts — by
+ * tracking the RAID'S MEMBERS, not just the head count.
  *
  * What the /who count really does (measured 2026-08-31 on a live raid):
  *   - a raid holds a PLATEAU (~30) for long stretches,
@@ -8,16 +9,22 @@
  *     back (/who does NOT show them while dead / on the corpse run),
  *   - it CLEARS only when the members drop out and STAY out — nobody runs back.
  *
- * Tracking the roster (a set of names) is what lets us SYNC across a gap: a wipe is the
- * SAME members returning, so cohort-present recovers and the session continues; a real
- * clear is those members gone; and a different crowd arriving (a new raid, or ambient
- * traffic passing through the lair) does NOT keep the old raid "alive", because it isn't
- * the old roster. A departure is a clear only once cohort-present stays below strength for
- * `sustainedMs` (a wipe recovers well inside that). A blackout (our DC or a server outage)
- * discards the in-progress measurement rather than reading the mass drop as an instant clear.
+ * ARRIVAL COHORT (measured 2026-09-03): a raid assembles fast — median 2 min, p90 5 min — and
+ * the next raid is ~30+ min behind it. So a raid IS the players who showed up together around
+ * formation. On a busy server the lair never empties (one raid clears as the next forms), so an
+ * absorb-everyone roster merges consecutive raids into one endless session that never clears
+ * (measured: 2 clears detected in 14h of ~10). The fix: absorb a newcomer into the tracked raid
+ * ONLY if they FIRST appeared within `fillWindowMs` of formation (and the roster is under
+ * `rosterCap`). Someone arriving well after that is a different raid and is left for the NEXT
+ * formation — so the current raid's departure is detected even while the lair stays full.
  *
- * Deliberately conservative: most activity yields NO sample (still going, or discarded by a
- * blackout). What it yields is a real, completed clear, sized by the plateau peak.
+ * A player's first-seen resets after an absence longer than `stintGapMs` (longer than a corpse
+ * run, shorter than the gap between raids), so a wipe-returner keeps their place but someone who
+ * left and comes back for a later raid counts as a fresh arrival.
+ *
+ * A departure is a clear only once cohort-present stays below strength for `sustainedMs` (a wipe
+ * recovers well inside that). A blackout (our DC or a server outage) discards the in-progress
+ * measurement rather than reading the mass drop as an instant clear.
  */
 export interface ClearTrackerOptions {
   /** A raid is present once this many players are in the zone. */
@@ -27,6 +34,16 @@ export interface ClearTrackerOptions {
   readonly clearFloor?: number;
   /** Roster members must stay below `clearFloor` this long to confirm a clear (not a wipe). */
   readonly sustainedMs: number;
+  /** A newcomer joins the tracked raid only if they first appeared within this long of formation.
+   *  Measured raid assembly is median 2 min / p90 5 min. Default 5 min. */
+  readonly fillWindowMs?: number;
+  /** The tracked roster never grows past this — a backstop against absorbing a second raid.
+   *  Default 30 (about one raid's worth). */
+  readonly rosterCap?: number;
+  /** A player absent longer than this has their first-seen reset on return (so a returner for a
+   *  later raid is a fresh arrival, not a stale early one). Longer than a corpse run, shorter than
+   *  the gap between raids. Default max(8 min, 2× sustained). */
+  readonly stintGapMs?: number;
   /** Assigns the next monotonic raid number when a raid forms. Omit to leave raids unnumbered. */
   readonly nextNumber?: () => number;
 }
@@ -80,22 +97,35 @@ export interface ClearTrackerState {
   readonly belowSince: number | null;
 }
 
+const DEFAULT_FILL_WINDOW_MS = 5 * 60_000;
+const DEFAULT_ROSTER_CAP = 30;
+
 export class ClearTracker {
   readonly #formAt: number;
   readonly #clearFloor: number;
   readonly #sustainedMs: number;
+  readonly #fillWindowMs: number;
+  readonly #rosterCap: number;
+  readonly #stintGapMs: number;
   readonly #nextNumber?: () => number;
 
   #formedAt: number | null = null;
   #number: number | null = null;
-  #roster = new Set<string>(); // everyone seen as part of this raid (grows; survives flicker)
+  #roster = new Set<string>(); // this raid's members — the arrival cohort, capped, not everyone present
   #peak = 0;
   #belowSince: number | null = null; // when the roster's presence first fell below strength
+  // Lair-wide arrival tracking, used to decide who belongs to the current raid. Persists across
+  // raids (a clear resets the raid, not this); only a blackout clears it.
+  #firstSeen = new Map<string, number>();
+  #lastSeen = new Map<string, number>();
 
   constructor(options: ClearTrackerOptions) {
     this.#formAt = options.formAt;
     this.#clearFloor = options.clearFloor ?? options.formAt;
     this.#sustainedMs = options.sustainedMs;
+    this.#fillWindowMs = options.fillWindowMs ?? DEFAULT_FILL_WINDOW_MS;
+    this.#rosterCap = options.rosterCap ?? DEFAULT_ROSTER_CAP;
+    this.#stintGapMs = options.stintGapMs ?? Math.max(8 * 60_000, options.sustainedMs * 2);
     this.#nextNumber = options.nextNumber;
   }
 
@@ -179,19 +209,33 @@ export class ClearTracker {
     if (blackout) {
       // We went blind (our DC or a server outage) — anything across it is untrustworthy.
       this.#reset();
+      this.#firstSeen.clear();
+      this.#lastSeen.clear();
       return { clear: null, formed: null };
     }
+
+    this.#trackArrivals(names, now);
 
     if (this.#formedAt === null) {
       if (names.length >= this.#formAt) {
         this.#formedAt = now;
         this.#number = this.#nextNumber?.() ?? null;
-        this.#roster = new Set(names);
-        this.#peak = names.length;
+        this.#roster = new Set(names.slice(0, this.#rosterCap));
+        this.#peak = this.#roster.size;
         this.#belowSince = null;
         return { clear: null, formed: { number: this.#number, peak: this.#peak } };
       }
       return { clear: null, formed: null };
+    }
+
+    // Absorb NEWCOMERS into this raid only if they arrived within the fill window of formation
+    // (and the roster is under the cap). Someone who first appeared long after formation is a
+    // different raid — leaving them out is what lets this raid's departure register while the
+    // lair stays full of the next one.
+    const fillDeadline = this.#formedAt + this.#fillWindowMs;
+    for (const name of names) {
+      if (this.#roster.has(name) || this.#roster.size >= this.#rosterCap) continue;
+      if ((this.#firstSeen.get(name) ?? now) <= fillDeadline) this.#roster.add(name);
     }
 
     // How many of THIS raid's members are visible now (ambient/new arrivals don't count).
@@ -199,9 +243,7 @@ export class ClearTracker {
     for (const name of names) if (this.#roster.has(name)) cohort += 1;
 
     if (cohort >= this.#clearFloor) {
-      // Up, or recovered from a wipe (the same members are back). Absorb the current crowd
-      // as roster members (late joiners, and members /who has just re-acquired).
-      for (const name of names) this.#roster.add(name);
+      // Up, or recovered from a wipe (the same members are back).
       if (cohort > this.#peak) this.#peak = cohort;
       this.#belowSince = null;
       return { clear: null, formed: null };
@@ -222,6 +264,24 @@ export class ClearTracker {
       return { clear, formed: null };
     }
     return { clear: null, formed: null }; // still within the window — the roster could yet run back (a wipe)
+  }
+
+  /** Record when each present player was first seen (their arrival), resetting anyone who
+   *  returns after an absence longer than a stint gap, and pruning players long gone. */
+  #trackArrivals(names: readonly string[], now: number): void {
+    for (const name of names) {
+      const last = this.#lastSeen.get(name);
+      if (last === undefined || now - last > this.#stintGapMs) this.#firstSeen.set(name, now);
+      this.#lastSeen.set(name, now);
+    }
+    const present = new Set(names);
+    for (const [name, last] of this.#lastSeen) {
+      // Keep current roster members regardless (a hard wipe can hide them); drop long-gone others.
+      if (!present.has(name) && now - last > this.#stintGapMs && !this.#roster.has(name)) {
+        this.#lastSeen.delete(name);
+        this.#firstSeen.delete(name);
+      }
+    }
   }
 
   #reset(): void {

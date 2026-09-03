@@ -78,6 +78,12 @@ export interface BotConfig {
   /** Lead time for the "about to clear" heads-up: it fires once a raid still in the lair has been
    *  in to within this much of its predicted clear time, so a fresh Rallying Cry should drop soon. */
   readonly raidEndingLeadMs: number;
+  /** Arrival-cohort separation: a newcomer joins the tracked raid only if they first appeared
+   *  within this long of formation (measured raid assembly is ~2-5 min), so the next raid isn't
+   *  absorbed into the current one on a continuously-occupied lair. */
+  readonly raidFillWindowMs: number;
+  /** The tracked roster never grows past this — a backstop against absorbing a second raid. */
+  readonly raidRosterCap: number;
   /** Floor on a plausible clear: shorter form→clear samples are churn, not a real raid,
    *  and are dropped so they can't poison the learned median downward. */
   readonly raidMinClearMs: number;
@@ -279,6 +285,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidDurationEstimateMs = intWithDefault("WOW_RAID_DURATION_MINUTES", 45, 1) * 60_000;
   const raidLearnMinSamples = intWithDefault("WOW_RAID_LEARN_MIN_SAMPLES", 15, 1);
   const raidEndingLeadMs = intWithDefault("WOW_RAID_ENDING_LEAD_MINUTES", 10, 1) * 60_000;
+  const raidFillWindowMs = intWithDefault("WOW_RAID_FILL_WINDOW_MINUTES", 5, 1) * 60_000;
+  const raidRosterCap = intWithDefault("WOW_RAID_ROSTER_CAP", 30, 1);
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
   const raidDisbandMs = intWithDefault("WOW_RAID_DISBAND_MINUTES", 20, 1) * 60_000;
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
@@ -383,6 +391,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidDurationEstimateMs,
     raidLearnMinSamples,
     raidEndingLeadMs,
+    raidFillWindowMs,
+    raidRosterCap,
     raidMinClearMs,
     raidDisbandMs,
     raidClearSustainedMs,

@@ -1261,6 +1261,8 @@ async function main(): Promise<void> {
     strengthSize: config.raidStrengthSize,
     leftFloor: config.raidLeftFloor,
     clearSustainedMs: config.raidClearSustainedMs,
+    fillWindowMs: config.raidFillWindowMs,
+    rosterCap: config.raidRosterCap,
     nextRaidNumber,
   };
   const lanes: DetectionLane[] =

@@ -30,6 +30,11 @@ export interface RaidWatchOptions {
   readonly leftFloor?: number;
   /** How long the roster must stay gone for a departure to count as a real clear (not a wipe). */
   readonly clearSustainedMs: number;
+  /** A newcomer joins the tracked raid only if they first appeared within this long of formation
+   *  (arrival-cohort separation). Defaults to the ClearTracker default (5 min). */
+  readonly fillWindowMs?: number;
+  /** The tracked roster never grows past this — a backstop against absorbing a second raid. */
+  readonly rosterCap?: number;
   /** Assigns the next raid reference number when a raid forms. Omit to leave raids unnumbered. */
   readonly nextRaidNumber?: () => number;
 }
@@ -59,6 +64,8 @@ export class RaidWatch {
       formAt: options.strengthSize ?? options.minRaidSize,
       clearFloor: options.leftFloor ?? options.minRaidSize,
       sustainedMs: options.clearSustainedMs,
+      fillWindowMs: options.fillWindowMs,
+      rosterCap: options.rosterCap,
       nextNumber: options.nextRaidNumber,
     });
   }
