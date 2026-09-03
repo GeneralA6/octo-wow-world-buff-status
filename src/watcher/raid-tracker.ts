@@ -65,7 +65,9 @@ export type RaidEvent =
   | {
       readonly kind: "raid-left";
       readonly cohort: RaidCohortSnapshot;
-      /** How long the raid lasted (form → clear), when known — for duration learning. */
+      /** The raid's reference number, when the clear carries one (via `clearedRaidEvent`). */
+      readonly number?: number | null;
+      /** How long the raid lasted (form → clear), when known — for the recap and duration learning. */
       readonly durationMs?: number;
       /** The clear was proven by a Chronicle Onyxia kill (not just inferred from the /who
        *  departure), so the alert can say so. */
@@ -79,13 +81,24 @@ export interface ActiveRaid {
 }
 
 /**
- * A synthetic "raid-left" event for a clear confirmed by the ClearTracker, so the
- * park-now alert runs through the same buff-gate + dedup + announce path as a detector
- * event. The ClearTracker is lair-granular and boss-blind, so the label is generic — and
- * the cleared alert's wording uses only the peak and the cities anyway, never the label.
+ * A synthetic "raid-left" event for a clear confirmed by the ClearTracker, so the cleared
+ * alert runs through the same dedup + announce path as a detector event. The ClearTracker is
+ * lair-granular and boss-blind, so the label is generic — the alert's wording uses only the
+ * number, duration and cities, never the label. `number` and `durationMs` feed the recap.
  */
-export function clearedRaidEvent(peak: number, killConfirmed = false): RaidEvent {
-  return { kind: "raid-left", cohort: { key: LAIR_KEY, label: "a raid", count: 0, peak, members: [] }, killConfirmed };
+export function clearedRaidEvent(
+  peak: number,
+  killConfirmed = false,
+  number: number | null = null,
+  durationMs?: number,
+): RaidEvent {
+  return {
+    kind: "raid-left",
+    cohort: { key: LAIR_KEY, label: "a raid", count: 0, peak, members: [] },
+    number,
+    durationMs,
+    killConfirmed,
+  };
 }
 
 /**

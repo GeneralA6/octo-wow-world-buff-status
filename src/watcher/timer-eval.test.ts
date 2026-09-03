@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { evaluateTimer, improvedEstimate } from "./timer-eval.js";
+import { evaluateTimer, improvedEstimate, typicalClearText } from "./timer-eval.js";
 
 const M = 60_000; // one minute in ms
+
+describe("typicalClearText", () => {
+  it("shows the middle-half range (p25-p75), rounded to 5m, once enough clears exist", () => {
+    const samples = [20.1, 23.5, 24.2, 27.7, 31.7, 33.6, 37.1, 38.5, 39.9, 46.9, 47, 48.2, 65.3, 71.5].map((m) => m * M);
+    expect(typicalClearText(samples, 45 * M)).toBe("30-45m"); // p25 28.7->30, p75 47->45
+  });
+
+  it("falls back to the config estimate as a single ~Nm below the sample floor", () => {
+    expect(typicalClearText([38 * M, 40 * M], 45 * M)).toBe("~45m");
+  });
+
+  it("never returns a zero-width range", () => {
+    const flat = [30 * M, 30 * M, 30 * M, 30 * M, 30 * M, 30 * M];
+    expect(typicalClearText(flat, 45 * M)).toBe("30-35m");
+  });
+});
 
 describe("evaluateTimer", () => {
   it("reports no estimate and nothing scored below the sample floor", () => {

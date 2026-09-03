@@ -42,6 +42,32 @@ function mean(values: readonly number[]): number {
   return values.reduce((sum, v) => sum + v, 0) / values.length;
 }
 
+/** Below this many clears there is no distribution worth quoting, so the reader-facing "how long
+ *  does a raid take" falls back to the single config estimate rather than an invented range. */
+const MIN_SAMPLES_FOR_RANGE = 6;
+
+/**
+ * A reader-facing "how long a raid usually takes" string for the alerts, honest about the wide
+ * spread: the middle half of observed clears (25th–75th percentile) rounded to the nearest 5
+ * minutes, e.g. "30-50m". Below MIN_SAMPLES_FOR_RANGE clears there is no distribution to quote,
+ * so it shows the config estimate as a single "~Nm". ASCII hyphen so it renders in-game too.
+ */
+export function typicalClearText(samplesMs: readonly number[], estimateMs: number): string {
+  const toMin = (ms: number): number => Math.round(ms / 60_000);
+  const round5 = (min: number): number => Math.round(min / 5) * 5;
+  if (samplesMs.length < MIN_SAMPLES_FOR_RANGE) return `~${toMin(estimateMs)}m`;
+  const sorted = [...samplesMs].sort((a, b) => a - b);
+  const at = (q: number): number => {
+    const i = (sorted.length - 1) * q;
+    const lo = Math.floor(i);
+    const hi = Math.ceil(i);
+    return lo === hi ? sorted[lo]! : sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (i - lo);
+  };
+  const low = round5(toMin(at(0.25)));
+  const high = Math.max(low + 5, round5(toMin(at(0.75))));
+  return `${low}-${high}m`;
+}
+
 /** The value at the given quantile (0..1) of the sorted absolute errors. */
 function percentile(values: readonly number[], q: number): number {
   const sorted = [...values].sort((a, b) => a - b);

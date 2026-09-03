@@ -19,7 +19,6 @@ import {
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
-  formatRaidFinished,
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
 import { groupByRelevantCities } from "./notify/faction-routing.js";
@@ -45,7 +44,7 @@ import {
   type DurationStore,
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
-import { evaluateTimer, improvedEstimate } from "./watcher/timer-eval.js";
+import { evaluateTimer, improvedEstimate, typicalClearText } from "./watcher/timer-eval.js";
 import { isCommandError, isWhisperThrottle } from "./chat/system-error.js";
 import { HttpChronicleClient, type ChronicleClient } from "./chronicle/client.js";
 import { cleanOnyxiaKills } from "./chronicle/parse.js";
@@ -330,13 +329,16 @@ async function runConnection(
     // city), yell in each open capital, and whisper in-game subscribers of that side. The
     // caller already deduped `cities` against the ledger, so this fires at most once per cycle.
     const announceBuff = async (event: RaidEvent, cities: readonly Faction[]): Promise<void> => {
-      const message = formatBuffAlert(event, cities, config.watchAreaName);
+      // The "raid starting" alert quotes how long a raid usually takes, so a reader can judge
+      // whether to park now; the "raid ended" alert already carries its own duration.
+      const typical = event.kind === "raid-forming" ? await typicalClear() : undefined;
+      const message = formatBuffAlert(event, cities, typical);
       logger.info(`ALERT ${event.kind} (${cities.join("/")}): ${message.body}`);
       await push(message, cities);
       if (!config.whispersEnabled) return;
 
       // Yell in each open capital via its listener, so everyone standing there hears it.
-      for (const city of cities) yellSink[city]?.(formatBuffWhisper(event, [city], config.watchAreaName));
+      for (const city of cities) yellSink[city]?.(formatBuffWhisper(event, [city], typical));
 
       // Whisper the in-game subscribers, each hearing only their side.
       let subscribers: Subscriber[] = [];
@@ -348,7 +350,7 @@ async function runConnection(
       }
       if (subscribers.length === 0) return;
       for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, cities)) {
-        const line = formatBuffWhisper(event, groupCities, config.watchAreaName);
+        const line = formatBuffWhisper(event, groupCities, typical);
         // Tag with the cities this park-now is about, so a buff dropping there purges it as stale.
         broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities);
       }
@@ -398,16 +400,25 @@ async function runConnection(
       return improvedEstimate(series.map((d) => d.ms), config.raidLearnMinSamples) ?? config.raidDurationEstimateMs;
     };
 
+    // The reader-facing "how long a raid usually takes" range ("30-50m", or "~45m" before enough
+    // data) for the alerts, so a reader can judge whether to park now or come back.
+    const typicalClear = async (): Promise<string> => {
+      const series = await durationStore.recent(TIMER_EVAL_WINDOW).catch(() => []);
+      return typicalClearText(series.map((d) => d.ms), config.raidDurationEstimateMs);
+    };
+
     // Every ~10 min, yell a buff-status board in each capital: the raid in the lair (with a
     // "park" nudge — every clear can drop a fresh buff) or, when empty, how a drop happens, plus
     // a subscribe/discord CTA. Reaches everyone standing in the city, not just subscribers.
     const yellCapitalStatus = async (): Promise<void> => {
       if (!config.whispersEnabled) return;
       const now = Date.now();
+      const typical = await typicalClear();
       for (const faction of FACTIONS) {
         const yell = yellSink[faction];
         if (!yell) continue; // no listener parked in this capital right now
-        yell(formatCapitalStatusYell(faction, raidStateFor(faction, now)));
+        const raid = raidStateFor(faction, now);
+        yell(formatCapitalStatusYell(faction, raid, raid ? typical : undefined));
       }
     };
 
@@ -486,17 +497,18 @@ async function runConnection(
           if (shouldBroadcast(last, lastBuffDropAt, now, config.broadcastDedupMs)) fresh.push(city);
         }
         if (fresh.length === 0) return;
-        const message = formatRaidEnding(raidNumber, fresh, elapsedMs, config.watchAreaName);
+        const typical = await typicalClear();
+        const message = formatRaidEnding(raidNumber, fresh, elapsedMs, typical);
         logger.info(`ALERT raid-ending (${fresh.join("/")}): ${message.body}`);
         await push(message, fresh);
         if (config.whispersEnabled) {
           for (const city of fresh) {
-            yellSink[city]?.(formatRaidEndingWhisper(raidNumber, [city], elapsedMs, config.watchAreaName));
+            yellSink[city]?.(formatRaidEndingWhisper(raidNumber, [city], elapsedMs, typical));
           }
           try {
             const subscribers = await store.all();
             for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, fresh)) {
-              const line = formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, config.watchAreaName);
+              const line = formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, typical);
               broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities);
             }
           } catch (error) {
@@ -552,13 +564,13 @@ async function runConnection(
           if (!shouldBroadcast(forming, buffDropAt, now, config.broadcastDedupMs)) notified.push(city);
         }
         if (notified.length === 0) return; // forming never alerted this cycle — nobody was told to park
-        const line = formatRaidDisbandedWhisper(clear.number, notified, config.watchAreaName);
+        const line = formatRaidDisbandedWhisper(clear.number, notified, clear.durationMs);
         for (const city of notified) {
           whisperPool.dropForFaction(city);
           whisperQueue?.dropForFaction(city);
           yellSink[city]?.(line);
         }
-        void push(formatRaidDisbanded(clear.number, notified, config.watchAreaName), notified);
+        void push(formatRaidDisbanded(clear.number, notified, clear.durationMs), notified);
         if (config.whispersEnabled) {
           try {
             const subs = (await store.all()).filter((s) => notified.some((c) => s.factions.includes(c)));
@@ -587,10 +599,10 @@ async function runConnection(
           await handleDisband(clear);
           return;
         }
-        // The park-now alert (deduped per cycle) and the recap: a clear can always produce a
-        // fresh Rallying Cry, so the recap's hint is unconditional.
-        await gateAndAnnounce(clearedRaidEvent(clear.peak, killConfirmed));
-        void push(formatRaidFinished(clear.number, ms, config.watchAreaName));
+        // One "Onyxia raid has ended" alert per cycle (deduped) — it carries the recap (number +
+        // duration) AND the park CTA in a single post; a clear can always produce a fresh buff, so
+        // it hedges with "may". The number and duration ride the event into the message.
+        await gateAndAnnounce(clearedRaidEvent(clear.peak, killConfirmed, clear.number, ms));
         void (async () => {
           await durationStore.record({ ms, ts: new Date(now) });
           const [learned, samples] = await Promise.all([

@@ -14,47 +14,11 @@ export function humanClock(ms: number): string {
   return rem === 0 ? `${h}h` : `${h}h${rem}m`;
 }
 
-/** A raid the ClearTracker confirmed as really finished — informational recap with the
- *  reference number and how long it took (spanning any wipes). Discord channel post.
- *  Every clear can produce a fresh Rallying Cry (no re-drop lockout on this server), so
- *  the hint is unconditional. */
-export function formatRaidFinished(
-  raidNumber: number | null,
-  durationMs: number,
-  areaName: string,
-): NotifyMessage {
-  const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
-  return {
-    kind: "info",
-    title: `🏁 ${id} cleared ${areaName}`,
-    body: `${id} cleared ${areaName} after ~${humanClock(durationMs)}. A Rallying Cry may drop soon once the head is turned in.`,
-  };
-}
-
-/** A raid that formed and got a "get ready to park" alert, but left too soon to have cleared
- *  Onyxia — a disband, not a kill. Retracts the park heads-up so nobody waits for a buff that
- *  isn't coming. Only sent for the cities that were told to park. Discord channel post. */
-export function formatRaidDisbanded(
-  raidNumber: number | null,
-  cities: readonly Faction[],
-  areaName: string,
-): NotifyMessage {
-  const id = raidNumber !== null ? `Raid #${raidNumber}` : "The raid";
-  return {
-    kind: "info",
-    title: `🚫 ${id} disbanded`,
-    body: `${id} left ${areaName} without clearing it - no Rallying Cry coming from that one. You can stop parking in ${cityList(cities)}.`,
-  };
-}
-
-/** The terse in-game whisper twin of the disband stand-down. */
-export function formatRaidDisbandedWhisper(
-  raidNumber: number | null,
-  cities: readonly Faction[],
-  areaName: string,
-): string {
-  const id = raidNumber !== null ? `Raid #${raidNumber}` : "The raid";
-  return `${id} left ${areaName} without clearing - no buff coming, you can stop parking in ${cityList(cities)}.`;
+/** Human list of the capitals a fresh buff could drop in ("Stormwind or Orgrimmar"). */
+function cityList(cities: readonly Faction[]): string {
+  const names = cities.map((faction) => CITY_FOR[faction]);
+  if (names.length >= 2) return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
+  return names[0] ?? "a capital";
 }
 
 /** The tips line — identical on the channel post and the in-game whisper, so a reader sees
@@ -64,31 +28,131 @@ function tipsLine(author: string): string {
 }
 
 /**
- * A buff just dropped (a listener heard the turn-in yell). Says which city it's up in, with a
- * live relative timestamp of the drop itself (`<t:unix:R>` renders in each viewer's timezone).
- * No "good for 2h" / cooldown line — we track drops, not the buff on players, and a fresh one
- * can drop again on the next clear.
+ * A raid reached strength — the buff is ~a clear-time away. `typicalClear` is the reader-facing
+ * "usually 30-50m" range (or "~45m" before enough data), so a reader can judge whether to park
+ * now or come back. Discord channel post; pings the open sides' roles via the `push` factions arg.
  */
-export function formatBuffDropped(faction: Faction, appliedAt: Date, author: string): NotifyMessage {
-  const droppedUnix = Math.floor(appliedAt.getTime() / 1000);
+export function formatBuffAlert(
+  event: RaidEvent,
+  cities: readonly Faction[],
+  typicalClear?: string,
+): NotifyMessage {
+  const where = cityList(cities);
+  if (event.kind === "raid-forming") {
+    const id = event.number != null ? `Raid #${event.number}` : "A raid";
+    const clear = typicalClear ? `, usually ${typicalClear} to clear` : "";
+    return {
+      kind: "entered",
+      title: "🐲 Onyxia raid starting",
+      body: `${id} formed${clear}. Park in ${where} for the Rallying Cry buff.`,
+    };
+  }
+  // A confirmed clear (Chronicle Onyxia kill) vs an inferred one (roster departure). Both merge the
+  // recap (number + duration) with the park CTA into ONE post — a clear can drop a buff any time,
+  // so we still hedge with "may" unless the kill is confirmed.
+  const id = event.number != null ? `Raid #${event.number}` : "A raid";
+  const after = event.durationMs != null ? ` after ~${humanClock(event.durationMs)}` : "";
+  const body =
+    event.killConfirmed === true
+      ? `${id} cleared${after} - Onyxia down, kill confirmed. Buff should drop in ${where} - park now.`
+      : `${id} cleared${after}. Buff may drop in ${where} - park now.`;
+  return { kind: "left", title: "🏁 Onyxia raid has ended", body };
+}
+
+/** A single terse in-game whisper line for a raid-start / raid-ended park alert. */
+export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], typicalClear?: string): string {
+  const where = cityList(cities);
+  if (event.kind === "raid-left") {
+    return event.killConfirmed === true
+      ? `Onyxia raid cleared - Onyxia down, kill confirmed. Buff should drop in ${where} - park now.`
+      : `Onyxia raid cleared. Buff may drop in ${where} - park now.`;
+  }
+  const id = event.number != null ? `Raid #${event.number}` : "a raid";
+  const clear = typicalClear ? `, usually ${typicalClear} to clear` : "";
+  return `Onyxia raid starting (${id}${clear}). Park in ${where} for the Rallying Cry buff.`;
+}
+
+/**
+ * The "about to clear" heads-up: a raid still in the lair has been in about as long as raids
+ * usually take to clear, so a fresh Rallying Cry should drop soon when they finish — the pre-clear
+ * "park NOW" moment, earlier than the reactive "ended" alert. `typicalClear` gives the reader the
+ * spread so they can judge; the timing stays soft because clear times vary widely.
+ */
+export function formatRaidEnding(
+  raidNumber: number | null,
+  cities: readonly Faction[],
+  elapsedMs: number,
+  typicalClear?: string,
+): NotifyMessage {
+  const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
+  const typical = typicalClear ? ` (typical clear ${typicalClear})` : "";
   return {
-    kind: "info",
-    title: `🎉 Rallying Cry just dropped in ${CITY_FOR[faction]}`,
-    body:
-      `The Rallying Cry of the Dragonslayer is up in ${CITY_FOR[faction]} (dropped <t:${droppedUnix}:R>). ` +
-      tipsLine(author),
+    kind: "entered",
+    title: "⏰ Onyxia raid might end soon",
+    body: `${id} has been in ~${humanClock(elapsedMs)}${typical}. Buff may drop soon - park in ${cityList(cities)} now.`,
   };
 }
 
-/** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell
- *  fires. No cooldown claim — I'll alert them again when the next one's on the way. */
-export function formatBuffDroppedWhisper(faction: Faction, author: string): string {
+/** The terse in-game whisper twin of the about-to-clear heads-up. */
+export function formatRaidEndingWhisper(
+  raidNumber: number | null,
+  cities: readonly Faction[],
+  elapsedMs: number,
+  typicalClear?: string,
+): string {
+  const num = raidNumber !== null ? `#${raidNumber} ` : "";
+  const typical = typicalClear ? `, typical ${typicalClear}` : "";
+  return `Onyxia raid ${num}might end soon (~${humanClock(elapsedMs)} in${typical}). Park in ${cityList(cities)} now for the buff.`;
+}
+
+/**
+ * A raid that formed and got a "get ready to park" alert, but left too soon to have cleared
+ * Onyxia — a disband, not a kill. Retracts the park heads-up so nobody waits for a buff that
+ * isn't coming; `durationMs` shows how short it was. Only sent for the cities told to park.
+ */
+export function formatRaidDisbanded(
+  raidNumber: number | null,
+  cities: readonly Faction[],
+  durationMs?: number,
+): NotifyMessage {
+  const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
+  const after = durationMs != null ? ` after ~${humanClock(durationMs)}` : "";
+  return {
+    kind: "info",
+    title: "🚫 Onyxia raid disbanded",
+    body: `${id} left${after} without clearing. No buff coming. Stop parking in ${cityList(cities)}.`,
+  };
+}
+
+/** The terse in-game whisper twin of the disband stand-down. */
+export function formatRaidDisbandedWhisper(
+  raidNumber: number | null,
+  cities: readonly Faction[],
+  durationMs?: number,
+): string {
+  const num = raidNumber !== null ? `#${raidNumber} ` : "";
+  const after = durationMs != null ? ` (left after ~${humanClock(durationMs)})` : "";
+  return `Onyxia raid ${num}disbanded${after}. No buff coming. Stop parking in ${cityList(cities)}.`;
+}
+
+/**
+ * A buff just dropped (a listener heard the turn-in yell). Names the buff in full and the city,
+ * with a live relative timestamp of the drop itself (`<t:unix:R>` renders in each viewer's
+ * timezone). No cooldown/duration line — we track drops, not the buff on players.
+ */
+export function formatBuffDropped(faction: Faction, appliedAt: Date, author: string): NotifyMessage {
+  const droppedUnix = Math.floor(appliedAt.getTime() / 1000);
   const city = CITY_FOR[faction];
-  return (
-    `The Rallying Cry of the Dragonslayer just dropped in ${city}! ` +
-    `I'll alert you when the next one's on the way. ` +
-    tipsLine(author)
-  );
+  return {
+    kind: "info",
+    title: `🎉 Onyxia buff dropped in ${city}`,
+    body: `The Rallying Cry of the Dragonslayer is up in ${city} (dropped <t:${droppedUnix}:R>). ${tipsLine(author)}`,
+  };
+}
+
+/** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell fires. */
+export function formatBuffDroppedWhisper(faction: Faction, author: string): string {
+  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}! ${tipsLine(author)}`;
 }
 
 /** Guild-chat (/g) line welcoming a member who just accepted an invite. Everyone reading it is
@@ -111,110 +175,25 @@ export interface CapitalStatusRaid {
 }
 
 /**
- * The periodic status board yelled in a capital. Leads by NAMING the buff, so a passer-by who
- * wasn't following knows what these alerts are for; then the raid in the lair (# and time in)
- * with a "park" nudge — every clear can drop a fresh Rallying Cry, so a raid present always
- * means one may be coming — or, when the lair is empty, how a drop happens; and always a
- * subscribe/discord CTA. No cooldown clock: we track drops, not the buff on players.
+ * The periodic status board yelled in a capital: the raid in the lair (# and time in, with the
+ * typical clear range so a passer-by can judge) and a park nudge — every clear can drop a fresh
+ * buff — or, when empty, how a drop happens; and always a subscribe/discord CTA.
  */
-export function formatCapitalStatusYell(faction: Faction, raid: CapitalStatusRaid | null): string {
-  // Lead: name the buff up front - the message is otherwise vague about what it's alerting on.
-  const parts: string[] = [`Rallying Cry world buff:`];
+export function formatCapitalStatusYell(
+  faction: Faction,
+  raid: CapitalStatusRaid | null,
+  typicalClear?: string,
+): string {
+  const parts: string[] = [];
   if (raid) {
-    const id = raid.number !== null ? `raid #${raid.number}, ` : "";
-    parts.push(`A raid's in the lair (${id}in for ~${humanClock(raid.elapsedMs)}) - one may drop when they clear, park here!`);
+    const id = raid.number !== null ? `#${raid.number}, ` : "";
+    const typical = typicalClear ? `, typical clear ${typicalClear}` : "";
+    parts.push(
+      `Onyxia raid in progress (${id}~${humanClock(raid.elapsedMs)} in${typical}). The Rallying Cry buff may drop soon - park here.`,
+    );
   } else {
-    parts.push(`a fresh one drops when a raid clears Onyxia. No raid in the lair right now.`);
+    parts.push(`No Onyxia raid right now. The Rallying Cry buff drops when a raid clears.`);
   }
   parts.push(`Whisper "subscribe" for pings, "discord" for discord notifications.`);
   return `[Onyxia] ${parts.join(" ")}`;
-}
-
-/** Human list of the capitals where a fresh buff is possible ("Stormwind or Orgrimmar"). */
-function cityList(cities: readonly Faction[]): string {
-  const names = cities.map((faction) => CITY_FOR[faction]);
-  if (names.length >= 2) return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
-  return names[0] ?? "a capital";
-}
-
-/**
- * A buff-parking alert: a raid could soon produce a fresh Rallying Cry, so head to a
- * capital where the buff can actually drop. `cities` are the capitals whose buff has
- * (or will have, by the time the raid clears) expired — the ones worth parking in.
- * Only produced once the gate has decided a fresh buff is possible somewhere.
- */
-export function formatBuffAlert(event: RaidEvent, cities: readonly Faction[], areaName: string): NotifyMessage {
-  const where = cityList(cities);
-  if (event.kind === "raid-forming") {
-    // Fires when the raid reaches strength and gets its number (via formedRaidEvent), so it can
-    // name the raid the same #N its clear will — not the raw member count, which meant nothing.
-    const id = event.number != null ? `Raid #${event.number}` : "A raid";
-    return {
-      kind: "entered",
-      title: "🐉 Rallying Cry may be coming",
-      body:
-        `${id} has formed in ${areaName}. ` +
-        `A Rallying Cry buff may drop in ${where} when they clear it and turn in the head - ` +
-        `get ready to park.`,
-    };
-  }
-  // A Chronicle Onyxia kill confirmed the clear (not just inferred from the /who departure), so
-  // the buff is genuinely coming — say so, and drop the "may".
-  const confirmed = event.killConfirmed === true;
-  return {
-    kind: "left",
-    title: confirmed ? "🏆 Rallying Cry incoming - Onyxia down" : "⏳ Rallying Cry may drop soon",
-    body: confirmed
-      ? `A raid just downed Onyxia in ${areaName} (peaked ${event.cohort.peak}) - kill confirmed. ` +
-        `Park in ${where} now to catch the Rallying Cry when the head is turned in.`
-      : `A raid just cleared ${areaName} (peaked ${event.cohort.peak}). ` +
-        `Park in ${where} now to catch the Rallying Cry when the head is turned in.`,
-  };
-}
-
-/** A single terse in-game whisper line for a buff-parking alert. */
-export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], areaName: string): string {
-  const where = cityList(cities);
-  if (event.kind === "raid-left") {
-    return event.killConfirmed === true
-      ? `A raid just downed Onyxia in ${areaName} (kill confirmed) - park in ${where} for the Rallying Cry buff.`
-      : `A raid just cleared ${areaName} - park in ${where} for a possible Rallying Cry buff.`;
-  }
-  const id = event.number != null ? `Raid #${event.number}` : "A raid";
-  return `${id} has formed in ${areaName} - get ready to park in ${where} for the buff.`;
-}
-
-/**
- * The "about to clear" heads-up: a raid still in the lair has been in about as long as raids
- * usually take to clear, so a fresh Rallying Cry should drop soon when they finish. The pre-clear
- * "park NOW" moment — earlier than the reactive "cleared" alert. Fired once per cycle. Discord
- * channel post. Timing is soft ("about to clear", not a precise ETA) because clear times vary
- * widely, so a promised minute count would often be wrong.
- */
-export function formatRaidEnding(
-  raidNumber: number | null,
-  cities: readonly Faction[],
-  elapsedMs: number,
-  areaName: string,
-): NotifyMessage {
-  const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
-  const where = cityList(cities);
-  return {
-    kind: "entered",
-    title: `⏰ ${id} about to clear ${areaName}`,
-    body:
-      `${id} has been in ${areaName} ~${humanClock(elapsedMs)} - about how long raids take to clear. ` +
-      `A fresh Rallying Cry should drop in ${where} soon; park now to catch it.`,
-  };
-}
-
-/** The terse in-game whisper twin of the about-to-clear heads-up. */
-export function formatRaidEndingWhisper(
-  raidNumber: number | null,
-  cities: readonly Faction[],
-  elapsedMs: number,
-  areaName: string,
-): string {
-  const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
-  return `${id} is ~${humanClock(elapsedMs)} into ${areaName} and about to clear - park in ${cityList(cities)} now, the Rallying Cry should drop soon.`;
 }

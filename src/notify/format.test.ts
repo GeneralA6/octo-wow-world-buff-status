@@ -12,117 +12,138 @@ import {
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
-  formatRaidFinished,
   humanClock,
 } from "./format.js";
 
-const AREA = "Onyxia's Lair";
+const M = 60_000;
 
 function cohort(over: Partial<RaidCohortSnapshot> = {}): RaidCohortSnapshot {
   return { key: "Nightfall", label: "<Nightfall>", count: 16, peak: 16, members: [], ...over };
 }
 
-describe("formatBuffAlert", () => {
-  it("names the single open capital for a formed raid", () => {
-    const message = formatBuffAlert({ kind: "raid-forming", initial: false, cohort: cohort() }, ["alliance"], AREA);
-    expect(message.body).toContain("Stormwind");
-    expect(message.body).not.toContain("Orgrimmar");
-    expect(message.body).toContain("park");
-    expect(message.body).toContain("has formed");
+describe("formatBuffAlert — raid starting", () => {
+  it("titles 'Onyxia raid starting', names the raid #, the open capital, and quotes the typical clear", () => {
+    const msg = formatBuffAlert({ kind: "raid-forming", initial: false, cohort: cohort(), number: 28 }, ["alliance"], "30-50m");
+    expect(msg.title).toBe("🐲 Onyxia raid starting");
+    expect(msg.body).toBe("Raid #28 formed, usually 30-50m to clear. Park in Stormwind for the Rallying Cry buff.");
+    expect(msg.body).not.toContain("Orgrimmar");
   });
 
-  it("names the raid by its number when the formation carries one", () => {
-    const message = formatBuffAlert(
-      { kind: "raid-forming", initial: false, cohort: cohort(), number: 28 },
-      ["alliance"],
-      AREA,
-    );
-    expect(message.body).toContain("Raid #28 has formed");
-    expect(message.body).not.toMatch(/\(\d+\)/); // no bare member-count in parens
+  it("omits the clear-time clause when no estimate is available", () => {
+    const msg = formatBuffAlert({ kind: "raid-forming", initial: false, cohort: cohort(), number: 28 }, ["alliance"]);
+    expect(msg.body).toBe("Raid #28 formed. Park in Stormwind for the Rallying Cry buff.");
   });
 
-  it("names both capitals when a fresh buff is possible in either", () => {
-    const message = formatBuffAlert(
-      { kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) },
+  it("falls back to 'A raid' when the formation carries no number, no bare member count", () => {
+    const msg = formatBuffAlert({ kind: "raid-forming", initial: false, cohort: cohort() }, ["alliance", "horde"]);
+    expect(msg.body).toContain("A raid formed");
+    expect(msg.body).toContain("Stormwind or Orgrimmar");
+    expect(msg.body).not.toMatch(/\(\d+\)/);
+  });
+});
+
+describe("formatBuffAlert — raid has ended (merged recap + park CTA)", () => {
+  it("titles 'Onyxia raid has ended', carries the # + duration and a hedged park CTA", () => {
+    const msg = formatBuffAlert(
+      { kind: "raid-left", cohort: cohort({ count: 0 }), number: 28, durationMs: 47 * M },
       ["alliance", "horde"],
-      AREA,
     );
-    expect(message.body).toContain("Stormwind or Orgrimmar");
-    expect(message.body).toContain("25");
+    expect(msg.title).toBe("🏁 Onyxia raid has ended");
+    expect(msg.body).toBe("Raid #28 cleared after ~47m. Buff may drop in Stormwind or Orgrimmar - park now.");
   });
 
-  it("a plain (inferred) clear hedges with 'may' and does NOT claim a kill", () => {
-    const message = formatBuffAlert({ kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) }, ["horde"], AREA);
-    expect(message.title).toContain("may drop");
-    expect(message.body).not.toMatch(/kill confirmed|downed Onyxia/i);
-  });
-
-  it("a Chronicle-confirmed clear says the Onyxia kill is confirmed and drops the hedge", () => {
-    const message = formatBuffAlert(
-      { kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }), killConfirmed: true },
+  it("a Chronicle-confirmed clear says Onyxia is down and drops the 'may' hedge", () => {
+    const msg = formatBuffAlert(
+      { kind: "raid-left", cohort: cohort({ count: 0 }), number: 28, durationMs: 47 * M, killConfirmed: true },
       ["horde"],
-      AREA,
     );
-    expect(message.title).not.toMatch(/may/i);
-    expect(message.body).toContain("kill confirmed");
-    expect(message.body).toContain("Onyxia");
-    expect(message.body).toContain("Orgrimmar");
+    expect(msg.body).toContain("Onyxia down, kill confirmed");
+    expect(msg.body).toContain("Buff should drop in Orgrimmar");
+    expect(msg.body).not.toMatch(/\bmay\b/);
+  });
+});
+
+describe("formatBuffWhisper", () => {
+  it("starting: names the raid, typical clear, and the open capital", () => {
+    const line = formatBuffWhisper({ kind: "raid-forming", initial: false, cohort: cohort(), number: 28 }, ["horde"], "30-50m");
+    expect(line).toBe("Onyxia raid starting (Raid #28, usually 30-50m to clear). Park in Orgrimmar for the Rallying Cry buff.");
   });
 
-  it("the whisper mirrors it: confirmed says the kill, plain says 'possible'", () => {
-    const plain = formatBuffWhisper({ kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }) }, ["horde"], AREA);
-    const confirmed = formatBuffWhisper(
-      { kind: "raid-left", cohort: cohort({ count: 0, peak: 25 }), killConfirmed: true },
-      ["horde"],
-      AREA,
-    );
-    expect(plain).toContain("possible Rallying Cry");
+  it("ended: plain hedges with 'may', confirmed says the kill", () => {
+    const plain = formatBuffWhisper({ kind: "raid-left", cohort: cohort({ count: 0 }) }, ["alliance", "horde"]);
+    const confirmed = formatBuffWhisper({ kind: "raid-left", cohort: cohort({ count: 0 }), killConfirmed: true }, ["horde"]);
+    expect(plain).toBe("Onyxia raid cleared. Buff may drop in Stormwind or Orgrimmar - park now.");
     expect(confirmed).toContain("kill confirmed");
-    expect(confirmed).not.toContain("possible");
+    expect(confirmed).not.toMatch(/\bmay\b/);
+  });
+});
+
+describe("formatRaidEnding — might end soon", () => {
+  it("titles 'might end soon', shows time-in, the typical range, and a park CTA", () => {
+    const msg = formatRaidEnding(28, ["alliance"], 28 * M, "30-50m");
+    expect(msg.title).toBe("⏰ Onyxia raid might end soon");
+    expect(msg.body).toBe("Raid #28 has been in ~28m (typical clear 30-50m). Buff may drop soon - park in Stormwind now.");
+  });
+
+  it("keeps the timing soft — no precise ETA a wide spread would make wrong", () => {
+    const msg = formatRaidEnding(28, ["alliance"], 28 * M, "30-50m");
+    expect(msg.body).toMatch(/may drop soon/);
+    expect(msg.body).not.toMatch(/~\d+m (?:left|to go|until)/i);
+  });
+
+  it("the whisper twin names the raid #, time-in, typical, and capital", () => {
+    const line = formatRaidEndingWhisper(28, ["horde"], 28 * M, "30-50m");
+    expect(line).toBe("Onyxia raid #28 might end soon (~28m in, typical 30-50m). Park in Orgrimmar now for the buff.");
+  });
+});
+
+describe("formatRaidDisbanded", () => {
+  it("titles 'Onyxia raid disbanded', shows how short it was, and stops parking in the named cities", () => {
+    const msg = formatRaidDisbanded(28, ["horde"], 15 * M);
+    expect(msg.title).toBe("🚫 Onyxia raid disbanded");
+    expect(msg.body).toBe("Raid #28 left after ~15m without clearing. No buff coming. Stop parking in Orgrimmar.");
+    expect(msg.body).not.toContain("Stormwind");
+  });
+
+  it("omits the duration cleanly when unknown, and names both cities", () => {
+    const msg = formatRaidDisbanded(null, ["alliance", "horde"]);
+    expect(msg.body).toBe("A raid left without clearing. No buff coming. Stop parking in Stormwind or Orgrimmar.");
+  });
+
+  it("the whisper twin says no buff is coming and to stop parking", () => {
+    const line = formatRaidDisbandedWhisper(28, ["alliance"], 15 * M);
+    expect(line).toBe("Onyxia raid #28 disbanded (left after ~15m). No buff coming. Stop parking in Stormwind.");
   });
 });
 
 describe("formatBuffDropped", () => {
-  it("titles the buff up in the city and carries a live relative timestamp of the drop", () => {
+  it("titles 'Onyxia buff dropped in <city>' and names the buff in full with a live drop timestamp", () => {
     const appliedAt = new Date("2026-08-30T20:00:00Z");
-    const message = formatBuffDropped("alliance", appliedAt, "Gibom");
-    expect(message.title).toBe("🎉 Rallying Cry just dropped in Stormwind");
-    expect(message.body).toContain("is up in Stormwind");
-    const droppedUnix = Math.floor(appliedAt.getTime() / 1000);
-    expect(message.body).toContain(`<t:${droppedUnix}:R>`); // when it dropped, live in each timezone
+    const msg = formatBuffDropped("alliance", appliedAt, "Gibom");
+    expect(msg.title).toBe("🎉 Onyxia buff dropped in Stormwind");
+    expect(msg.body).toContain("The Rallying Cry of the Dragonslayer is up in Stormwind");
+    expect(msg.body).toContain(`<t:${Math.floor(appliedAt.getTime() / 1000)}:R>`);
   });
 
-  it("makes NO cooldown / duration claim — we track drops, not the buff on players", () => {
-    const message = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), "Gibom");
-    expect(message.title).toContain("Orgrimmar");
-    expect(message.body).not.toMatch(/cooldown|2h|wears off|until/i);
+  it("makes NO cooldown / duration claim", () => {
+    const msg = formatBuffDropped("horde", new Date("2026-08-30T20:00:00Z"), "Gibom");
+    expect(msg.title).toContain("Orgrimmar");
+    expect(msg.body).not.toMatch(/cooldown|2h|wears off|until/i);
   });
 
-  it("carries the same tips line as the whisper (consistent everywhere the drop reaches)", () => {
-    const body = formatBuffDropped("alliance", new Date("2026-08-30T20:00:00Z"), "Gibom").body;
-    const whisper = formatBuffDroppedWhisper("alliance", "Gibom");
+  it("carries the same tips line on the channel post and the whisper", () => {
     const tip = "Did you get it? A tip to Gibom is appreciated.";
-    expect(body).toContain(tip);
-    expect(whisper).toContain(tip);
+    expect(formatBuffDropped("alliance", new Date(), "Gibom").body).toContain(tip);
+    expect(formatBuffDroppedWhisper("alliance", "Gibom")).toContain(tip);
   });
 });
 
 describe("formatBuffDroppedWhisper", () => {
-  it("names the city, no absolute clock time and no Discord timestamp (the bot's clock isn't the player's)", () => {
+  it("names the buff and city, with no Discord timestamp (WoW can't render it) and no cooldown claim", () => {
     const line = formatBuffDroppedWhisper("alliance", "Gibom");
-    expect(line).toContain("Stormwind");
-    expect(line).not.toMatch(/\d{1,2}:\d{2}/); // no HH:MM
-    expect(line).not.toMatch(/<t:/); // no Discord timestamp (WoW can't render it)
-  });
-
-  it("makes no cooldown claim; says the next one will be alerted", () => {
-    const line = formatBuffDroppedWhisper("alliance", "Gibom");
-    expect(line).not.toMatch(/cooldown|at least|2h/i);
-    expect(line).toMatch(/alert you when the next/i);
-  });
-
-  it("names the buff in full, so a reader knows which buff it is", () => {
-    expect(formatBuffDroppedWhisper("horde", "Gibom")).toContain("Rallying Cry of the Dragonslayer");
+    expect(line).toContain("The Rallying Cry of the Dragonslayer just dropped in Stormwind");
+    expect(line).not.toMatch(/<t:/);
+    expect(line).not.toMatch(/cooldown|2h|at least/i);
   });
 });
 
@@ -137,123 +158,40 @@ describe("formatGuildWelcome", () => {
 
 describe("humanClock", () => {
   it("renders minutes, hours, and hours+minutes compactly", () => {
-    expect(humanClock(42 * 60_000)).toBe("42m");
-    expect(humanClock(120 * 60_000)).toBe("2h");
-    expect(humanClock(82 * 60_000)).toBe("1h22m");
-    expect(humanClock(-5)).toBe("0m"); // never negative
-  });
-});
-
-describe("formatRaidFinished", () => {
-  it("names the raid #, the area, and how long it took", () => {
-    const msg = formatRaidFinished(834, 82 * 60_000, "Onyxia's Lair");
-    expect(msg.title).toContain("Raid #834");
-    expect(msg.body).toContain("Onyxia's Lair");
-    expect(msg.body).toContain("~1h22m");
-  });
-
-  it("falls back to 'A raid' when unnumbered", () => {
-    expect(formatRaidFinished(null, 60 * 60_000, "Onyxia's Lair").title).toContain("A raid");
-  });
-
-  it("always promises a fresh drop may come (every clear can drop one — no lockout)", () => {
-    const msg = formatRaidFinished(1, 60 * 60_000, "Onyxia's Lair");
-    expect(msg.body).toContain("may drop soon");
-    expect(msg.body).not.toContain("already up"); // no buff-state model any more
-  });
-});
-
-describe("formatRaidEnding", () => {
-  it("names the raid, how long it's been in, the open capital, and a park-now CTA", () => {
-    const msg = formatRaidEnding(28, ["alliance"], 28 * 60_000, "Onyxia's Lair");
-    expect(msg.title).toContain("⏰");
-    expect(msg.title).toContain("Raid #28");
-    expect(msg.body).toContain("~28m");
-    expect(msg.body).toContain("Stormwind");
-    expect(msg.body).not.toContain("Orgrimmar");
-    expect(msg.body).toMatch(/park now/i);
-  });
-
-  it("keeps the timing soft — no precise ETA that a wide spread would make wrong", () => {
-    const msg = formatRaidEnding(28, ["alliance"], 28 * 60_000, "Onyxia's Lair");
-    expect(msg.body).toMatch(/should drop.*soon/i);
-    expect(msg.body).not.toMatch(/~\d+m (?:left|to go|until)/i); // no "~10m left" promise
-  });
-
-  it("names both capitals when either could get it, and falls back to 'A raid' unnumbered", () => {
-    const msg = formatRaidEnding(null, ["alliance", "horde"], 30 * 60_000, "Onyxia's Lair");
-    expect(msg.title).toContain("A raid");
-    expect(msg.body).toContain("Stormwind or Orgrimmar");
-  });
-
-  it("the whisper twin names the raid, time in, capital, and 'about to clear'", () => {
-    const line = formatRaidEndingWhisper(28, ["horde"], 28 * 60_000, "Onyxia's Lair");
-    expect(line).toContain("Raid #28");
-    expect(line).toContain("~28m");
-    expect(line).toContain("Orgrimmar");
-    expect(line).toMatch(/about to clear/i);
-  });
-});
-
-describe("formatRaidDisbanded", () => {
-  it("names the raid, says it didn't clear, and tells the named cities to stop parking", () => {
-    const msg = formatRaidDisbanded(28, ["horde"], "Onyxia's Lair");
-    expect(msg.title).toContain("🚫");
-    expect(msg.title).toContain("Raid #28");
-    expect(msg.body).toMatch(/without clearing/i);
-    expect(msg.body).toMatch(/no Rallying Cry coming/i);
-    expect(msg.body).toContain("Orgrimmar");
-    expect(msg.body).not.toContain("Stormwind"); // only the city that was told to park
-  });
-
-  it("names both cities when both were told to park, and falls back to 'The raid' unnumbered", () => {
-    const msg = formatRaidDisbanded(null, ["alliance", "horde"], "Onyxia's Lair");
-    expect(msg.title).toContain("The raid");
-    expect(msg.body).toContain("Stormwind or Orgrimmar");
-  });
-
-  it("the whisper twin says no buff is coming and to stop parking", () => {
-    const line = formatRaidDisbandedWhisper(28, ["alliance"], "Onyxia's Lair");
-    expect(line).toContain("Raid #28");
-    expect(line).toMatch(/no buff coming/i);
-    expect(line).toMatch(/stop parking in Stormwind/i);
+    expect(humanClock(42 * M)).toBe("42m");
+    expect(humanClock(120 * M)).toBe("2h");
+    expect(humanClock(82 * M)).toBe("1h22m");
+    expect(humanClock(-5)).toBe("0m");
   });
 });
 
 describe("formatCapitalStatusYell", () => {
-  const raid = { number: 834, elapsedMs: 42 * 60_000 };
+  const raid = { number: 834, elapsedMs: 42 * M };
 
-  it("names the buff and, with a raid in the lair, shows its number, time in, and a park nudge", () => {
-    const y = formatCapitalStatusYell("horde", raid);
-    expect(y).toContain("Rallying Cry world buff:"); // named up front, no longer vague
-    expect(y).toContain("raid #834");
-    expect(y).toContain("in for ~42m");
-    expect(y).toMatch(/one may drop when they clear, park here!/);
-    expect(y).toMatch(/subscribe.*discord/);
+  it("with a raid in: names it, time-in, the typical range, and a park nudge, and no 'cooldown'", () => {
+    const y = formatCapitalStatusYell("horde", raid, "30-50m");
+    expect(y).toBe(
+      `[Onyxia] Onyxia raid in progress (#834, ~42m in, typical clear 30-50m). The Rallying Cry buff may drop soon - park here. Whisper "subscribe" for pings, "discord" for discord notifications.`,
+    );
+    expect(y).not.toMatch(/cooldown/i);
   });
 
-  it("makes no cooldown/timer claim at all — we track drops, not the buff on players", () => {
-    expect(formatCapitalStatusYell("horde", raid)).not.toMatch(/cooldown/i);
-    expect(formatCapitalStatusYell("alliance", null)).not.toMatch(/cooldown/i);
-  });
-
-  it("no raid in: says how a drop happens, no dangling 'world buff:' colon before the CTA", () => {
+  it("no raid in: states how a drop happens", () => {
     const y = formatCapitalStatusYell("alliance", null);
     expect(y).toBe(
-      `[Onyxia] Rallying Cry world buff: a fresh one drops when a raid clears Onyxia. No raid in the lair right now. Whisper "subscribe" for pings, "discord" for discord notifications.`,
+      `[Onyxia] No Onyxia raid right now. The Rallying Cry buff drops when a raid clears. Whisper "subscribe" for pings, "discord" for discord notifications.`,
     );
-    expect(y).not.toMatch(/world buff: Whisper/); // the broken/truncated state
   });
 
-  it("drops the raid number when it isn't known, keeping the time in", () => {
-    const y = formatCapitalStatusYell("alliance", { number: null, elapsedMs: 12 * 60_000 });
-    expect(y).not.toMatch(/raid #/);
-    expect(y).toContain("in for ~12m");
-    expect(y).toMatch(/park here!/);
+  it("drops the raid number when unknown, keeping the time-in", () => {
+    const y = formatCapitalStatusYell("alliance", { number: null, elapsedMs: 12 * M });
+    expect(y).not.toMatch(/#\d/);
+    expect(y).toContain("~12m in");
+    expect(y).toContain("park here");
   });
 
   it("stays within the 255-char yell cap even in the busiest state", () => {
-    const y = formatCapitalStatusYell("horde", { number: 99999, elapsedMs: 135 * 60_000 });
+    const y = formatCapitalStatusYell("horde", { number: 99999, elapsedMs: 135 * M }, "30-50m");
     expect(y.length).toBeLessThanOrEqual(255);
   });
 });
@@ -272,23 +210,5 @@ describe("formatFeedbackPost", () => {
 
   it("omits the brackets when no server is given", () => {
     expect(formatFeedbackPost("Raider", "hi")).not.toContain("(");
-  });
-});
-
-describe("formatBuffWhisper", () => {
-  it("gives a terse park-in-the-city line naming the open capital, with the raid number", () => {
-    const forming = formatBuffWhisper(
-      { kind: "raid-forming", initial: false, cohort: cohort(), number: 28 },
-      ["horde"],
-      AREA,
-    );
-    expect(forming).toContain("Orgrimmar");
-    expect(forming).toContain("Raid #28 has formed");
-    const left = formatBuffWhisper(
-      { kind: "raid-left", cohort: cohort({ count: 0, peak: 20 }) },
-      ["alliance", "horde"],
-      AREA,
-    );
-    expect(left).toContain("Stormwind or Orgrimmar");
   });
 });
