@@ -220,6 +220,11 @@ class ListenerWho {
     for (const run of this.#runners.values()) return run;
     return null;
   }
+  /** Every registered listener runner — so the raid poll can spread its class slices across their
+   *  idle sockets, keeping each socket's /who count under the server's per-socket throttle. */
+  all(): WhoRunner[] {
+    return [...this.#runners.values()];
+  }
 }
 
 /** Chronicle early-confirm dependencies, or null when it's off (no Mongo / disabled). */
@@ -909,7 +914,8 @@ async function runConnection(
           router.setFactionDetect(detectFaction);
           const poll = async (): Promise<void> => {
             try {
-              const roster = await fetchRoster(queuedWho, config.watchAreaId, config.whoSliceDelayMs);
+              // Spread the class slices across the idle listener sockets too, not just this one.
+              const roster = await fetchRoster(queuedWho, listenerWho.all(), config.watchAreaId, config.whoSliceDelayMs);
               if (!settled) await processRoster(roster);
             } catch (error) {
               logger.warn(`who failed: ${describeError(error)}`);
