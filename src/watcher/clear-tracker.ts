@@ -207,10 +207,22 @@ export class ClearTracker {
    */
   observe(names: readonly string[], now: number, blackout: boolean): ClearObservation {
     if (blackout) {
-      // We went blind (our DC or a server outage) — anything across it is untrustworthy.
-      this.#reset();
-      this.#firstSeen.clear();
-      this.#lastSeen.clear();
+      // A blind gap — a server crash/shutdown or our own DC. Do NOT wipe the roster and arrival
+      // memory: that would blindly re-form whatever is present into ONE raid on recovery, merging
+      // two overlapping raids and handing the same raid a new number. Instead, keep the arrival
+      // memory and RESUME the raid we were tracking — but ONLY if its own members are still here
+      // (the users match). If they're gone, discard it silently: we were blind, so we can't tell
+      // whether it cleared or just left, and must not record a false clear.
+      this.#trackArrivals(names, now);
+      if (this.#formedAt !== null) {
+        let cohort = 0;
+        for (const name of names) if (this.#roster.has(name)) cohort += 1;
+        if (cohort >= this.#clearFloor) {
+          this.#belowSince = null; // same raid survived the gap — keep its number, roster and clock
+          return { clear: null, formed: null };
+        }
+        this.#reset(); // the raid we were tracking is gone across the gap
+      }
       return { clear: null, formed: null };
     }
 

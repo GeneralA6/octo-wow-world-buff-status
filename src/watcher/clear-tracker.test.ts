@@ -72,12 +72,48 @@ describe("ClearTracker", () => {
     expect(clear?.durationMs).toBe(20 * MIN);
   });
 
-  it("a blackout DISCARDS the in-progress measurement (no false instant clear on a mass DC)", () => {
+  it("a blackout with an EMPTY lair after discards the raid (no false clear on a mass DC)", () => {
     const t = tracker();
     t.observe(R(30), 0, false);
     t.observe(R(4), 10 * MIN, false); // everyone drops...
-    expect(t.observe([], 11 * MIN, true).clear).toBeNull(); // ...but it's a blackout (server/us offline)
+    expect(t.observe([], 11 * MIN, true).clear).toBeNull(); // ...and the lair is empty across the gap
     expect(t.tracking).toBe(false); // discarded, not recorded as a clear
+  });
+
+  it("RESUMES the same raid across a blind gap when its members are still present (keeps its number)", () => {
+    let n = 100;
+    const t = new ClearTracker({ formAt: 15, sustainedMs: 5 * MIN, nextNumber: () => ++n });
+    t.observe(R(30), 0, false); // forms raid #101
+    t.observe(R(30), 20 * MIN, false); // running
+    const obs = t.observe(R(30), 26 * MIN, true); // 6-min server crash; SAME roster present after
+    expect(obs.formed).toBeNull(); // NOT re-formed as a new raid
+    expect(t.tracking).toBe(true);
+    expect(t.number).toBe(101); // same number — no re-count
+    t.observe(R(0), 40 * MIN, false);
+    const clear = t.observe(R(0), 46 * MIN, false).clear; // still catches the real clear
+    expect(clear?.number).toBe(101);
+    expect(clear?.durationMs).toBe(40 * MIN); // form(0) → departure(40m), spanning the crash
+  });
+
+  it("discards the tracked raid across a blind gap when a DIFFERENT crowd is present (users don't match)", () => {
+    const t = tracker();
+    t.observe(R(30), 0, false);
+    expect(t.observe(C(25), 26 * MIN, true).clear).toBeNull(); // recovery shows a different crowd
+    expect(t.tracking).toBe(false); // the tracked raid is gone — discarded, no false clear
+  });
+
+  it("on recovery it resumes only its OWN roster — a second raid present is NOT merged in", () => {
+    let n = 100;
+    const t = new ClearTracker({ formAt: 15, sustainedMs: 5 * MIN, nextNumber: () => ++n });
+    t.observe(R(24), 0, false); // raid B forms as #101
+    t.observe(R(24), 20 * MIN, false);
+    // crash; recovery shows raid B still there PLUS a second raid (c*) that arrived during the gap
+    t.observe([...R(24), ...C(24)], 26 * MIN, true); // raid B matches → resume #101
+    expect(t.number).toBe(101);
+    t.observe([...R(24), ...C(24)], 30 * MIN, false); // both present — c* must NOT be absorbed into #101
+    t.observe(C(24), 40 * MIN, false); // raid B leaves; only c* remains
+    const clear = t.observe(C(24), 46 * MIN, false).clear;
+    expect(clear?.number).toBe(101); // #101 cleared correctly — c* did not prop it up / merge in
   });
 
   it("sizes the raid by the plateau peak, not a wipe trough", () => {
