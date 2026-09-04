@@ -12,6 +12,8 @@ import {
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
+  formatServerDown,
+  formatServerUp,
   humanClock,
 } from "./format.js";
 
@@ -150,6 +152,31 @@ describe("formatBuffDroppedWhisper", () => {
     expect(withCta).toContain("Discord is instant: discord.gg/xyz");
     expect(withCta).toMatch(/lag/i); // explains why (server throttle)
     expect(formatBuffDroppedWhisper("alliance", "Gibom")).not.toMatch(/discord/i);
+  });
+});
+
+describe("formatServerDown", () => {
+  it("names the realm, reads as an observation not a verdict, and says tracking is paused", () => {
+    const msg = formatServerDown("N'Zoth");
+    expect(msg.title).toBe("🔌 N'Zoth looks down");
+    expect(msg.body).toContain("Lost connection to N'Zoth");
+    expect(msg.body).toMatch(/looks down/); // hedged, not "IS down"
+    expect(msg.body).toMatch(/paused/i);
+  });
+});
+
+describe("formatServerUp", () => {
+  it("names the realm, reports the downtime, and says tracking is live again", () => {
+    const msg = formatServerUp("N'Zoth", 12 * 60_000);
+    expect(msg.title).toBe("✅ N'Zoth is back up");
+    expect(msg.body).toContain("Reconnected to N'Zoth after ~12m down");
+    expect(msg.body).toMatch(/live again/i);
+  });
+
+  it("omits the duration when the downtime is unknown (0)", () => {
+    const msg = formatServerUp("N'Zoth", 0);
+    expect(msg.body).toContain("Reconnected to N'Zoth.");
+    expect(msg.body).not.toMatch(/~/);
   });
 });
 

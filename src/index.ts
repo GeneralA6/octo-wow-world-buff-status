@@ -19,6 +19,8 @@ import {
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
+  formatServerDown,
+  formatServerUp,
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
 import { groupByRelevantCities } from "./notify/faction-routing.js";
@@ -81,6 +83,7 @@ import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
 import { needsFactionResolution, subscriberKey, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 import { DownTracker } from "./down-tracker.js";
+import { ServerMonitor } from "./server-monitor.js";
 
 /** Client identity values that self-heal from the CDN across OctoWoW patches. */
 interface ClientValues {
@@ -1607,6 +1610,23 @@ async function main(): Promise<void> {
 
   // The watcher does /who + alerts + whispers; each listener only forwards buff yells.
   // They run concurrently, each with its own self-reconnecting supervisor.
+  //
+  // Beyond the per-connection ops alerts each supervisor already sends, one shared monitor turns
+  // ALL connections being sustained-down at once into a single realm-outage post for the community
+  // channel — every character sits on the same realm, so a lone flaky one is not a realm outage but
+  // all of them dropping together is. Fed each supervisor's already-latched down/recover transitions.
+  const serverMonitor = new ServerMonitor([
+    config.characterName,
+    ...config.listeners.map((listener) => listener.characterName),
+  ]);
+  const announceRealmDown = async (id: string): Promise<void> => {
+    if (serverMonitor.connectionDown(id, Date.now())) await push(formatServerDown(config.realm));
+  };
+  const announceRealmUp = async (id: string): Promise<void> => {
+    const outageMs = serverMonitor.connectionUp(id, Date.now());
+    if (outageMs !== null) await push(formatServerUp(config.realm, outageMs));
+  };
+
   const watcherLog = prefixed(logger, config.characterName);
   const runWatcher = async (): Promise<void> => {
     const heal: HealState = { lastCheckMs: 0, alertedStuck: false };
@@ -1619,6 +1639,7 @@ async function main(): Promise<void> {
         backoffMs = 5_000;
         heal.alertedStuck = false; // a clean run clears the "stuck" latch
         if (down.recover()) await notifyAdmin("✅ Watcher back online", "Reconnected and watching again.");
+        await announceRealmUp(config.characterName); // realm-wide recovery (if this ends an outage)
       } catch (error) {
         if (error instanceof VersionMismatchError) {
           if (await selfHeal(error, config, logger, client, notifyAdmin, heal)) {
@@ -1641,6 +1662,7 @@ async function main(): Promise<void> {
               "⚠️ Watcher down",
               `Unable to connect after ${down.failures} tries: ${describeError(error)}. Still retrying.`,
             );
+            await announceRealmDown(config.characterName); // realm-wide down (if every connection is now down)
           }
           await delay(backoffMs);
           backoffMs = Math.min(backoffMs * 2, 60_000);
@@ -1666,6 +1688,7 @@ async function main(): Promise<void> {
         if (down.recover()) {
           await notifyAdmin(`✅ Listener back online: ${listener.characterName}`, "Reconnected; its capital's buff detection is live again.");
         }
+        await announceRealmUp(listener.characterName); // realm-wide recovery (if this ends an outage)
       } catch (error) {
         if (error instanceof VersionMismatchError) {
           // The watcher's self-heal fixes the shared client build; wait and retry (not a listener fault).
@@ -1677,6 +1700,7 @@ async function main(): Promise<void> {
               `⚠️ Listener down: ${listener.characterName}`,
               `Unable to connect after ${down.failures} tries: ${describeError(error)}. Its capital's buff detection is offline until it recovers. Still retrying.`,
             );
+            await announceRealmDown(listener.characterName); // realm-wide down (if every connection is now down)
           }
         }
         await delay(backoffMs);
