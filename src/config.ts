@@ -147,6 +147,10 @@ export interface BotConfig {
   /** How long to wait for a /who reply before giving up. Under peak server load /who
    *  can be slow, so this is tunable — raise it if the watcher logs repeated timeouts. */
   readonly whoTimeoutMs: number;
+  /** Gap between the per-class /who slices when a packed lair (>=49) forces slicing. The server
+   *  throttles /who, so firing ~9 slices back-to-back trips it and it stops replying; spacing them
+   *  keeps it answering. Mirrors DEFAULT_WHO_SLICE_DELAY_MS in watcher/roster.ts. */
+  readonly whoSliceDelayMs: number;
   /** Max distance (yards) a GameObject may be for an "interact" listener to `use` it (sit on
    *  the bench). Tunable because the server range-checks the use, so it needs the character
    *  parked within reach of the bench. */
@@ -348,6 +352,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
   const whoTimeoutMs = intWithDefault("WOW_WHO_TIMEOUT_MS", 8_000, 1_000);
+  const whoSliceDelayMs = intWithDefault("WOW_WHO_SLICE_DELAY_MS", 1_500, 0);
   const interactMaxYd = intWithDefault("WOW_INTERACT_MAX_YD", 8, 1);
   const interactEntryRaw = env.WOW_INTERACT_ENTRY?.trim();
   const interactEntry = interactEntryRaw && /^\d+$/.test(interactEntryRaw) ? Number(interactEntryRaw) : null;
@@ -424,6 +429,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     mongodbDb,
     pollIntervalMs,
     whoTimeoutMs,
+    whoSliceDelayMs,
     interactMaxYd,
     interactEntry,
     guildName,

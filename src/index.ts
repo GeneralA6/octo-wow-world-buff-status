@@ -745,7 +745,7 @@ async function runConnection(
       logger.info(
         `who ${config.watchAreaName}: ${inZone.length} in zone ` +
           `(${roster.players.length} returned, ${roster.onlineCount} online)` +
-          (roster.sliced ? ` [class-sliced, complete=${complete}]` : ""),
+          (roster.sliced ? ` [class-sliced, complete=${complete}${roster.failedSlices > 0 ? `, ${roster.failedSlices} slices timed out` : ""}]` : ""),
       );
 
       // Persist the raw observation for offline replay/stats.
@@ -909,7 +909,7 @@ async function runConnection(
           router.setFactionDetect(detectFaction);
           const poll = async (): Promise<void> => {
             try {
-              const roster = await fetchRoster(queuedWho, config.watchAreaId);
+              const roster = await fetchRoster(queuedWho, config.watchAreaId, config.whoSliceDelayMs);
               if (!settled) await processRoster(roster);
             } catch (error) {
               logger.warn(`who failed: ${describeError(error)}`);
