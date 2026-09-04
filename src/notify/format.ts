@@ -141,21 +141,41 @@ export function formatRaidDisbandedWhisper(
  * so a `<t:R>` here only renders "N hours ago" on scroll-back and contradicts the title. No
  * cooldown/duration line either — we track drops, not the buff on players.
  */
-export function formatBuffDropped(faction: Faction, author: string): NotifyMessage {
+/**
+ * The buff-drop channel post. When `savedHead` is set (no raid was in the lair when it dropped — see
+ * `drop-origin.ts`), it appends one humble line explaining the drop came from a head turned in from
+ * an earlier kill, so a reader understands why there was no heads-up. It takes no credit: a fresh
+ * kill adds nothing here, because the park-now alert already served as the warning.
+ */
+export function formatBuffDropped(faction: Faction, author: string, savedHead = false): NotifyMessage {
   const city = CITY_FOR[faction];
+  // The title already says the buff dropped and where. A fresh kill asks for a tip; a saved head
+  // takes NO credit — the bot warned about nothing — so it drops the tip line and just explains why
+  // there was no heads-up.
+  const body = savedHead
+    ? "This one's a saved Onyxia head from an earlier kill - no raid was in the lair, so there was no heads-up."
+    : tipsLine(author);
   return {
     kind: "info",
     title: `🎉 Onyxia buff dropped in ${city}`,
-    body: `The Rallying Cry of the Dragonslayer is up in ${city}. ${tipsLine(author)}`,
+    body,
   };
 }
 
 /** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell fires.
  *  A "light" (non-urgent) broadcast, so it carries the Discord nudge — in-game pings are throttled
  *  and can lag, Discord does not. `discordInvite` omitted leaves it off. */
-export function formatBuffDroppedWhisper(faction: Faction, author: string, discordInvite?: string): string {
+export function formatBuffDroppedWhisper(
+  faction: Faction,
+  author: string,
+  discordInvite?: string,
+  savedHead = false,
+): string {
   const cta = discordInvite ? ` In-game pings can lag - Discord is instant: ${discordInvite}` : "";
-  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}! ${tipsLine(author)}${cta}`;
+  // A saved head takes no credit — drop the tip ask, keep the buff line (the whisper has no title)
+  // and the Discord CTA. A fresh kill keeps the tip.
+  const tip = savedHead ? "" : ` ${tipsLine(author)}`;
+  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}!${tip}${cta}`;
 }
 
 /** Guild-chat (/g) line welcoming a member who just accepted an invite. Everyone reading it is

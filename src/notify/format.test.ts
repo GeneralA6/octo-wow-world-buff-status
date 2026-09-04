@@ -119,10 +119,10 @@ describe("formatRaidDisbanded", () => {
 });
 
 describe("formatBuffDropped", () => {
-  it("titles 'Onyxia buff dropped in <city>' and names the buff in full, no in-body timestamp", () => {
+  it("titles 'Onyxia buff dropped in <city>' and does NOT repeat it in the body (the title says it)", () => {
     const msg = formatBuffDropped("alliance", "Gibom");
     expect(msg.title).toBe("🎉 Onyxia buff dropped in Stormwind");
-    expect(msg.body).toContain("The Rallying Cry of the Dragonslayer is up in Stormwind");
+    expect(msg.body).not.toMatch(/is up in Stormwind/); // no redundant restatement of the title
     expect(msg.body).not.toMatch(/<t:/); // Discord's own post-time is the drop time; no "N hours ago"
   });
 
@@ -136,6 +136,17 @@ describe("formatBuffDropped", () => {
     const tip = "Did you get it? A tip to Gibom is appreciated.";
     expect(formatBuffDropped("alliance", "Gibom").body).toContain(tip);
     expect(formatBuffDroppedWhisper("alliance", "Gibom")).toContain(tip);
+  });
+
+  it("saved head explains the origin and drops the tip ask (no credit); fresh keeps the tip", () => {
+    const fresh = formatBuffDropped("alliance", "Gibom");
+    expect(fresh.body).not.toMatch(/saved|earlier kill|heads-up/i);
+    expect(fresh.body).toContain("A tip to Gibom is appreciated"); // fresh still asks
+    const saved = formatBuffDropped("alliance", "Gibom", true);
+    expect(saved.body).toContain("saved Onyxia head from an earlier kill");
+    expect(saved.body).toMatch(/no raid was in the lair/);
+    expect(saved.body).not.toMatch(/tip to Gibom|Did you get it/i); // no credit ask on a saved head
+    expect(saved.title).toBe(fresh.title); // same headline; only the body differs
   });
 });
 
@@ -152,6 +163,15 @@ describe("formatBuffDroppedWhisper", () => {
     expect(withCta).toContain("Discord is instant: discord.gg/xyz");
     expect(withCta).toMatch(/lag/i); // explains why (server throttle)
     expect(formatBuffDroppedWhisper("alliance", "Gibom")).not.toMatch(/discord/i);
+  });
+
+  it("drops the tip ask on a saved head, keeping the buff line and the Discord CTA", () => {
+    const saved = formatBuffDroppedWhisper("alliance", "Gibom", "discord.gg/xyz", true);
+    expect(saved).toContain("The Rallying Cry of the Dragonslayer just dropped in Stormwind");
+    expect(saved).toContain("Discord is instant: discord.gg/xyz");
+    expect(saved).not.toMatch(/tip to Gibom|Did you get it/i); // no credit ask on a saved head
+    // Fresh keeps the tip.
+    expect(formatBuffDroppedWhisper("alliance", "Gibom", "discord.gg/xyz", false)).toContain("A tip to Gibom is appreciated");
   });
 });
 

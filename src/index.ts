@@ -46,6 +46,7 @@ import {
   type DurationStore,
 } from "./watcher/duration-store.js";
 import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
+import { classifyDropOrigin, newLairActivity, noteLairPoll, type LairActivity } from "./watcher/drop-origin.js";
 import { evaluateTimer, improvedEstimate, typicalClearText } from "./watcher/timer-eval.js";
 import { isCommandError, isWhisperThrottle } from "./chat/system-error.js";
 import { HttpChronicleClient, type ChronicleClient } from "./chronicle/client.js";
@@ -189,7 +190,7 @@ interface DetectionLane {
 /** A buff drop is heard on a listener but must be whispered from the watcher — the
  *  watcher fills this sink when in world so the listener's recordBuff can reach it. */
 interface BuffDropSink {
-  notify: ((faction: Faction, appliedAt: Date) => void) | null;
+  notify: ((faction: Faction, appliedAt: Date, savedHead: boolean) => void) | null;
 }
 
 /** Each listener (parked in its capital) registers a /yell function for its own side once
@@ -256,6 +257,9 @@ interface ConnectionServices {
   readonly dm: DiscordDmSender;
   readonly outreach: Outreach;
   readonly buffDropSink: BuffDropSink;
+  /** Shared lair-poll signal: the watcher stamps it each /who, the listener's recordBuff reads it to
+   *  tell a fresh-kill drop from a saved-head turn-in (empty lair). */
+  readonly lairActivity: LairActivity;
   readonly yellSink: YellSink;
   readonly push: (message: NotifyMessage, factions?: readonly Faction[]) => Promise<void>;
   /** Post an operational/error notice to the errors Discord channel (or log-only if unset). */
@@ -377,7 +381,7 @@ async function runConnection(
     };
 
     // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
-    const announceBuffDrop = (faction: Faction): Promise<void> => {
+    const announceBuffDrop = (faction: Faction, savedHead: boolean): Promise<void> => {
       // The buff is UP now, so any still-queued "park now to catch it" whispers for this side are
       // stale — purge them before sending the "it's up" message, or a subscriber would be told to
       // park after being told it already dropped.
@@ -385,7 +389,7 @@ async function runConnection(
       if (dropped > 0) logger.info(`dropped ${dropped} stale park-now whisper(s) for ${faction} — buff is up`);
       return notifyFactionSubscribers(
         faction,
-        formatBuffDroppedWhisper(faction, config.author, config.discordServerInvite ?? undefined),
+        formatBuffDroppedWhisper(faction, config.author, config.discordServerInvite ?? undefined, savedHead),
       );
     };
 
@@ -749,6 +753,10 @@ async function runConnection(
         .record({ ts: new Date(now), present: inZone.length, complete, names: inZone.map((p) => p.name) })
         .catch((error) => logger.debug(`snapshot: ${describeError(error)}`));
 
+      // Feed the shared lair signal so a later buff drop can tell a fresh kill (a raid was here)
+      // from a saved-head turn-in (an empty lair), and spot a blind gap it must not guess across.
+      noteLairPoll(services.lairActivity, inZone.length, now);
+
       // Surface the MongoDB-only stats into the logs on a slow cadence, so the
       // self-improving timer's progress and the buff state are observable at a glance.
       if (now - lastHeartbeatAt >= HEARTBEAT_MS) {
@@ -892,8 +900,8 @@ async function runConnection(
             outreach.setChannel((nameTo, msg) => whisperQueue?.enqueue(nameTo, msg), guildInvite);
             router.setGuildInvite(guildInvite);
             // The watcher can now whisper, so route listener-heard buff drops through it.
-            buffDropSink.notify = (faction) =>
-              void announceBuffDrop(faction).catch((error) =>
+            buffDropSink.notify = (faction, _appliedAt, savedHead) =>
+              void announceBuffDrop(faction, savedHead).catch((error) =>
                 logger.error(`buff-drop announce: ${describeError(error)}`),
               );
           }
@@ -1459,6 +1467,8 @@ async function main(): Promise<void> {
 
   // The watcher fills this once in world, so a listener-heard buff drop can be whispered.
   const buffDropSink: BuffDropSink = { notify: null };
+  // The watcher stamps this each /who poll; recordBuff (on a listener) reads it to classify a drop.
+  const lairActivity = newLairActivity();
   // Each city listener registers its /yell here on login (and clears it on disconnect), so
   // an alert can be shouted to everyone standing in that capital, not only to subscribers.
   const yellSink: YellSink = {};
@@ -1471,13 +1481,16 @@ async function main(): Promise<void> {
 
   const recordBuff = (faction: Faction, sourceName: string, text: string, detectedBy: string): void => {
     const appliedAt = new Date();
-    logger.info(`buff drop: ${faction} buff is up — ${detectedBy} heard "${text}" from ${sourceName}`);
+    // Fresh kill (a raid was in the lair), saved head (empty lair), or unknown (we were blind).
+    // Only a confident "saved" adds a line to the post; fresh/unknown render exactly as before.
+    const origin = classifyDropOrigin(appliedAt.getTime(), lairActivity, { freshWindowMs: config.raidFreshWindowMs });
+    logger.info(`buff drop: ${faction} buff is up (${origin}) — ${detectedBy} heard "${text}" from ${sourceName}`);
     void buffStore
       .record({ faction, appliedAt })
       .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
-    void push(formatBuffDropped(faction, config.author), [faction]); // channel, pinging that side's role
-    buffDropSink.notify?.(faction, appliedAt);
+    void push(formatBuffDropped(faction, config.author, origin === "saved"), [faction]); // channel, pinging that side's role
+    buffDropSink.notify?.(faction, appliedAt, origin === "saved");
   };
 
   // A player's feedback: persist it (for review) and post it to the feedback channel,
@@ -1560,6 +1573,7 @@ async function main(): Promise<void> {
     dm,
     outreach,
     buffDropSink,
+    lairActivity,
     yellSink,
     push,
     notifyAdmin,

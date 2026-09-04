@@ -91,6 +91,12 @@ export interface BotConfig {
    *  formed but gave up, not a kill. It fires no park-now and records no duration; if we alerted a
    *  forming for it, a stand-down retracts that. Held above the fastest real clear on record. */
   readonly raidDisbandMs: number;
+  /** A buff drop with a raid seen in the lair within this long is a fresh, attributable kill; past
+   *  it (with full census coverage) the drop is a saved head turned in from an earlier kill, and the
+   *  drop post says so and takes no credit. Set above the slowest real turn-in observed (~78m tail),
+   *  but the value is deliberately conservative — 40m keeps only the confident-fresh cases, and slow
+   *  turn-ins beyond it are labelled "saved head" (an honest under-claim, never a false credit). */
+  readonly raidFreshWindowMs: number;
   /** How long the raid's roster must stay gone to count a departure as a real clear rather
    *  than a wipe (they run back). ~4 min — enough time to corpse-run back to the instance. */
   readonly raidClearSustainedMs: number;
@@ -289,6 +295,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidRosterCap = intWithDefault("WOW_RAID_ROSTER_CAP", 30, 1);
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
   const raidDisbandMs = intWithDefault("WOW_RAID_DISBAND_MINUTES", 20, 1) * 60_000;
+  const raidFreshWindowMs = intWithDefault("WOW_DROP_FRESH_WINDOW_MINUTES", 40, 1) * 60_000;
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
@@ -395,6 +402,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidRosterCap,
     raidMinClearMs,
     raidDisbandMs,
+    raidFreshWindowMs,
     raidClearSustainedMs,
     statusYellMs,
     whisperMaxAgeMs,
