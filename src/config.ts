@@ -122,9 +122,10 @@ export interface BotConfig {
   readonly raidDetector: "count" | "temporal";
   /** Post a "bot online" message on startup. Off by default to stay quiet. */
   readonly announceStartup: boolean;
-  /** One-off diagnostic: on boot, add subscribers as friends (paced) and log each FriendsResult to
-   *  probe the server's friends-list cap. Off by default; set WOW_FRIEND_TEST=1 to run it. */
-  readonly friendTest: boolean;
+  /** One-off diagnostic: on boot, fire this many add ops back-to-back (dummy names, no state change)
+   *  and log each response's arrival time to probe the friend-op throttle rate. 0 = off. Set
+   *  WOW_FRIEND_TEST=50 (etc.) to run a burst of that size. */
+  readonly friendTestBurst: number;
   /** Whether the in-game whisper interface (commands + subscriber alerts) is active. */
   readonly whispersEnabled: boolean;
   /** Delay between outgoing whispers (ms) to stay under the server's chat throttle. */
@@ -344,8 +345,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const announceStartupRaw = env.WOW_ANNOUNCE_STARTUP?.trim().toLowerCase();
   const announceStartup = announceStartupRaw === "true" || announceStartupRaw === "1";
-  const friendTestRaw = env.WOW_FRIEND_TEST?.trim().toLowerCase();
-  const friendTest = friendTestRaw === "true" || friendTestRaw === "1";
+  const friendTestBurst = intWithDefault("WOW_FRIEND_TEST", 0, 0);
 
   const whispersRaw = env.WOW_WHISPERS?.trim().toLowerCase();
   const whispersEnabled = whispersRaw !== "false" && whispersRaw !== "0" && whispersRaw !== "none";
@@ -435,7 +435,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidGrouping,
     raidDetector,
     announceStartup,
-    friendTest,
+    friendTestBurst,
     whispersEnabled,
     whisperThrottleMs,
     discordBotToken,

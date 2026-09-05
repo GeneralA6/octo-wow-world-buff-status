@@ -942,12 +942,18 @@ async function runConnection(
           // response timestamps — if the server throttles, the SMSG_FRIEND_STATUS replies come back
           // spaced at the throttle interval. Dummy names, so NO friend is added (each returns
           // NOT_FOUND or LIST_FULL) and the list is unchanged.
-          if (config.friendTest) {
-            void (async () => {
-              const burst = 15;
-              logger.info(`FRIEND-RATE: firing ${burst} add ops back-to-back (dummy names, no state change) at ${new Date().toISOString()} — watch the response timestamps`);
+          if (config.friendTestBurst > 0) {
+            const burst = config.friendTestBurst;
+            // Fire the burst now AND every 45s, so a log capture reliably catches one (the boot-only
+            // burst kept scrolling past). Dummy names -> no state change. Turn the flag off when done.
+            const fire = (): void => {
+              if (settled) return;
+              logger.info(`FRIEND-RATE: firing ${burst} add ops back-to-back at ${new Date().toISOString()} — watch the response timestamps`);
               for (let i = 0; i < burst; i += 1) world.addFriend(`Rateprobe${i}`);
-            })();
+            };
+            fire();
+            const rateTimer = setInterval(fire, 45_000);
+            rateTimer.unref?.();
           }
           const poll = async (): Promise<void> => {
             try {
@@ -1001,7 +1007,7 @@ async function runConnection(
         // FRIEND-RATE diagnostic: log each friend-op response with its arrival time, so the spacing
         // between responses in a back-to-back burst reveals the server's throttle interval.
         onFriendStatus: (result) => {
-          if (!config.friendTest) return;
+          if (config.friendTestBurst <= 0) return;
           const NAMES: Record<number, string> = {
             0x01: "LIST_FULL", 0x02: "ONLINE", 0x03: "OFFLINE", 0x04: "NOT_FOUND", 0x05: "REMOVED",
             0x06: "ADDED_ONLINE", 0x07: "ADDED_OFFLINE", 0x08: "ALREADY", 0x09: "SELF", 0x0a: "ENEMY",
@@ -1011,7 +1017,7 @@ async function runConnection(
         },
         // FRIEND-TEST: the friends-list count — persists server-side, so it reflects prior runs' adds.
         onFriendList: (count) => {
-          if (config.friendTest) logger.info(`FRIEND-TEST: friends list currently holds ${count} — that's the cap if a prior run hit LIST_FULL`);
+          if (config.friendTestBurst > 0) logger.info(`FRIEND-TEST: friends list currently holds ${count}`);
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
         // A player joined the guild — if we invited them, welcome them in /g (no whisper).
