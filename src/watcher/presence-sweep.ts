@@ -109,17 +109,30 @@ export class PresenceSweeper {
   /**
    * Return the subset of `names` to whisper: everyone the probe did not find explicitly offline.
    * Never throws.
+   *
+   * `onKeep` streams: it fires the instant a name is decided kept, so a caller can enqueue that
+   * whisper immediately rather than wait for the whole sweep — the sweep runs many times faster than
+   * the throttled whisper drain, so this overlaps them for free. Every fail-open path (deadline, a
+   * busy sweep, a thrown op) routes its kept names through `onKeep` too, so the callback and the
+   * returned set never disagree; `onKeep` is called at most once per name.
    */
-  async sweep(names: readonly string[]): Promise<Set<string>> {
+  async sweep(names: readonly string[], onKeep?: (name: string) => void): Promise<Set<string>> {
+    const kept = new Set<string>();
+    const keep = (name: string): void => {
+      if (!kept.has(name)) {
+        kept.add(name);
+        onKeep?.(name);
+      }
+    };
     if (this.#sweeping) {
       // A sweep already owns the friends list — don't interleave. Fail-open: keep everyone rather
       // than block or corrupt the in-flight sweep. (The caller's cache absorbs clustered broadcasts.)
       this.#log?.warn("presence: a sweep is already running — keeping all names for this broadcast");
-      return new Set(names);
+      for (const name of names) keep(name);
+      return kept;
     }
     this.#sweeping = true;
     const start = this.#now();
-    const online = new Set<string>();
     try {
       await this.#clear();
       let offline = 0;
@@ -127,7 +140,7 @@ export class PresenceSweeper {
       for (let i = 0; i < names.length; i += 1) {
         const name = names[i]!;
         if (this.#now() - start > this.#sweepDeadlineMs) {
-          for (let j = i; j < names.length; j += 1) online.add(names[j]!); // out of time — keep the rest
+          for (let j = i; j < names.length; j += 1) keep(names[j]!); // out of time — keep the rest
           this.#log?.warn(
             `presence: hit the ${this.#sweepDeadlineMs}ms deadline at ${i}/${names.length}; kept the remainder`,
           );
@@ -146,15 +159,14 @@ export class PresenceSweeper {
           this.#ops.delFriend(status.guid);
         }
         if (status?.result === FriendsResult.AddedOffline) offline += 1; // the only name we drop
-        else online.add(name); // fail-open: online / already / not-found / enemy / timeout are kept
+        else keep(name); // fail-open: online / already / not-found / enemy / timeout are kept
       }
-      this.#log?.info(
-        `presence: probed ${probed}/${names.length}, dropped ${offline} offline, kept ${online.size}`,
-      );
-      return online;
+      this.#log?.info(`presence: probed ${probed}/${names.length}, dropped ${offline} offline, kept ${kept.size}`);
+      return kept;
     } catch (error) {
       this.#log?.warn(`presence: sweep failed (${String(error)}) — keeping all ${names.length} names`);
-      return new Set(names);
+      for (const name of names) keep(name); // idempotent — already-kept names are not re-enqueued
+      return kept;
     } finally {
       this.#sweeping = false;
       this.#pendingStatus = null;

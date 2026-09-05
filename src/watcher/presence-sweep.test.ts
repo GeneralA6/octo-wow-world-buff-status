@@ -203,6 +203,41 @@ describe("PresenceSweeper", () => {
     expect([...online].sort()).toEqual(["Aaa", "Bbb"]);
   });
 
+  it("streams kept names via onKeep — once each, offline excluded, matching the returned set", async () => {
+    const realm = new FakeRealm();
+    realm.addKnown("Onlineone", 1n, true);
+    realm.addKnown("Offlineone", 2n, false);
+    realm.addKnown("Onlinetwo", 3n, true);
+    realm.silent.add("Ghostname"); // unresolvable -> fail-open kept
+    const sweeper = make(realm);
+
+    const streamed: string[] = [];
+    const keep = await sweeper.sweep(["Onlineone", "Offlineone", "Onlinetwo", "Ghostname"], (n) => streamed.push(n));
+
+    expect(streamed.sort()).toEqual(["Ghostname", "Onlineone", "Onlinetwo"]); // offline not streamed
+    expect(streamed).not.toContain("Offlineone");
+    expect([...keep].sort()).toEqual(streamed.slice().sort()); // callback and return agree
+    expect(new Set(streamed).size).toBe(streamed.length); // no duplicates
+  });
+
+  it("on a thrown op mid-sweep, streams the whole remainder once (fail-open)", async () => {
+    const realm = new FakeRealm();
+    realm.addKnown("Aaa", 1n, true);
+    realm.addKnown("Bbb", 2n, false);
+    const sweeper = make(realm);
+    // Let the clear/list succeed, then throw on the first add so the loop fails partway.
+    realm.addFriend = () => {
+      throw new Error("socket closed mid-sweep");
+    };
+
+    const streamed: string[] = [];
+    const keep = await sweeper.sweep(["Aaa", "Bbb"], (n) => streamed.push(n));
+
+    expect(streamed.sort()).toEqual(["Aaa", "Bbb"]); // both streamed despite the failure
+    expect([...keep].sort()).toEqual(["Aaa", "Bbb"]);
+    expect(new Set(streamed).size).toBe(2); // and each only once
+  });
+
   it("resets busy after a sweep so the next one runs", async () => {
     const realm = new FakeRealm();
     realm.addKnown("Aaa", 1n, true);

@@ -346,24 +346,40 @@ async function runConnection(
     // Broadcast a whisper to many subscribers via the listener pool (splitting the load across
     // their separate throttle budgets), falling back to Bufftracker's own queue if no listener is
     // up. `cities` tags a park-now alert so a later buff drop there can purge it as stale.
-    // Presence gate (route B): return the subset of `names` worth whispering — everyone the sweep
-    // did not find explicitly offline. Fail-open on every path (feature off, no live sweeper, cache
-    // miss) so a broadcast is never silenced by presence. Cached per name so a drop and its
-    // about-to-clear moments later reuse one sweep instead of re-churning the friends list.
-    const resolveWhisperTargets = async (names: readonly string[]): Promise<readonly string[]> => {
-      if (!config.presenceEnabled || !presenceSweeper) return names;
-      const now = Date.now();
-      const stale = names.filter((name) => {
-        const cached = presenceCache.get(name);
-        return !cached || now - cached.at > config.presenceCacheMs;
-      });
-      if (stale.length > 0) {
-        const keep = await presenceSweeper.sweep(stale);
-        for (const name of stale) presenceCache.set(name, { whisper: keep.has(name), at: now });
-      }
-      return names.filter((name) => presenceCache.get(name)?.whisper ?? true);
+    // Enqueue whisper targets in small batches so they round-robin across the listener pool (fanOut
+    // splits a batch across members; one-at-a-time would pile on member 0). Falls back to the
+    // watcher's own queue when the pool is empty.
+    const WHISPER_BATCH = 8;
+    const makeWhisperSink = (
+      message: string,
+      faction: Faction | null,
+      cities?: readonly Faction[],
+      maxAgeMs?: number,
+    ): { add: (name: string) => void; flush: () => void } => {
+      let buffer: string[] = [];
+      const flush = (): void => {
+        if (buffer.length === 0) return;
+        const batch = buffer;
+        buffer = [];
+        if (whisperPool.fanOut(batch, message, faction, cities, maxAgeMs) === 0) {
+          for (const name of batch) whisperQueue?.enqueue(name, message, cities, maxAgeMs);
+        }
+      };
+      return {
+        add: (name) => {
+          buffer.push(name);
+          if (buffer.length >= WHISPER_BATCH) flush();
+        },
+        flush,
+      };
     };
 
+    // Presence gate (route B): whisper everyone the sweep does not find explicitly offline, skipping
+    // the offline (who'd only burn a throttle slot on an undeliverable whisper). STREAMED — each
+    // online name is enqueued the instant the sweep confirms it, so the fast sweep overlaps the slow
+    // throttled drain instead of blocking it (upfront-blocking would make the first alert wait for
+    // the whole sweep, ~a name per realm round-trip). Fail-open on every path (feature off, no live
+    // sweeper, sweep failure). Cached per name so a drop and its about-to-clear reuse one sweep.
     const broadcastWhisper = (
       names: readonly string[],
       message: string,
@@ -372,11 +388,25 @@ async function runConnection(
       maxAgeMs?: number,
     ): void => {
       void (async () => {
-        const targets = await resolveWhisperTargets(names);
-        if (targets.length === 0) return;
-        if (whisperPool.fanOut(targets, message, faction, cities, maxAgeMs) === 0) {
-          for (const name of targets) whisperQueue?.enqueue(name, message, cities, maxAgeMs);
+        const sink = makeWhisperSink(message, faction, cities, maxAgeMs);
+        const sweeper = presenceSweeper;
+        if (!config.presenceEnabled || !sweeper) {
+          for (const name of names) sink.add(name); // presence off — whisper everyone
+          sink.flush();
+          return;
         }
+        const now = Date.now();
+        const stale: string[] = [];
+        for (const name of names) {
+          const cached = presenceCache.get(name);
+          if (!cached || now - cached.at > config.presenceCacheMs) stale.push(name);
+          else if (cached.whisper) sink.add(name); // cached online — enqueue now; cached offline — skip
+        }
+        if (stale.length > 0) {
+          const keep = await sweeper.sweep(stale, (name) => sink.add(name)); // stream the online ones
+          for (const name of stale) presenceCache.set(name, { whisper: keep.has(name), at: now });
+        }
+        sink.flush();
       })().catch((error) => logger.error(`broadcast whisper: ${describeError(error)}`));
     };
 
@@ -1077,7 +1107,10 @@ async function runConnection(
     // so a broadcast can learn who is online. Created now; consulted only once in-world. Also created
     // for the boot probe, so the pipeline can be checked live before the gate is turned on.
     if (config.presenceEnabled || config.presenceProbe) {
-      presenceSweeper = new PresenceSweeper({ ops: world, logger });
+      // Generous deadline: the sweep is a per-name realm round-trip (~one name every few hundred ms)
+      // but STREAMS and runs in the background, far ahead of the throttled whisper drain, so it can
+      // cover the whole roster. The deadline is only a safety cap — its remainder fails open.
+      presenceSweeper = new PresenceSweeper({ ops: world, logger, sweepDeadlineMs: 240_000 });
     }
 
     whisperQueue = new WhisperQueue(
