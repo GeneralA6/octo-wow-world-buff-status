@@ -28,6 +28,7 @@ import { groupByRelevantCities } from "./notify/faction-routing.js";
 import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
+import { PresenceSweeper } from "./watcher/presence-sweep.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
@@ -312,6 +313,11 @@ async function runConnection(
     let statusYellTimer: NodeJS.Timeout | null = null;
     let factionResolveTimer: NodeJS.Timeout | null = null;
     let whisperQueue: WhisperQueue | null = null;
+    // Presence sweep (route B): created once this connection is in-world, owns Bufftracker's friends
+    // list, and is consulted before every broadcast to skip offline players. Per-connection — reset
+    // on close. The cache lets clustered broadcasts reuse one sweep (name -> was-online + when).
+    let presenceSweeper: PresenceSweeper | null = null;
+    const presenceCache = new Map<string, { whisper: boolean; at: number }>();
     // The world server can accept the TCP connection but stall the handshake, and
     // there's no other timeout past connect — so bound the time to reach in-world.
     let readyTimer: NodeJS.Timeout | null = null;
@@ -332,6 +338,7 @@ async function runConnection(
       router.setFactionLookup(null); // and stop the /who-based faction detection
       router.setFactionDetect(null);
       buffDropSink.notify = null; // and stop routing buff-drop whispers until reconnected
+      presenceSweeper = null; // its world client is going away; broadcasts fall back to whispering all
       if (error) reject(error);
       else resolve();
     };
@@ -339,6 +346,24 @@ async function runConnection(
     // Broadcast a whisper to many subscribers via the listener pool (splitting the load across
     // their separate throttle budgets), falling back to Bufftracker's own queue if no listener is
     // up. `cities` tags a park-now alert so a later buff drop there can purge it as stale.
+    // Presence gate (route B): return the subset of `names` worth whispering — everyone the sweep
+    // did not find explicitly offline. Fail-open on every path (feature off, no live sweeper, cache
+    // miss) so a broadcast is never silenced by presence. Cached per name so a drop and its
+    // about-to-clear moments later reuse one sweep instead of re-churning the friends list.
+    const resolveWhisperTargets = async (names: readonly string[]): Promise<readonly string[]> => {
+      if (!config.presenceEnabled || !presenceSweeper) return names;
+      const now = Date.now();
+      const stale = names.filter((name) => {
+        const cached = presenceCache.get(name);
+        return !cached || now - cached.at > config.presenceCacheMs;
+      });
+      if (stale.length > 0) {
+        const keep = await presenceSweeper.sweep(stale);
+        for (const name of stale) presenceCache.set(name, { whisper: keep.has(name), at: now });
+      }
+      return names.filter((name) => presenceCache.get(name)?.whisper ?? true);
+    };
+
     const broadcastWhisper = (
       names: readonly string[],
       message: string,
@@ -346,9 +371,13 @@ async function runConnection(
       cities?: readonly Faction[],
       maxAgeMs?: number,
     ): void => {
-      if (whisperPool.fanOut(names, message, faction, cities, maxAgeMs) === 0) {
-        for (const name of names) whisperQueue?.enqueue(name, message, cities, maxAgeMs);
-      }
+      void (async () => {
+        const targets = await resolveWhisperTargets(names);
+        if (targets.length === 0) return;
+        if (whisperPool.fanOut(targets, message, faction, cities, maxAgeMs) === 0) {
+          for (const name of targets) whisperQueue?.enqueue(name, message, cities, maxAgeMs);
+        }
+      })().catch((error) => logger.error(`broadcast whisper: ${describeError(error)}`));
     };
 
     // A buff-parking alert: post to the Onyxia channel (pinging @alliance/@horde per open
@@ -993,6 +1022,10 @@ async function runConnection(
           }
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
+        // Friend-op replies feed the presence sweep (route B). Only the watcher sweeps, so only its
+        // client wires these; the listeners leave them unset.
+        onFriendStatus: (status) => presenceSweeper?.handleFriendStatus(status),
+        onFriendList: (list) => presenceSweeper?.handleFriendList(list),
         // A player joined the guild — if we invited them, welcome them in /g (no whisper).
         onGuildJoin: (name) => welcomeIfWeInvited(name),
         onGuildLeave: (name) => onGuildLeave(name),
@@ -1021,6 +1054,9 @@ async function runConnection(
         onClose: () => settle(new Error("world connection closed")),
       },
     });
+    // The watcher's world client IS a FriendOps (add/del/requestFriendList) — hand it to the sweep
+    // so a broadcast can learn who is online. Created now; consulted only once in-world.
+    if (config.presenceEnabled) presenceSweeper = new PresenceSweeper({ ops: world, logger });
 
     whisperQueue = new WhisperQueue(
       (targetName, message) => world.whisper(targetName, message),

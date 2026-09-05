@@ -124,6 +124,15 @@ export interface BotConfig {
   readonly announceStartup: boolean;
   /** Whether the in-game whisper interface (commands + subscriber alerts) is active. */
   readonly whispersEnabled: boolean;
+  /** Gate broadcast whispers on a live presence sweep — before fanning a broadcast out, briefly
+   *  friend each target to learn who is online and skip the offline ones (they'd only burn a
+   *  throttle slot on an undeliverable whisper). Fail-open, so off-by-default is purely a rollout
+   *  choice. Off unless WOW_PRESENCE_ENABLED is set. */
+  readonly presenceEnabled: boolean;
+  /** How long a name's online/offline verdict from a presence sweep stays fresh, so clustered
+   *  broadcasts (a drop then its about-to-clear) reuse one sweep instead of re-churning the friends
+   *  list (default 90s). */
+  readonly presenceCacheMs: number;
   /** Delay between outgoing whispers (ms) to stay under the server's chat throttle. */
   readonly whisperThrottleMs: number;
   /** Discord bot token for posting to the notification/feedback channels; null disables them. */
@@ -344,6 +353,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const whispersRaw = env.WOW_WHISPERS?.trim().toLowerCase();
   const whispersEnabled = whispersRaw !== "false" && whispersRaw !== "0" && whispersRaw !== "none";
+  const presenceRaw = env.WOW_PRESENCE_ENABLED?.trim().toLowerCase();
+  const presenceEnabled = presenceRaw === "true" || presenceRaw === "1";
+  const presenceCacheMs = intWithDefault("WOW_PRESENCE_CACHE_SECONDS", 90, 1) * 1_000;
   const whisperThrottleMs = intWithDefault("WOW_WHISPER_THROTTLE_MS", 1200, 200);
   const discordBotToken = env.DISCORD_BOT_TOKEN?.trim() || null;
   const discordServerInvite = env.DISCORD_SERVER_INVITE_URL?.trim() || null;
@@ -431,6 +443,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidDetector,
     announceStartup,
     whispersEnabled,
+    presenceEnabled,
+    presenceCacheMs,
     whisperThrottleMs,
     discordBotToken,
     discordServerInvite,
