@@ -282,6 +282,10 @@ async function runConnection(
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
+  // The raid number each lane last fired the "about to clear" heads-up for, so it fires ONCE per
+  // raid — not again a minute later just because a buff dropped (a saved head, or a concurrent
+  // raid's kill) reset the buff-cycle dedup while this raid is still in the lair.
+  const lastEndingRaid = new Map<string, number | null>();
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -507,13 +511,11 @@ async function runConnection(
       // strength). Only ever called for a raid that is genuinely still in progress (the caller
       // gates on that), so it never nudges people to park for a raid that has finished.
       const announceRaidEnding = async (raidNumber: number | null, elapsedMs: number): Promise<void> => {
-        const fresh: Faction[] = [];
-        for (const city of lane.cities) {
-          const last = await broadcasts.last(city, "raid-ending");
-          const lastBuffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
-          if (shouldBroadcast(last, lastBuffDropAt, now, config.broadcastDedupMs)) fresh.push(city);
-        }
-        if (fresh.length === 0) return;
+        // Fire to every city this lane covers. The caller's per-raid dedup already guarantees this
+        // runs at most once per raid, so there is no buff-cycle dedup here — a mid-raid buff drop
+        // (saved head / concurrent raid) must NOT re-open the heads-up, which the old
+        // shouldBroadcast check did (it re-fired "park now" a minute after the first).
+        const fresh: Faction[] = [...lane.cities];
         const typical = await typicalClear();
         const message = formatRaidEnding(raidNumber, fresh, elapsedMs, typical);
         logger.info(`ALERT raid-ending (${fresh.join("/")}): ${message.body}`);
@@ -696,10 +698,14 @@ async function runConnection(
       // If it just cleared above (elapsed is now null), or its roster is already leaving (a pending
       // departure — clearing or wiping), there is no fresh buff to park for, so we stay quiet.
       const endingElapsedMs = lane.watch.raidElapsedMs(now);
-      if (endingElapsedMs !== null && !lane.watch.pendingClear()) {
+      const endingRaidNumber = lane.watch.raidNumber();
+      // Once per raid: don't re-fire the heads-up for a raid we've already announced (a buff drop
+      // mid-raid must not re-trigger it — that put a second "park now" a minute after the first).
+      if (endingElapsedMs !== null && !lane.watch.pendingClear() && lastEndingRaid.get(lane.label) !== endingRaidNumber) {
         const predictedMs = await predictRaidDurationMs();
         if (raidEndingDue(endingElapsedMs, predictedMs, config.raidEndingLeadMs)) {
-          await announceRaidEnding(lane.watch.raidNumber(), endingElapsedMs);
+          await announceRaidEnding(endingRaidNumber, endingElapsedMs);
+          lastEndingRaid.set(lane.label, endingRaidNumber);
         }
       }
     };
