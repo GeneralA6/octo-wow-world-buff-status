@@ -901,8 +901,7 @@ async function runConnection(
 
     let lftSeen = 0; // LFT channel messages seen, for the observe heartbeat
     const headIncomingSeen = new Map<string, number>(); // faction+witness -> last alert time, for dedup
-    let friendAdded = 0; // FRIEND-TEST: count of successful friend adds, for the cap probe
-    let friendListFull = false; // FRIEND-TEST: set when the server reports the list is full
+    let friendAdded = 0; // FRIEND-RATE: response counter for the throttle burst probe
     const world = new WorldClient({
       socket,
       account: config.account,
@@ -939,23 +938,15 @@ async function runConnection(
               logger.warn(`could not join channel ${config.lftChannel}: ${describeError(error)}`);
             }
           }
-          // One-off probe of the server's friends-list cap: add subscribers as friends, paced, and
-          // let onFriendStatus log each result until the server says the list is full.
+          // One-off probe of the friend-op RATE: fire a burst of add ops back-to-back and read the
+          // response timestamps — if the server throttles, the SMSG_FRIEND_STATUS replies come back
+          // spaced at the throttle interval. Dummy names, so NO friend is added (each returns
+          // NOT_FOUND or LIST_FULL) and the list is unchanged.
           if (config.friendTest) {
             void (async () => {
-              world.requestFriendList(); // log the current count first (reflects any prior run's adds)
-              await delay(3_000);
-              const subs = await store.all().catch(() => []);
-              logger.info(`FRIEND-TEST: adding up to ${subs.length} subscribers as friends (paced 1.5s) to find the cap...`);
-              for (const sub of subs) {
-                if (settled || friendListFull) break;
-                world.addFriend(sub.name);
-                await delay(1_500);
-              }
-              logger.info(
-                `FRIEND-TEST: done — ${friendAdded} added${friendListFull ? ", then LIST_FULL (that count is the cap)" : " (never full — ran out of subscribers, cap is >= that)"}`,
-              );
-              world.requestFriendList(); // final count
+              const burst = 15;
+              logger.info(`FRIEND-RATE: firing ${burst} add ops back-to-back (dummy names, no state change) at ${new Date().toISOString()} — watch the response timestamps`);
+              for (let i = 0; i < burst; i += 1) world.addFriend(`Rateprobe${i}`);
             })();
           }
           const poll = async (): Promise<void> => {
@@ -1007,18 +998,16 @@ async function runConnection(
             logger.info(`LFT: ${lftSeen} messages seen (sample runs ${JSON.stringify(runs.slice(0, 3))})`);
           }
         },
-        // FRIEND-TEST diagnostic: log each friend-add result and track the cap.
+        // FRIEND-RATE diagnostic: log each friend-op response with its arrival time, so the spacing
+        // between responses in a back-to-back burst reveals the server's throttle interval.
         onFriendStatus: (result) => {
           if (!config.friendTest) return;
           const NAMES: Record<number, string> = {
             0x01: "LIST_FULL", 0x02: "ONLINE", 0x03: "OFFLINE", 0x04: "NOT_FOUND", 0x05: "REMOVED",
             0x06: "ADDED_ONLINE", 0x07: "ADDED_OFFLINE", 0x08: "ALREADY", 0x09: "SELF", 0x0a: "ENEMY",
           };
-          if (result === 0x06 || result === 0x07) friendAdded += 1;
-          if (result === 0x01) friendListFull = true;
-          logger.info(
-            `FRIEND-TEST result=0x${result.toString(16)} (${NAMES[result] ?? "?"}) — added so far: ${friendAdded}${result === 0x01 ? " *** CAP REACHED ***" : ""}`,
-          );
+          friendAdded += 1; // response counter for the burst
+          logger.info(`FRIEND-RATE response #${friendAdded} = 0x${result.toString(16)} (${NAMES[result] ?? "?"}) at ${new Date().toISOString()}`);
         },
         // FRIEND-TEST: the friends-list count — persists server-side, so it reflects prior runs' adds.
         onFriendList: (count) => {
