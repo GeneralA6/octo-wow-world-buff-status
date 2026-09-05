@@ -119,6 +119,55 @@ export function buildGuildChat(message: string, language: number = LANG_UNIVERSA
     .toBuffer();
 }
 
+/** Build a CMSG_JOIN_CHANNEL to sit on a global chat channel (1.12: name then password). */
+export function buildJoinChannel(name: string, password = ""): Buffer {
+  return new PacketWriter().cString(name).cString(password).toBuffer();
+}
+
+export interface ChannelChat {
+  readonly channelName: string;
+  readonly senderGuid: bigint;
+  readonly text: string;
+}
+
+/**
+ * Parse an SMSG_MESSAGECHAT CHANNEL message. The 1.12 channel layout inserts the channel name
+ * (and an unused u32) before the sender guid, unlike the player/monster layouts:
+ *   u8 type, u32 language, cstring channelName, u32 unused, u64 senderGuid, u32 msgLen, msg, u8 tag
+ * This is the DOCUMENTED shape and MUST be confirmed against a live capture before it is trusted —
+ * the observe hook logs the raw bytes and `printableAsciiRuns` alongside it for exactly that, so the
+ * channel name and message text stay legible even if these offsets are wrong.
+ */
+export function parseChannelChat(body: Buffer): ChannelChat {
+  const reader = new PacketReader(body);
+  reader.u8(); // type
+  reader.u32LE(); // language
+  const channelName = reader.cString();
+  reader.u32LE(); // unused (player rank / flag)
+  const senderGuid = reader.u64LE();
+  const raw = reader.bytes(reader.u32LE());
+  const nul = raw.indexOf(0);
+  const text = raw.toString("utf8", 0, nul === -1 ? raw.length : nul);
+  return { channelName, senderGuid, text };
+}
+
+/** Printable ASCII runs (>= `minLen` chars) in a packet body — for logging an unconfirmed layout
+ *  so the real channel name and message text are legible before the exact offsets are pinned. */
+export function printableAsciiRuns(body: Buffer, minLen = 2): string[] {
+  const runs: string[] = [];
+  let cur = "";
+  for (const byte of body) {
+    if (byte >= 0x20 && byte < 0x7f) {
+      cur += String.fromCharCode(byte);
+    } else {
+      if (cur.length >= minLen) runs.push(cur);
+      cur = "";
+    }
+  }
+  if (cur.length >= minLen) runs.push(cur);
+  return runs;
+}
+
 /** SMSG_CHAT_PLAYER_NOT_FOUND body is the offline target's name as a CString. */
 export function parsePlayerNotFound(body: Buffer): string {
   return new PacketReader(body).cString();

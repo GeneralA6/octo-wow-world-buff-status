@@ -3,15 +3,34 @@ import { PacketReader, PacketWriter } from "../net/byte-buffer.js";
 import { ChatType, GuildEvent, LANG_UNIVERSAL } from "./opcodes.js";
 import {
   buildGuildChat,
+  buildJoinChannel,
   buildWhisper,
   buildYell,
   escapeChatText,
   isMonsterChatType,
+  parseChannelChat,
   parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
   parseServerChat,
+  printableAsciiRuns,
 } from "./chat.js";
+
+/** Assemble an SMSG_MESSAGECHAT CHANNEL body per the documented (unconfirmed) 1.12 layout. */
+function channelChat(channelName: string, guid: bigint, text: string, language = 0): Buffer {
+  const msg = Buffer.from(text, "utf8");
+  return new PacketWriter()
+    .u8(ChatType.Channel)
+    .u32LE(language)
+    .cString(channelName)
+    .u32LE(0) // unused
+    .u64LE(guid)
+    .u32LE(msg.length + 1)
+    .bytes(msg)
+    .u8(0)
+    .u8(0) // chat tag
+    .toBuffer();
+}
 
 /** Assemble an SMSG_MESSAGECHAT player-message body the way the server would. */
 function serverChat(type: number, guid: bigint, text: string, language = 7): Buffer {
@@ -194,5 +213,37 @@ describe("parseGuildEvent", () => {
     const event = parseGuildEvent(body);
     expect(event.type).toBe(GuildEvent.SignedOn);
     expect(event.params).toEqual(["Raider"]); // trailing guid not read, doesn't corrupt the parse
+  });
+});
+
+describe("buildJoinChannel", () => {
+  it("writes the channel name then password as C-strings", () => {
+    const reader = new PacketReader(buildJoinChannel("LFT"));
+    expect(reader.cString()).toBe("LFT");
+    expect(reader.cString()).toBe(""); // default empty password
+  });
+});
+
+describe("parseChannelChat (documented layout — confirm against a live capture)", () => {
+  it("round-trips channel name, sender guid and text", () => {
+    const body = channelChat("LFT", 0xabcdn, "OB_INC:1:A-O-Someplayer-14-32");
+    const chat = parseChannelChat(body);
+    expect(chat.channelName).toBe("LFT");
+    expect(chat.senderGuid).toBe(0xabcdn);
+    expect(chat.text).toBe("OB_INC:1:A-O-Someplayer-14-32");
+  });
+});
+
+describe("printableAsciiRuns", () => {
+  it("extracts the legible strings from a binary body regardless of exact offsets", () => {
+    const body = channelChat("LFT", 0xabcdn, "OB_INC:1:A-O-Someplayer-14-32");
+    const runs = printableAsciiRuns(body);
+    expect(runs).toContain("LFT");
+    expect(runs).toContain("OB_INC:1:A-O-Someplayer-14-32");
+  });
+
+  it("respects the minimum run length and splits on non-printable bytes", () => {
+    const body = Buffer.from([0x41, 0x42, 0x00, 0x43, 0xff, 0x48, 0x49, 0x4a]); // "AB", "C", "HIJ"
+    expect(printableAsciiRuns(body, 2)).toEqual(["AB", "HIJ"]); // "C" dropped (below min length)
   });
 });

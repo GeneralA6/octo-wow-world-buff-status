@@ -37,6 +37,9 @@ export enum WorldOpcode {
   SMSG_GUILD_EVENT = 0x92,
   CMSG_MESSAGECHAT = 0x95,
   SMSG_MESSAGECHAT = 0x96,
+  /** Join a global chat channel by name (1.12 body: cstring name, cstring password). Used to sit
+   *  on Turtle's addon-comms "LFT" channel and read world-buff broadcasts. Confirm on a live join. */
+  CMSG_JOIN_CHANNEL = 0x97,
   /** Nearby object create/update stream — where a GameObject's guid+entry arrive. */
   SMSG_UPDATE_OBJECT = 0xa9,
   /** Same, zlib-compressed (u32 uncompressed length + deflate); common on login. */

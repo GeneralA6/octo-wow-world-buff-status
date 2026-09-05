@@ -127,6 +127,10 @@ export interface BotConfig {
   readonly discordBotToken: string | null;
   /** The community Discord server invite link, shared by the in-game "discord" command. Null = unset. */
   readonly discordServerInvite: string | null;
+  /** Global chat channel the LISTENERS join to READ addon world-buff broadcasts (Turtle's "LFT").
+   *  Null = disabled (default). Flag-gated OFF because reading a channel is unconfirmed protocol —
+   *  set WOW_LFT_CHANNEL=LFT to enable the observe hook and capture the real messages. */
+  readonly lftChannel: string | null;
   /** Channel the "feedback" command posts player suggestions to (via the bot). Null = not set,
    *  and feedback is still saved + acknowledged, just not posted to Discord. */
   readonly discordFeedbackChannelId: string | null;
@@ -336,6 +340,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const whisperThrottleMs = intWithDefault("WOW_WHISPER_THROTTLE_MS", 1200, 200);
   const discordBotToken = env.DISCORD_BOT_TOKEN?.trim() || null;
   const discordServerInvite = env.DISCORD_SERVER_INVITE_URL?.trim() || null;
+  const lftChannel = env.WOW_LFT_CHANNEL?.trim() || null;
   const discordFeedbackChannelId = env.DISCORD_FEEDBACK_CHANNEL_ID?.trim() || null;
   const discordOnyxiaChannelId = env.DISCORD_ONYXIA_CHANNEL_ID?.trim() || null;
   const discordErrorsChannelId = env.DISCORD_ERRORS_CHANNEL_ID?.trim() || null;
@@ -420,6 +425,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     whisperThrottleMs,
     discordBotToken,
     discordServerInvite,
+    lftChannel,
     discordFeedbackChannelId,
     discordOnyxiaChannelId,
     discordErrorsChannelId,

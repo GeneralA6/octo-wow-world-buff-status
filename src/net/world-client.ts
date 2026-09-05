@@ -6,9 +6,11 @@ import { AUTH_OK, ChatType, CLIENT_BUILD, GuildEvent, WorldOpcode } from "../pro
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
 import {
   buildGuildChat,
+  buildJoinChannel,
   buildWhisper,
   buildYell,
   isMonsterChatType,
+  parseChannelChat,
   parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
@@ -44,6 +46,9 @@ export interface WorldClientHandlers {
   onWhisperUndelivered?: (target: string) => void;
   /** An NPC yelled to the zone (raw). The wiring layer decides if it is a buff yell. */
   onMonsterYell?: (senderName: string, text: string) => void;
+  /** A message on a global chat CHANNEL we joined (e.g. Turtle's "LFT" addon-comms channel). The
+   *  raw body is passed too, since the channel layout is unconfirmed — the wiring logs it. */
+  onChannelMessage?: (channelName: string, senderGuid: bigint, text: string, raw: Buffer) => void;
   /** A server SYSTEM message — how the server reports command results/errors (e.g. a guild
    *  invite that failed). The wiring layer decides which ones are errors worth alerting on. */
   onSystemMessage?: (text: string) => void;
@@ -187,6 +192,14 @@ export class WorldClient {
     if (!this.#ready) throw new Error("cannot yell before the character is in world");
     this.#logger.info(`yell: ${JSON.stringify(message)}`);
     this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildYell(message));
+  }
+
+  /** Join a global chat channel (e.g. Turtle's addon-comms "LFT" channel) to READ its messages —
+   *  they then arrive as onChannelMessage. We only listen; nothing is ever sent to the channel. */
+  joinChannel(name: string): void {
+    if (!this.#ready) throw new Error("cannot join a channel before the character is in world");
+    this.#logger.info(`joining channel ${JSON.stringify(name)}`);
+    this.#send(WorldOpcode.CMSG_JOIN_CHANNEL, buildJoinChannel(name));
   }
 
   /** Post to guild chat (/g) — used to welcome a new member. Needs the character guilded. */
@@ -386,6 +399,10 @@ export class WorldClient {
         this.#handleMonsterChat(body);
         return;
       }
+      if (body.length > 0 && body.readUInt8(0) === ChatType.Channel) {
+        this.#handleChannelChat(body);
+        return;
+      }
       const chat = parseServerChat(body);
       this.#logger.debug(
         `world: chat type=0x${chat.type.toString(16)} guid=0x${chat.senderGuid.toString(16)} text=${JSON.stringify(chat.text)}`,
@@ -430,6 +447,19 @@ export class WorldClient {
     } catch (error) {
       this.#logger.debug(
         `world: could not read monster chat [${body.subarray(0, 64).toString("hex")}]: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /** A CHANNEL message (e.g. from LFT). The layout is unconfirmed, so parsing is best-effort and the
+   *  wiring is handed the raw body too; a parse failure is logged and dropped, never fatal. */
+  #handleChannelChat(body: Buffer): void {
+    try {
+      const chat = parseChannelChat(body);
+      this.#handlers.onChannelMessage?.(chat.channelName, chat.senderGuid, chat.text, body);
+    } catch (error) {
+      this.#logger.debug(
+        `world: could not read channel chat [${body.subarray(0, 64).toString("hex")}]: ${(error as Error).message}`,
       );
     }
   }
