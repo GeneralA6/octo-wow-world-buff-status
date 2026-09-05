@@ -19,6 +19,7 @@ import {
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
+  formatHeadIncoming,
   formatServerDown,
   formatServerUp,
 } from "./notify/format.js";
@@ -111,6 +112,10 @@ const HEAL_CHECK_COOLDOWN_MS = 5 * 60_000;
 
 /** How many recent clears the timer self-evaluation replays each heartbeat. */
 const TIMER_EVAL_WINDOW = 200;
+
+/** Suppress a repeat LFT head-incoming alert for the same turn-in within this window — the channel
+ *  relays/retransmits the same OB_INC many times, and a turn-in is a momentary event. */
+const HEAD_INCOMING_DEDUP_MS = 15 * 60_000;
 
 /** Consecutive reconnect failures before a supervisor alerts the errors channel that it's
  *  down (backoff caps at 60s, so this is a couple of minutes of sustained failure, not a blip). */
@@ -893,6 +898,7 @@ async function runConnection(
     };
 
     let lftSeen = 0; // LFT channel messages seen, for the observe heartbeat
+    const headIncomingSeen = new Map<string, number>(); // faction+witness -> last alert time, for dedup
     const world = new WorldClient({
       socket,
       account: config.account,
@@ -953,21 +959,27 @@ async function runConnection(
           }, FACTION_RESOLVE_MS);
           factionResolveTimer.unref?.();
         },
-        // PHASE 0 — OBSERVE ONLY. LFT is a firehose (~37/s of PWB timers), so surface only OUR
-        // protocol (OB_INC advance warning / OB: timer) and a periodic heartbeat. No alert yet.
+        // PHASE 1 (staged): an OB_INC on LFT is an ADVANCE warning that an Onyxia head is being
+        // turned in NOW — before the yell. Fire it, but to the OPS (errors) channel for now, not the
+        // public buff channel, while the source addon has few users. Deduped per turn-in (the channel
+        // retransmits the same OB_INC many times). LFT is otherwise a firehose we don't log.
         onChannelMessage: (channelName, _senderGuid, text, raw) => {
           lftSeen += 1;
           const runs = printableAsciiRuns(raw);
           const obLine = [text, ...runs].find((s) => s.startsWith("OB_INC:") || s.startsWith("OB:"));
           const incoming = parseHeadIncoming(obLine ?? "");
-          if (incoming) {
-            const city = incoming.faction === "alliance" ? "Stormwind" : "Orgrimmar";
-            logger.info(
-              `LFT head-incoming: ${incoming.faction} boss=${incoming.boss} onyxia=${isOnyxiaHead(incoming.boss)} ` +
-                `witness=${incoming.witness} at ${incoming.serverHour}:${String(incoming.serverMinute).padStart(2, "0")} — WOULD alert ${city}`,
-            );
+          if (incoming && isOnyxiaHead(incoming.boss)) {
+            const now = Date.now();
+            for (const [k, t] of headIncomingSeen) if (now - t > HEAD_INCOMING_DEDUP_MS) headIncomingSeen.delete(k);
+            const key = `${incoming.faction}-${incoming.witness}`;
+            if (now - (headIncomingSeen.get(key) ?? 0) > HEAD_INCOMING_DEDUP_MS) {
+              headIncomingSeen.set(key, now);
+              const msg = formatHeadIncoming(incoming.faction, incoming.witness);
+              logger.info(`LFT head-incoming -> ops: ${incoming.faction} witness=${incoming.witness} at ${incoming.serverHour}:${String(incoming.serverMinute).padStart(2, "0")}`);
+              void notifyAdmin(msg.title, msg.body).catch((e) => logger.error(`head-incoming notify: ${describeError(e)}`));
+            }
           } else if (obLine) {
-            logger.info(`LFT OB message (unparsed): ${JSON.stringify(obLine)} on ${JSON.stringify(channelName)}`);
+            logger.info(`LFT OB message (unparsed/non-onyxia): ${JSON.stringify(obLine)} on ${JSON.stringify(channelName)}`);
           } else if (lftSeen % 200 === 0) {
             logger.info(`LFT: ${lftSeen} messages seen (sample runs ${JSON.stringify(runs.slice(0, 3))})`);
           }

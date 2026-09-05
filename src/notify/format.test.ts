@@ -12,6 +12,7 @@ import {
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
+  formatHeadIncoming,
   formatServerDown,
   formatServerUp,
   humanClock,
@@ -197,6 +198,20 @@ describe("formatServerUp", () => {
     const msg = formatServerUp("N'Zoth", 0);
     expect(msg.body).toContain("Reconnected to N'Zoth.");
     expect(msg.body).not.toMatch(/~/);
+  });
+});
+
+describe("formatHeadIncoming", () => {
+  it("names the incoming city and the park action for an alliance turn-in", () => {
+    const msg = formatHeadIncoming("alliance", "Someplayer");
+    expect(msg.title).toBe("⚡ Onyxia buff incoming in Stormwind");
+    expect(msg.body).toContain("Someplayer");
+    expect(msg.body).toMatch(/park in Stormwind now/i);
+    expect(msg.body).toMatch(/within moments/i); // it's the ADVANCE warning, not a drop
+  });
+
+  it("maps horde to Orgrimmar", () => {
+    expect(formatHeadIncoming("horde", "Thrallfan").title).toBe("⚡ Onyxia buff incoming in Orgrimmar");
   });
 });
 

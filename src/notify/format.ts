@@ -178,6 +178,21 @@ export function formatBuffDroppedWhisper(
   return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}!${tip}${cta}`;
 }
 
+/**
+ * ADVANCE heads-up: an addon on the LFT channel reported an Onyxia head being turned in (OB_INC),
+ * so the Rallying Cry should drop in `faction`'s capital within moments — BEFORE the NPC yell. This
+ * is the one thing /who and the yell can never give us early. `witness` is who the addon saw turning
+ * it in (named for now, while this goes to the ops channel and the source addon has few users).
+ */
+export function formatHeadIncoming(faction: Faction, witness: string): NotifyMessage {
+  const city = CITY_FOR[faction];
+  return {
+    kind: "info",
+    title: `⚡ Onyxia buff incoming in ${city}`,
+    body: `A head is being turned in now (${witness}) - the Rallying Cry should drop in ${city} within moments. Hearthstone or park in ${city} now to catch it.`,
+  };
+}
+
 /** Guild-chat (/g) line welcoming a member who just accepted an invite. Everyone reading it is
  *  already in the guild, so it names no guild — short and warm. */
 export function formatGuildWelcome(name: string): string {
