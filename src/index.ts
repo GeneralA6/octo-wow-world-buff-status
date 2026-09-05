@@ -1112,6 +1112,11 @@ async function runConnection(
       // cover the whole roster. The deadline is only a safety cap — its remainder fails open.
       presenceSweeper = new PresenceSweeper({ ops: world, logger, sweepDeadlineMs: 240_000 });
     }
+    // State the presence gate's runtime state on every watcher connect — a broadcast either logs a
+    // "presence:" sweep line or it doesn't, and this says which is expected.
+    logger.info(
+      `presence gate: ${config.presenceEnabled ? "ENABLED" : "off"}${config.presenceProbe ? " + probe" : ""}`,
+    );
 
     whisperQueue = new WhisperQueue(
       (targetName, message) => world.whisper(targetName, message),
