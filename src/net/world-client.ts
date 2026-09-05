@@ -6,18 +6,21 @@ import { AUTH_OK, ChatType, CLIENT_BUILD, GuildEvent, WorldOpcode } from "../pro
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
 import {
   buildAddFriend,
+  buildDelFriend,
   buildGuildChat,
   buildJoinChannel,
   buildWhisper,
   buildYell,
   isMonsterChatType,
   parseChannelChat,
-  parseFriendResult,
-  parseFriendListCount,
+  parseFriendList,
+  parseFriendStatus,
   parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
   parseServerChat,
+  type FriendListEntry,
+  type FriendStatus,
 } from "../protocol/chat.js";
 import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.js";
 import { silentLogger, type Logger } from "../logger.js";
@@ -52,11 +55,13 @@ export interface WorldClientHandlers {
   /** A message on a global chat CHANNEL we joined (e.g. Turtle's "LFT" addon-comms channel). The
    *  raw body is passed too, since the channel layout is unconfirmed — the wiring logs it. */
   onChannelMessage?: (channelName: string, senderGuid: bigint, text: string, raw: Buffer) => void;
-  /** Result of a friend op (SMSG_FRIEND_STATUS) — the FriendsResult byte (added / list-full / etc.),
-   *  used to probe the friends-list cap. */
-  onFriendStatus?: (result: number) => void;
-  /** The friends-list reply (SMSG_FRIEND_LIST) — how many friends are currently on file. */
-  onFriendList?: (count: number) => void;
+  /** Result of a friend op / a friend's presence change (SMSG_FRIEND_STATUS): the FriendsResult and
+   *  the resolved guid. A fresh add is ADDED_ONLINE/ADDED_OFFLINE — the presence read the broadcast
+   *  sweep gates on — and the guid is what a later DEL needs. */
+  onFriendStatus?: (status: FriendStatus) => void;
+  /** The friends-list reply (SMSG_FRIEND_LIST): the count plus each friend's guid and online flag —
+   *  the sweep clears the list by guid. */
+  onFriendList?: (list: { count: number; friends: FriendListEntry[] }) => void;
   /** A server SYSTEM message — how the server reports command results/errors (e.g. a guild
    *  invite that failed). The wiring layer decides which ones are errors worth alerting on. */
   onSystemMessage?: (text: string) => void;
@@ -210,13 +215,21 @@ export class WorldClient {
     this.#send(WorldOpcode.CMSG_JOIN_CHANNEL, buildJoinChannel(name));
   }
 
-  /** Add a player to the friends list. The result arrives as onFriendStatus (a FriendsResult byte). */
+  /** Add a player to the friends list by name. The result (with the resolved guid) arrives as
+   *  onFriendStatus. A name the server cannot resolve gets no reply at all. */
   addFriend(name: string): void {
     if (!this.#ready) throw new Error("cannot add a friend before the character is in world");
     this.#send(WorldOpcode.CMSG_ADD_FRIEND, buildAddFriend(name));
   }
 
-  /** Request the friends list; the count comes back via onFriendList. */
+  /** Remove a friend by guid (the guid comes from onFriendStatus/onFriendList — DEL is never by
+   *  name). Used to clear the friends list and to tear down a presence sweep. */
+  delFriend(guid: bigint): void {
+    if (!this.#ready) throw new Error("cannot remove a friend before the character is in world");
+    this.#send(WorldOpcode.CMSG_DEL_FRIEND, buildDelFriend(guid));
+  }
+
+  /** Request the friends list; it comes back via onFriendList (count + each guid and online flag). */
   requestFriendList(): void {
     if (!this.#ready) throw new Error("cannot request the friends list before the character is in world");
     this.#send(WorldOpcode.CMSG_FRIEND_LIST, Buffer.alloc(0));
@@ -332,10 +345,10 @@ export class WorldClient {
           this.#handleChat(body);
           break;
         case WorldOpcode.SMSG_FRIEND_STATUS:
-          this.#handlers.onFriendStatus?.(parseFriendResult(body));
+          this.#handlers.onFriendStatus?.(parseFriendStatus(body));
           break;
         case WorldOpcode.SMSG_FRIEND_LIST:
-          this.#handlers.onFriendList?.(parseFriendListCount(body));
+          this.#handlers.onFriendList?.(parseFriendList(body));
           break;
         case WorldOpcode.SMSG_GUILD_EVENT:
           this.#handleGuildEvent(body);
