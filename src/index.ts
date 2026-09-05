@@ -972,6 +972,25 @@ async function runConnection(
               logger.warn(`could not join channel ${config.lftChannel}: ${describeError(error)}`);
             }
           }
+          // One-off live check of the presence sweep (route B): sweep every subscriber once and log
+          // the split, no whisper. Proves the add→read→remove pipeline against the real server before
+          // the gate is enabled. Delayed so the subscriber store and the connection have settled.
+          const probeSweeper = presenceSweeper;
+          if (config.presenceProbe && probeSweeper) {
+            const probeTimer = setTimeout(() => {
+              if (settled) return;
+              void (async () => {
+                const names = (await store.all().catch(() => [])).map((s) => s.name);
+                logger.info(`PRESENCE-PROBE: sweeping ${names.length} subscriber(s) — no whisper`);
+                const startedAt = Date.now();
+                const keep = await probeSweeper.sweep(names);
+                logger.info(
+                  `PRESENCE-PROBE: done in ${Date.now() - startedAt}ms — kept ${keep.size} (online/unknown), dropped ${names.length - keep.size} confirmed offline`,
+                );
+              })().catch((error) => logger.error(`presence-probe: ${describeError(error)}`));
+            }, 15_000);
+            probeTimer.unref?.();
+          }
           const poll = async (): Promise<void> => {
             try {
               // Spread the class slices across the idle listener sockets too, not just this one.
@@ -1055,8 +1074,11 @@ async function runConnection(
       },
     });
     // The watcher's world client IS a FriendOps (add/del/requestFriendList) — hand it to the sweep
-    // so a broadcast can learn who is online. Created now; consulted only once in-world.
-    if (config.presenceEnabled) presenceSweeper = new PresenceSweeper({ ops: world, logger });
+    // so a broadcast can learn who is online. Created now; consulted only once in-world. Also created
+    // for the boot probe, so the pipeline can be checked live before the gate is turned on.
+    if (config.presenceEnabled || config.presenceProbe) {
+      presenceSweeper = new PresenceSweeper({ ops: world, logger });
+    }
 
     whisperQueue = new WhisperQueue(
       (targetName, message) => world.whisper(targetName, message),

@@ -129,6 +129,10 @@ export interface BotConfig {
    *  throttle slot on an undeliverable whisper). Fail-open, so off-by-default is purely a rollout
    *  choice. Off unless WOW_PRESENCE_ENABLED is set. */
   readonly presenceEnabled: boolean;
+  /** One-off live check: on boot, sweep every subscriber once and log the online/offline split
+   *  WITHOUT whispering — proves the add→read→remove pipeline against the real server before the
+   *  gate is turned on. Off unless WOW_PRESENCE_PROBE is set. */
+  readonly presenceProbe: boolean;
   /** How long a name's online/offline verdict from a presence sweep stays fresh, so clustered
    *  broadcasts (a drop then its about-to-clear) reuse one sweep instead of re-churning the friends
    *  list (default 90s). */
@@ -355,6 +359,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const whispersEnabled = whispersRaw !== "false" && whispersRaw !== "0" && whispersRaw !== "none";
   const presenceRaw = env.WOW_PRESENCE_ENABLED?.trim().toLowerCase();
   const presenceEnabled = presenceRaw === "true" || presenceRaw === "1";
+  const presenceProbeRaw = env.WOW_PRESENCE_PROBE?.trim().toLowerCase();
+  const presenceProbe = presenceProbeRaw === "true" || presenceProbeRaw === "1";
   const presenceCacheMs = intWithDefault("WOW_PRESENCE_CACHE_SECONDS", 90, 1) * 1_000;
   const whisperThrottleMs = intWithDefault("WOW_WHISPER_THROTTLE_MS", 1200, 200);
   const discordBotToken = env.DISCORD_BOT_TOKEN?.trim() || null;
@@ -444,6 +450,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     announceStartup,
     whispersEnabled,
     presenceEnabled,
+    presenceProbe,
     presenceCacheMs,
     whisperThrottleMs,
     discordBotToken,
