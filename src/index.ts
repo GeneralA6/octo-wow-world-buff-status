@@ -286,6 +286,10 @@ async function runConnection(
   config: BotConfig,
   logger: Logger,
   services: ConnectionServices,
+  // Fired once this connection reaches in-world. This is the realm-recovery signal — a stable
+  // reconnect must announce "back up" WITHOUT waiting for the connection to later close, which is
+  // exactly what the old post-close wiring got wrong (a healthy recovery never fired it).
+  onConnected: () => void,
 ): Promise<void> {
   const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
@@ -915,6 +919,8 @@ async function runConnection(
           logger.info(
             `in world; watching ${config.watchAreaName} about every ${config.pollIntervalMs / 1000}s`,
           );
+          onConnected(); // realm-recovery signal fires on reconnect, not on the next close
+
           // Offer Bufftracker's outbound channel so listeners can greet players through it,
           // and give the command router the guild-invite capability for the "invite" command.
           if (config.whispersEnabled) {
@@ -1050,6 +1056,8 @@ async function runListener(
   yellSink: YellSink,
   listenerWho: ListenerWho,
   whisperPool: WhisperPool,
+  // Fired once this listener reaches in-world — the realm-recovery signal (see runConnection).
+  onConnected: () => void,
 ): Promise<void> {
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
@@ -1124,6 +1132,7 @@ async function runListener(
           if (readyTimer) clearTimeout(readyTimer);
           readyTimer = null;
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
+          onConnected(); // realm-recovery signal fires on reconnect, not on the next close
           // Offer this socket for Bufftracker's faction lookups, keeping them off its raid poll.
           listenerWho.register(listener.characterName, queuedWho);
           // Join the whisper pool so broadcasts can fan across this listener's own throttle budget.
@@ -1734,12 +1743,11 @@ async function main(): Promise<void> {
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runConnection(config, watcherLog, services);
+        await runConnection(config, watcherLog, services, () => announceRealmUp(config.characterName));
         watcherLog.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
         heal.alertedStuck = false; // a clean run clears the "stuck" latch
         if (down.recover()) await notifyAdmin("✅ Watcher back online", "Reconnected and watching again.");
-        announceRealmUp(config.characterName); // realm-wide recovery (starts the stability window)
       } catch (error) {
         if (error instanceof VersionMismatchError) {
           if (await selfHeal(error, config, logger, client, notifyAdmin, heal)) {
@@ -1782,13 +1790,14 @@ async function main(): Promise<void> {
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runListener(config, listener, log, client, onBuff, outreach, yellSink, listenerWho, whisperPool);
+        await runListener(config, listener, log, client, onBuff, outreach, yellSink, listenerWho, whisperPool, () =>
+          announceRealmUp(listener.characterName),
+        );
         log.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
         if (down.recover()) {
           await notifyAdmin(`✅ Listener back online: ${listener.characterName}`, "Reconnected; its capital's buff detection is live again.");
         }
-        announceRealmUp(listener.characterName); // realm-wide recovery (starts the stability window)
       } catch (error) {
         if (error instanceof VersionMismatchError) {
           // The watcher's self-heal fixes the shared client build; wait and retry (not a listener fault).
