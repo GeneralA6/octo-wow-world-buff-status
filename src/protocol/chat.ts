@@ -54,7 +54,6 @@ const MONSTER_CHAT_TYPES: ReadonlySet<number> = new Set([
   ChatType.MonsterSay,
   ChatType.MonsterYell,
   ChatType.MonsterWhisper,
-  ChatType.MonsterEmote,
 ]);
 
 /** True if the chat type uses the monster layout (sender name inline). */

@@ -77,8 +77,11 @@ export enum ChatType {
   MonsterSay = 0x0b,
   MonsterYell = 0x0c,
   MonsterWhisper = 0x0d,
-  MonsterEmote = 0x0e,
-  Channel = 0x11,
+  // Global CHANNEL messages (e.g. the LFT addon-comms channel) arrive with chat type 0x0e on this
+  // server — CONFIRMED from a live capture (672 "PWB:" channel lines all came in as 0x0e). Standard
+  // 1.12 lists 0x0e as MonsterEmote, but Turtle routes channel here and we never act on emotes, so
+  // 0x0e is Channel. The buff yell (MonsterYell 0x0c) is unaffected.
+  Channel = 0x0e,
 }
 
 /** SMSG_GUILD_EVENT `type` byte (1.12). We only act on JOINED; the rest are for logging. */

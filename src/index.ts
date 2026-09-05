@@ -1077,7 +1077,6 @@ async function runListener(
       characterName: listener.characterName,
       build: client.worldBuild,
       logger,
-      logChat: config.lftChannel !== null, // observe mode: log every inbound chat's type (LFT diagnostic)
       handlers: {
         onReady: () => {
           if (readyTimer) clearTimeout(readyTimer);
@@ -1164,24 +1163,24 @@ async function runListener(
           logger.info(`heard yell from ${senderName}: ${JSON.stringify(text)}${faction ? ` -> BUFF ${faction}` : ""}`);
           if (faction) onBuffApplied(faction, senderName, text);
         },
-        // PHASE 0 — OBSERVE ONLY. The LFT channel layout is unconfirmed, so log the parsed text AND
-        // the printable byte-runs (the reliable view) so a real OB_INC / OB line is legible for
-        // capture, then confirm the format before acting. No alert is fired from here yet. Sampled,
-        // because LFT is spammy — but anything containing "OB" is always logged.
+        // PHASE 0 — OBSERVE ONLY. LFT is a firehose (~37 msgs/s, almost all PWB timers we don't
+        // want), so DON'T log every message. Surface only OUR protocol (OB_INC advance warning /
+        // OB: timer) and a periodic heartbeat count. No alert is fired yet — this is capture only.
         onChannelMessage: (channelName, _senderGuid, text, raw) => {
           lftSeen += 1;
           const runs = printableAsciiRuns(raw);
-          const isOb = text.includes("OB") || runs.some((run) => run.includes("OB"));
-          if (isOb || lftSeen <= 25 || lftSeen % 50 === 0) {
-            logger.info(`LFT-observe #${lftSeen} [${channelName}] text=${JSON.stringify(text)} runs=${JSON.stringify(runs)}${isOb ? " [OB]" : ""}`);
-          }
-          const incoming = [text, ...runs].map(parseHeadIncoming).find((parsed) => parsed !== null);
+          const obLine = [text, ...runs].find((s) => s.startsWith("OB_INC:") || s.startsWith("OB:"));
+          const incoming = parseHeadIncoming(obLine ?? "");
           if (incoming) {
             const city = incoming.faction === "alliance" ? "Stormwind" : "Orgrimmar";
             logger.info(
-              `LFT-observe HEAD-INCOMING: ${incoming.faction} boss=${incoming.boss} onyxia=${isOnyxiaHead(incoming.boss)} ` +
+              `LFT head-incoming: ${incoming.faction} boss=${incoming.boss} onyxia=${isOnyxiaHead(incoming.boss)} ` +
                 `witness=${incoming.witness} at ${incoming.serverHour}:${String(incoming.serverMinute).padStart(2, "0")} — WOULD alert ${city}`,
             );
+          } else if (obLine) {
+            logger.info(`LFT OB message (unparsed): ${JSON.stringify(obLine)} on ${JSON.stringify(channelName)}`);
+          } else if (lftSeen % 200 === 0) {
+            logger.info(`LFT: ${lftSeen} messages seen (sample runs ${JSON.stringify(runs.slice(0, 3))})`);
           }
         },
         // A player whispered this parked character → transfer it to Bufftracker, which
