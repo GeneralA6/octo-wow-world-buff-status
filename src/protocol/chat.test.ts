@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PacketReader, PacketWriter } from "../net/byte-buffer.js";
 import { ChatType, GuildEvent, LANG_UNIVERSAL } from "./opcodes.js";
 import {
+  buildAddFriend,
   buildGuildChat,
   buildJoinChannel,
   buildWhisper,
@@ -9,6 +10,7 @@ import {
   escapeChatText,
   isMonsterChatType,
   parseChannelChat,
+  parseFriendResult,
   parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
@@ -221,6 +223,18 @@ describe("buildJoinChannel", () => {
     const reader = new PacketReader(buildJoinChannel("LFT"));
     expect(reader.cString()).toBe("LFT");
     expect(reader.cString()).toBe(""); // default empty password
+  });
+});
+
+describe("buildAddFriend / parseFriendResult", () => {
+  it("writes the friend name as a C-string", () => {
+    expect(new PacketReader(buildAddFriend("Someplayer")).cString()).toBe("Someplayer");
+  });
+
+  it("reads the leading FriendsResult byte (e.g. list-full)", () => {
+    expect(parseFriendResult(Buffer.from([0x01, 0xde, 0xad]))).toBe(0x01); // LIST_FULL
+    expect(parseFriendResult(Buffer.from([0x06]))).toBe(0x06); // ADDED_ONLINE
+    expect(parseFriendResult(Buffer.alloc(0))).toBe(-1); // empty body
   });
 });
 

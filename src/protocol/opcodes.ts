@@ -37,6 +37,11 @@ export enum WorldOpcode {
   SMSG_GUILD_EVENT = 0x92,
   CMSG_MESSAGECHAT = 0x95,
   SMSG_MESSAGECHAT = 0x96,
+  /** Add a player to the friends list (1.12 body: cstring name). Server replies SMSG_FRIEND_STATUS
+   *  with a result byte (added / list-full / enemy / not-found). Used to probe the friends cap. */
+  CMSG_ADD_FRIEND = 0x69,
+  /** Result of a friend op / a friend's online-offline change. Body starts with a u8 FriendsResult. */
+  SMSG_FRIEND_STATUS = 0x68,
   /** Join a global chat channel by name (1.12 body: cstring name, cstring password). Used to sit
    *  on Turtle's addon-comms "LFT" channel and read world-buff broadcasts. Confirm on a live join. */
   CMSG_JOIN_CHANNEL = 0x97,

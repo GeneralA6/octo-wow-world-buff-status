@@ -123,6 +123,17 @@ export function buildJoinChannel(name: string, password = ""): Buffer {
   return new PacketWriter().cString(name).cString(password).toBuffer();
 }
 
+/** Build a CMSG_ADD_FRIEND (1.12 body: just the friend's name as a C-string). */
+export function buildAddFriend(name: string): Buffer {
+  return new PacketWriter().cString(name).toBuffer();
+}
+
+/** Parse the leading FriendsResult byte of SMSG_FRIEND_STATUS (0x01 = list full, 0x06/0x07 = added
+ *  online/offline, 0x08 = already, 0x0a = enemy/opposite-faction, 0x04 = not found). */
+export function parseFriendResult(body: Buffer): number {
+  return body.length > 0 ? body.readUInt8(0) : -1;
+}
+
 export interface ChannelChat {
   readonly channelName: string;
   readonly senderGuid: bigint;

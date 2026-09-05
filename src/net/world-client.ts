@@ -5,12 +5,14 @@ import { FatalError } from "../errors.js";
 import { AUTH_OK, ChatType, CLIENT_BUILD, GuildEvent, WorldOpcode } from "../protocol/opcodes.js";
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
 import {
+  buildAddFriend,
   buildGuildChat,
   buildJoinChannel,
   buildWhisper,
   buildYell,
   isMonsterChatType,
   parseChannelChat,
+  parseFriendResult,
   parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
@@ -49,6 +51,9 @@ export interface WorldClientHandlers {
   /** A message on a global chat CHANNEL we joined (e.g. Turtle's "LFT" addon-comms channel). The
    *  raw body is passed too, since the channel layout is unconfirmed — the wiring logs it. */
   onChannelMessage?: (channelName: string, senderGuid: bigint, text: string, raw: Buffer) => void;
+  /** Result of a friend op (SMSG_FRIEND_STATUS) — the FriendsResult byte (added / list-full / etc.),
+   *  used to probe the friends-list cap. */
+  onFriendStatus?: (result: number) => void;
   /** A server SYSTEM message — how the server reports command results/errors (e.g. a guild
    *  invite that failed). The wiring layer decides which ones are errors worth alerting on. */
   onSystemMessage?: (text: string) => void;
@@ -202,6 +207,12 @@ export class WorldClient {
     this.#send(WorldOpcode.CMSG_JOIN_CHANNEL, buildJoinChannel(name));
   }
 
+  /** Add a player to the friends list. The result arrives as onFriendStatus (a FriendsResult byte). */
+  addFriend(name: string): void {
+    if (!this.#ready) throw new Error("cannot add a friend before the character is in world");
+    this.#send(WorldOpcode.CMSG_ADD_FRIEND, buildAddFriend(name));
+  }
+
   /** Post to guild chat (/g) — used to welcome a new member. Needs the character guilded. */
   guildChat(message: string): void {
     if (!this.#ready) throw new Error("cannot guild-chat before the character is in world");
@@ -310,6 +321,9 @@ export class WorldClient {
         }
         case WorldOpcode.SMSG_MESSAGECHAT:
           this.#handleChat(body);
+          break;
+        case WorldOpcode.SMSG_FRIEND_STATUS:
+          this.#handlers.onFriendStatus?.(parseFriendResult(body));
           break;
         case WorldOpcode.SMSG_GUILD_EVENT:
           this.#handleGuildEvent(body);
