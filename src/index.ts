@@ -1077,6 +1077,7 @@ async function runListener(
       characterName: listener.characterName,
       build: client.worldBuild,
       logger,
+      logChat: config.lftChannel !== null, // observe mode: log every inbound chat's type (LFT diagnostic)
       handlers: {
         onReady: () => {
           if (readyTimer) clearTimeout(readyTimer);

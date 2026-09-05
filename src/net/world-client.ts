@@ -11,6 +11,7 @@ import {
   buildYell,
   isMonsterChatType,
   parseChannelChat,
+  printableAsciiRuns,
   parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
@@ -78,6 +79,9 @@ export interface WorldClientOptions {
   readonly clientSeed?: number;
   /** Client build for the world auth session. Defaults to CLIENT_BUILD. */
   readonly build?: number;
+  /** Diagnostic: log the TYPE (and printable runs) of every inbound chat message at INFO, to see
+   *  what a joined channel's messages actually look like on the wire. Default off. */
+  readonly logChat?: boolean;
 }
 
 /**
@@ -96,6 +100,7 @@ export class WorldClient {
   readonly #pingIntervalMs: number;
   readonly #clientSeed: number;
   readonly #build: number;
+  readonly #logChat: boolean;
 
   #crypt: VanillaHeaderCrypt | null = null;
   #recvBuffer = Buffer.alloc(0);
@@ -124,6 +129,7 @@ export class WorldClient {
     this.#pingIntervalMs = options.pingIntervalMs ?? 30_000;
     this.#clientSeed = options.clientSeed ?? randomBytes(4).readUInt32LE(0);
     this.#build = options.build ?? CLIENT_BUILD;
+    this.#logChat = options.logChat ?? false;
   }
 
   get isReady(): boolean {
@@ -394,6 +400,13 @@ export class WorldClient {
    */
   #handleChat(body: Buffer): void {
     this.#logger.debug(`world: chat recv [${body.subarray(0, 80).toString("hex")}]`);
+    if (this.#logChat && body.length > 0) {
+      // Diagnostic: what type does every inbound chat use? A joined LFT channel's messages should
+      // show up here — revealing the real channel chat-type — even if the Channel branch misses them.
+      this.#logger.info(
+        `chat in: type=0x${body.readUInt8(0).toString(16)} runs=${JSON.stringify(printableAsciiRuns(body).slice(0, 5))}`,
+      );
+    }
     try {
       if (body.length > 0 && isMonsterChatType(body.readUInt8(0))) {
         this.#handleMonsterChat(body);
