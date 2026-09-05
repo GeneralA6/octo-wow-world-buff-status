@@ -37,6 +37,10 @@ export enum WorldOpcode {
   SMSG_GUILD_EVENT = 0x92,
   CMSG_MESSAGECHAT = 0x95,
   SMSG_MESSAGECHAT = 0x96,
+  /** Request the friends list (empty body). Reply SMSG_FRIEND_LIST starts with a u8 count. */
+  CMSG_FRIEND_LIST = 0x66,
+  /** The friends list. Body: u8 count, then per friend. Its count = how many friends are on file. */
+  SMSG_FRIEND_LIST = 0x67,
   /** Add a player to the friends list (1.12 body: cstring name). Server replies SMSG_FRIEND_STATUS
    *  with a result byte (added / list-full / enemy / not-found). Used to probe the friends cap. */
   CMSG_ADD_FRIEND = 0x69,

@@ -943,6 +943,8 @@ async function runConnection(
           // let onFriendStatus log each result until the server says the list is full.
           if (config.friendTest) {
             void (async () => {
+              world.requestFriendList(); // log the current count first (reflects any prior run's adds)
+              await delay(3_000);
               const subs = await store.all().catch(() => []);
               logger.info(`FRIEND-TEST: adding up to ${subs.length} subscribers as friends (paced 1.5s) to find the cap...`);
               for (const sub of subs) {
@@ -953,6 +955,7 @@ async function runConnection(
               logger.info(
                 `FRIEND-TEST: done — ${friendAdded} added${friendListFull ? ", then LIST_FULL (that count is the cap)" : " (never full — ran out of subscribers, cap is >= that)"}`,
               );
+              world.requestFriendList(); // final count
             })();
           }
           const poll = async (): Promise<void> => {
@@ -1016,6 +1019,10 @@ async function runConnection(
           logger.info(
             `FRIEND-TEST result=0x${result.toString(16)} (${NAMES[result] ?? "?"}) — added so far: ${friendAdded}${result === 0x01 ? " *** CAP REACHED ***" : ""}`,
           );
+        },
+        // FRIEND-TEST: the friends-list count — persists server-side, so it reflects prior runs' adds.
+        onFriendList: (count) => {
+          if (config.friendTest) logger.info(`FRIEND-TEST: friends list currently holds ${count} — that's the cap if a prior run hit LIST_FULL`);
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
         // A player joined the guild — if we invited them, welcome them in /g (no whisper).

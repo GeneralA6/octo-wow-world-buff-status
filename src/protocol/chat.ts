@@ -134,6 +134,11 @@ export function parseFriendResult(body: Buffer): number {
   return body.length > 0 ? body.readUInt8(0) : -1;
 }
 
+/** The number of friends in an SMSG_FRIEND_LIST — the count is its first byte. */
+export function parseFriendListCount(body: Buffer): number {
+  return body.length > 0 ? body.readUInt8(0) : 0;
+}
+
 export interface ChannelChat {
   readonly channelName: string;
   readonly senderGuid: bigint;

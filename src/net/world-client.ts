@@ -13,6 +13,7 @@ import {
   isMonsterChatType,
   parseChannelChat,
   parseFriendResult,
+  parseFriendListCount,
   parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
@@ -54,6 +55,8 @@ export interface WorldClientHandlers {
   /** Result of a friend op (SMSG_FRIEND_STATUS) — the FriendsResult byte (added / list-full / etc.),
    *  used to probe the friends-list cap. */
   onFriendStatus?: (result: number) => void;
+  /** The friends-list reply (SMSG_FRIEND_LIST) — how many friends are currently on file. */
+  onFriendList?: (count: number) => void;
   /** A server SYSTEM message — how the server reports command results/errors (e.g. a guild
    *  invite that failed). The wiring layer decides which ones are errors worth alerting on. */
   onSystemMessage?: (text: string) => void;
@@ -213,6 +216,12 @@ export class WorldClient {
     this.#send(WorldOpcode.CMSG_ADD_FRIEND, buildAddFriend(name));
   }
 
+  /** Request the friends list; the count comes back via onFriendList. */
+  requestFriendList(): void {
+    if (!this.#ready) throw new Error("cannot request the friends list before the character is in world");
+    this.#send(WorldOpcode.CMSG_FRIEND_LIST, Buffer.alloc(0));
+  }
+
   /** Post to guild chat (/g) — used to welcome a new member. Needs the character guilded. */
   guildChat(message: string): void {
     if (!this.#ready) throw new Error("cannot guild-chat before the character is in world");
@@ -324,6 +333,9 @@ export class WorldClient {
           break;
         case WorldOpcode.SMSG_FRIEND_STATUS:
           this.#handlers.onFriendStatus?.(parseFriendResult(body));
+          break;
+        case WorldOpcode.SMSG_FRIEND_LIST:
+          this.#handlers.onFriendList?.(parseFriendListCount(body));
           break;
         case WorldOpcode.SMSG_GUILD_EVENT:
           this.#handleGuildEvent(body);
