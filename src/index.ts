@@ -944,16 +944,21 @@ async function runConnection(
           // NOT_FOUND or LIST_FULL) and the list is unchanged.
           if (config.friendTestBurst > 0) {
             const burst = config.friendTestBurst;
-            // Fire the burst now AND every 45s, so a log capture reliably catches one (the boot-only
-            // burst kept scrolling past). Dummy names -> no state change. Turn the flag off when done.
-            const fire = (): void => {
-              if (settled) return;
-              logger.info(`FRIEND-RATE: firing ${burst} add ops back-to-back at ${new Date().toISOString()} — watch the response timestamps`);
-              for (let i = 0; i < burst; i += 1) world.addFriend(`Rateprobe${i}`);
-            };
-            fire();
-            const rateTimer = setInterval(fire, 45_000);
-            rateTimer.unref?.();
+            // Fire the burst now AND every 45s so a log capture reliably catches one. Use REAL
+            // subscriber names: dummy names get no reply (the server drops names that don't resolve),
+            // but real ones against the already-FULL list reply ALREADY/LIST_FULL — a response each,
+            // and no state change (the list is at its cap). The response spacing reveals the throttle.
+            void (async () => {
+              const names = (await store.all().catch(() => [])).map((s) => s.name).slice(0, burst);
+              const fire = (): void => {
+                if (settled) return;
+                logger.info(`FRIEND-RATE: firing ${names.length} add ops (real names, list full → no change) at ${new Date().toISOString()}`);
+                for (const name of names) world.addFriend(name);
+              };
+              fire();
+              const rateTimer = setInterval(fire, 45_000);
+              rateTimer.unref?.();
+            })();
           }
           const poll = async (): Promise<void> => {
             try {
