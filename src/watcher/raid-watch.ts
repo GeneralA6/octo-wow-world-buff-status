@@ -76,10 +76,10 @@ export class RaidWatch {
     if (change.blackout) {
       this.#tracker.rebaseline(players);
       this.#sessions.update(change); // clears its state on blackout too
-      this.#clears.observe(names, now, true); // discard any in-progress clear measurement
+      this.#clears.observe(names, now, true, complete); // discard any in-progress clear measurement
       return { change, countEvents: [], temporalEvents: [], clear: null, formed: null };
     }
-    const clearObs = this.#clears.observe(names, now, false);
+    const clearObs = this.#clears.observe(names, now, false, complete);
     return {
       change,
       countEvents: this.#tracker.update(players),

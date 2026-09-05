@@ -72,6 +72,39 @@ describe("ClearTracker", () => {
     expect(clear?.durationMs).toBe(20 * MIN);
   });
 
+  it("does NOT confirm a clear while the /who view is incomplete (a packed-lair undercount)", () => {
+    const t = tracker();
+    t.observe(R(30), 0, false); // formed, roster r0..r29
+    // Packed lair: /who truncated and slices timed out, so it shows only a few of the roster.
+    // That below-floor count is unreliable and must not start or confirm a clear.
+    expect(t.observe(R(2), 10 * MIN, false, false).clear).toBeNull();
+    expect(t.observe(R(2), 20 * MIN, false, false).clear).toBeNull();
+    expect(t.observe(R(2), 30 * MIN, false, false).clear).toBeNull(); // even long past sustainedMs
+    expect(t.pending()).toBeNull(); // no pending departure was ever started on the incomplete views
+    // A COMPLETE view starts the departure clock; it confirms only after the sustained wait.
+    expect(t.observe(R(2), 40 * MIN, false, true).clear).toBeNull();
+    const clear = t.observe(R(2), 46 * MIN, false, true).clear; // 6 min sustained on complete views
+    expect(clear).not.toBeNull();
+  });
+
+  it("an incomplete undercount does not FALSELY clear a raid that a complete view shows is still there (#48)", () => {
+    const t = tracker();
+    t.observe(R(30), 0, false); // formed
+    t.observe(R(3), 20 * MIN, false, false); // incomplete: looks below floor...
+    t.observe(R(3), 25 * MIN, false, false);
+    expect(t.observe(R(28), 30 * MIN, false, true).clear).toBeNull(); // ...complete view: they were here
+    expect(t.pending()).toBeNull(); // never falsely cleared
+  });
+
+  it("keeps a pending clear across an incomplete blip mid-departure (does not reset the clock)", () => {
+    const t = tracker();
+    t.observe(R(30), 0, false);
+    t.observe(R(2), 40 * MIN, false, true); // departure begins on a complete view
+    t.observe(R(2), 42 * MIN, false, false); // an incomplete blip must not reset the pending clock
+    const clear = t.observe(R(2), 46 * MIN, false, true).clear; // 6 min after belowSince → confirm
+    expect(clear).not.toBeNull();
+  });
+
   it("a blackout with an EMPTY lair after discards the raid (no false clear on a mass DC)", () => {
     const t = tracker();
     t.observe(R(30), 0, false);

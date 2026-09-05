@@ -204,8 +204,14 @@ export class ClearTracker {
    * Feed one poll's players (names in the watched zone). Reports a fresh formation the poll a
    * raid first reaches strength (`formed`), and a ConfirmedClear the poll a sustained departure
    * is confirmed (`clear`) — never both in one poll. `blackout` discards whatever was in progress.
+   *
+   * `complete` is whether this /who saw everyone (false when a packed lair truncated the query and
+   * some class slices timed out). On an INCOMPLETE view the cohort count is only a lower bound —
+   * members whose class slice failed look absent — so a below-floor count cannot be trusted as a
+   * departure, and no clear is started or confirmed until a complete view confirms it. A count that
+   * is AT or ABOVE the floor is still trusted (a lower bound over the floor is over the floor).
    */
-  observe(names: readonly string[], now: number, blackout: boolean): ClearObservation {
+  observe(names: readonly string[], now: number, blackout: boolean, complete = true): ClearObservation {
     if (blackout) {
       // A blind gap — a server crash/shutdown or our own DC. Do NOT wipe the roster and arrival
       // memory: that would blindly re-form whatever is present into ONE raid on recovery, merging
@@ -255,11 +261,18 @@ export class ClearTracker {
     for (const name of names) if (this.#roster.has(name)) cohort += 1;
 
     if (cohort >= this.#clearFloor) {
-      // Up, or recovered from a wipe (the same members are back).
+      // Up, or recovered from a wipe (the same members are back). Trusted even on an incomplete
+      // view: the real count is >= this, so it's over the floor either way.
       if (cohort > this.#peak) this.#peak = cohort;
       this.#belowSince = null;
       return { clear: null, formed: null };
     }
+
+    // Below the floor — but on an INCOMPLETE view that's unreliable (members in the classes whose
+    // /who slice timed out look absent), so we must not read it as a departure. Hold: don't start
+    // or confirm a clear. A real departure already seen on a complete view keeps its pending clock
+    // (we return without touching #belowSince), so an incomplete blip mid-departure doesn't reset it.
+    if (!complete) return { clear: null, formed: null };
 
     // The roster has mostly dropped out — a wipe or a real departure.
     if (this.#belowSince === null) {
