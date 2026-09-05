@@ -892,6 +892,7 @@ async function runConnection(
         .catch((error) => logger.debug(`guildies: remove failed (${describeError(error)})`));
     };
 
+    let lftSeen = 0; // LFT channel messages seen, for the observe heartbeat
     const world = new WorldClient({
       socket,
       account: config.account,
@@ -919,6 +920,15 @@ async function runConnection(
           }
           router.setFactionLookup((name) => void lookupFaction(name));
           router.setFactionDetect(detectFaction);
+          // Read Turtle's LFT addon-comms channel for world-buff broadcasts (flag-gated, observe
+          // only). Bufftracker is the single reader, so there is no cross-listener dedup to do.
+          if (config.lftChannel) {
+            try {
+              world.joinChannel(config.lftChannel);
+            } catch (error) {
+              logger.warn(`could not join channel ${config.lftChannel}: ${describeError(error)}`);
+            }
+          }
           const poll = async (): Promise<void> => {
             try {
               // Spread the class slices across the idle listener sockets too, not just this one.
@@ -942,6 +952,25 @@ async function runConnection(
             if (!settled) void resolveNextFaction(Date.now()).catch((e) => logger.debug(`faction resolve: ${describeError(e)}`));
           }, FACTION_RESOLVE_MS);
           factionResolveTimer.unref?.();
+        },
+        // PHASE 0 — OBSERVE ONLY. LFT is a firehose (~37/s of PWB timers), so surface only OUR
+        // protocol (OB_INC advance warning / OB: timer) and a periodic heartbeat. No alert yet.
+        onChannelMessage: (channelName, _senderGuid, text, raw) => {
+          lftSeen += 1;
+          const runs = printableAsciiRuns(raw);
+          const obLine = [text, ...runs].find((s) => s.startsWith("OB_INC:") || s.startsWith("OB:"));
+          const incoming = parseHeadIncoming(obLine ?? "");
+          if (incoming) {
+            const city = incoming.faction === "alliance" ? "Stormwind" : "Orgrimmar";
+            logger.info(
+              `LFT head-incoming: ${incoming.faction} boss=${incoming.boss} onyxia=${isOnyxiaHead(incoming.boss)} ` +
+                `witness=${incoming.witness} at ${incoming.serverHour}:${String(incoming.serverMinute).padStart(2, "0")} — WOULD alert ${city}`,
+            );
+          } else if (obLine) {
+            logger.info(`LFT OB message (unparsed): ${JSON.stringify(obLine)} on ${JSON.stringify(channelName)}`);
+          } else if (lftSeen % 200 === 0) {
+            logger.info(`LFT: ${lftSeen} messages seen (sample runs ${JSON.stringify(runs.slice(0, 3))})`);
+          }
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
         // A player joined the guild — if we invited them, welcome them in /g (no whisper).
@@ -1031,7 +1060,6 @@ async function runListener(
     // Our /yell mouthpiece registration, so we only retract it on disconnect if it's still
     // ours (a reconnect may have already replaced it with the new connection's).
     let registeredYell: ((message: string) => void) | null = null;
-    let lftSeen = 0; // count of LFT channel messages seen, for the observe-hook sampling
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
@@ -1093,15 +1121,6 @@ async function runListener(
             yellSink[listener.faction] = registeredYell;
             logger.info(`${listener.characterName}: registered as ${listener.faction} yell mouthpiece`);
           }
-          // Read Turtle's LFT addon-comms channel for world-buff broadcasts (flag-gated, observe
-          // only). Best-effort: a join we can't send must not stop the listener from doing its job.
-          if (config.lftChannel) {
-            try {
-              world.joinChannel(config.lftChannel);
-            } catch (error) {
-              logger.warn(`${listener.characterName}: could not join channel ${config.lftChannel}: ${describeError(error)}`);
-            }
-          }
           if (listener.onLogin === "sit") world.sit();
           else if (listener.onLogin === "interact") {
             // The object burst trickles in over several seconds, so we WAIT for it to settle
@@ -1162,26 +1181,6 @@ async function runListener(
           // ACTUAL server text. Also confirms the listener receives MonsterYell at all.
           logger.info(`heard yell from ${senderName}: ${JSON.stringify(text)}${faction ? ` -> BUFF ${faction}` : ""}`);
           if (faction) onBuffApplied(faction, senderName, text);
-        },
-        // PHASE 0 — OBSERVE ONLY. LFT is a firehose (~37 msgs/s, almost all PWB timers we don't
-        // want), so DON'T log every message. Surface only OUR protocol (OB_INC advance warning /
-        // OB: timer) and a periodic heartbeat count. No alert is fired yet — this is capture only.
-        onChannelMessage: (channelName, _senderGuid, text, raw) => {
-          lftSeen += 1;
-          const runs = printableAsciiRuns(raw);
-          const obLine = [text, ...runs].find((s) => s.startsWith("OB_INC:") || s.startsWith("OB:"));
-          const incoming = parseHeadIncoming(obLine ?? "");
-          if (incoming) {
-            const city = incoming.faction === "alliance" ? "Stormwind" : "Orgrimmar";
-            logger.info(
-              `LFT head-incoming: ${incoming.faction} boss=${incoming.boss} onyxia=${isOnyxiaHead(incoming.boss)} ` +
-                `witness=${incoming.witness} at ${incoming.serverHour}:${String(incoming.serverMinute).padStart(2, "0")} — WOULD alert ${city}`,
-            );
-          } else if (obLine) {
-            logger.info(`LFT OB message (unparsed): ${JSON.stringify(obLine)} on ${JSON.stringify(channelName)}`);
-          } else if (lftSeen % 200 === 0) {
-            logger.info(`LFT: ${lftSeen} messages seen (sample runs ${JSON.stringify(runs.slice(0, 3))})`);
-          }
         },
         // A player whispered this parked character → transfer it to Bufftracker, which
         // answers (and introduces itself on the player's first contact). The listener is
