@@ -128,15 +128,75 @@ export function buildAddFriend(name: string): Buffer {
   return new PacketWriter().cString(name).toBuffer();
 }
 
+/** Build a CMSG_DEL_FRIEND (1.12 body: the friend's u64 guid — removal is by guid, never by name). */
+export function buildDelFriend(guid: bigint): Buffer {
+  return new PacketWriter().u64LE(guid).toBuffer();
+}
+
 /** Parse the leading FriendsResult byte of SMSG_FRIEND_STATUS (0x01 = list full, 0x06/0x07 = added
  *  online/offline, 0x08 = already, 0x0a = enemy/opposite-faction, 0x04 = not found). */
 export function parseFriendResult(body: Buffer): number {
   return body.length > 0 ? body.readUInt8(0) : -1;
 }
 
+export interface FriendStatus {
+  /** FriendsResult byte — a fresh add is ADDED_ONLINE (0x06) / ADDED_OFFLINE (0x07). */
+  readonly result: number;
+  /** The resolved player guid; needed to remove this friend (CMSG_DEL_FRIEND takes a guid). 0n if
+   *  the body was too short to carry one (the result was an error with no guid, or a malformed body). */
+  readonly guid: bigint;
+}
+
+/**
+ * Parse SMSG_FRIEND_STATUS: u8 result, u64 guid, then (only for ONLINE/ADDED_ONLINE) u8 status,
+ * u32 area, u32 level, u32 class. The sweep needs the guid to remove the friend afterwards, so we
+ * read past the bare result byte `parseFriendResult` returns. Bounds-guarded: a short body yields 0n.
+ */
+export function parseFriendStatus(body: Buffer): FriendStatus {
+  const reader = new PacketReader(body);
+  const result = reader.remaining >= 1 ? reader.u8() : -1;
+  const guid = reader.remaining >= 8 ? reader.u64LE() : 0n;
+  return { result, guid };
+}
+
 /** The number of friends in an SMSG_FRIEND_LIST — the count is its first byte. */
 export function parseFriendListCount(body: Buffer): number {
   return body.length > 0 ? body.readUInt8(0) : 0;
+}
+
+export interface FriendListEntry {
+  readonly guid: bigint;
+  readonly online: boolean;
+}
+
+/**
+ * Parse the full SMSG_FRIEND_LIST so the sweep can clear the list (it deletes by guid, which this
+ * yields) and read who is online. Layout: u8 count, then per friend u64 guid, u8 status, and — only
+ * when status is non-zero (any online-ish state) — u32 area, u32 level, u32 class. Every read is
+ * bounds-checked against `remaining` so a truncated or mis-shaped body stops cleanly rather than
+ * throwing. This is the DOCUMENTED 1.12 layout and MUST be confirmed against a live capture (the
+ * sweep logs the raw bytes on its first list read) before the per-entry offsets are trusted.
+ */
+export function parseFriendList(body: Buffer): { count: number; friends: FriendListEntry[] } {
+  const reader = new PacketReader(body);
+  if (reader.remaining < 1) return { count: 0, friends: [] };
+  const count = reader.u8();
+  const friends: FriendListEntry[] = [];
+  for (let i = 0; i < count && reader.remaining >= 9; i += 1) {
+    const guid = reader.u64LE();
+    const online = reader.u8() !== 0;
+    if (online) {
+      if (reader.remaining < 12) {
+        friends.push({ guid, online });
+        break;
+      }
+      reader.u32LE(); // area
+      reader.u32LE(); // level
+      reader.u32LE(); // class
+    }
+    friends.push({ guid, online });
+  }
+  return { count, friends };
 }
 
 export interface ChannelChat {

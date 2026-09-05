@@ -3,6 +3,7 @@ import { PacketReader, PacketWriter } from "../net/byte-buffer.js";
 import { ChatType, GuildEvent, LANG_UNIVERSAL } from "./opcodes.js";
 import {
   buildAddFriend,
+  buildDelFriend,
   buildGuildChat,
   buildJoinChannel,
   buildWhisper,
@@ -10,7 +11,9 @@ import {
   escapeChatText,
   isMonsterChatType,
   parseChannelChat,
+  parseFriendList,
   parseFriendResult,
+  parseFriendStatus,
   parseGuildEvent,
   parseMonsterChat,
   parsePlayerNotFound,
@@ -235,6 +238,66 @@ describe("buildAddFriend / parseFriendResult", () => {
     expect(parseFriendResult(Buffer.from([0x01, 0xde, 0xad]))).toBe(0x01); // LIST_FULL
     expect(parseFriendResult(Buffer.from([0x06]))).toBe(0x06); // ADDED_ONLINE
     expect(parseFriendResult(Buffer.alloc(0))).toBe(-1); // empty body
+  });
+});
+
+describe("parseFriendStatus (result + guid)", () => {
+  const statusBody = (result: number, guid: bigint, extra: Buffer = Buffer.alloc(0)): Buffer =>
+    Buffer.concat([new PacketWriter().u8(result).u64LE(guid).toBuffer(), extra]);
+
+  it("reads the guid that follows the result byte", () => {
+    const status = parseFriendStatus(statusBody(0x07, 0x12345n)); // ADDED_OFFLINE
+    expect(status.result).toBe(0x07);
+    expect(status.guid).toBe(0x12345n);
+  });
+
+  it("ignores the trailing online payload (status/area/level/class)", () => {
+    const extra = new PacketWriter().u8(1).u32LE(1519).u32LE(60).u32LE(4).toBuffer();
+    const status = parseFriendStatus(statusBody(0x06, 0xabcden, extra)); // ADDED_ONLINE
+    expect(status.result).toBe(0x06);
+    expect(status.guid).toBe(0xabcden);
+  });
+
+  it("yields 0n when the body is too short to carry a guid", () => {
+    expect(parseFriendStatus(Buffer.from([0x01])).guid).toBe(0n); // LIST_FULL, no guid
+    expect(parseFriendStatus(Buffer.alloc(0)).result).toBe(-1);
+  });
+});
+
+describe("buildDelFriend", () => {
+  it("writes the guid as a u64 (removal is by guid, not name)", () => {
+    expect(new PacketReader(buildDelFriend(0xdeadbeefn)).u64LE()).toBe(0xdeadbeefn);
+  });
+});
+
+describe("parseFriendList (documented layout — confirm against a live capture)", () => {
+  const listBody = (entries: readonly { guid: bigint; online: boolean }[]): Buffer => {
+    const w = new PacketWriter().u8(entries.length);
+    for (const e of entries) {
+      w.u64LE(e.guid).u8(e.online ? 1 : 0);
+      if (e.online) w.u32LE(1519).u32LE(60).u32LE(4); // area, level, class only when online
+    }
+    return w.toBuffer();
+  };
+
+  it("extracts every guid, skipping the online entries' extra 12 bytes", () => {
+    const { count, friends } = parseFriendList(
+      listBody([
+        { guid: 0x11n, online: false },
+        { guid: 0x22n, online: true },
+        { guid: 0x33n, online: false },
+      ]),
+    );
+    expect(count).toBe(3);
+    expect(friends.map((f) => f.guid)).toEqual([0x11n, 0x22n, 0x33n]);
+    expect(friends.map((f) => f.online)).toEqual([false, true, false]);
+  });
+
+  it("stops cleanly on an empty or truncated body rather than throwing", () => {
+    expect(parseFriendList(Buffer.alloc(0))).toEqual({ count: 0, friends: [] });
+    // count says 2 but only one full entry is present — parse what fits, don't overrun.
+    const truncated = Buffer.concat([Buffer.from([0x02]), new PacketWriter().u64LE(0x99n).u8(0).toBuffer()]);
+    expect(parseFriendList(truncated).friends.map((f) => f.guid)).toEqual([0x99n]);
   });
 });
 

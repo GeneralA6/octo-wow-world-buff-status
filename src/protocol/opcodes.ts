@@ -42,9 +42,14 @@ export enum WorldOpcode {
   /** The friends list. Body: u8 count, then per friend. Its count = how many friends are on file. */
   SMSG_FRIEND_LIST = 0x67,
   /** Add a player to the friends list (1.12 body: cstring name). Server replies SMSG_FRIEND_STATUS
-   *  with a result byte (added / list-full / enemy / not-found). Used to probe the friends cap. */
+   *  with a result byte + the resolved guid — a fresh add returns ADDED_ONLINE/ADDED_OFFLINE, which
+   *  is the presence read the broadcast sweep is built on. */
   CMSG_ADD_FRIEND = 0x69,
-  /** Result of a friend op / a friend's online-offline change. Body starts with a u8 FriendsResult. */
+  /** Remove a friend by GUID (1.12 body: u64 guid — NOT a name). The guid comes from the add reply
+   *  (SMSG_FRIEND_STATUS) or the friend-list reply. Used to clear the list and to tear a sweep down. */
+  CMSG_DEL_FRIEND = 0x6a,
+  /** Result of a friend op / a friend's online-offline change. Body: u8 FriendsResult, u64 guid,
+   *  then (only for ONLINE/ADDED_ONLINE) u8 status, u32 area, u32 level, u32 class. */
   SMSG_FRIEND_STATUS = 0x68,
   /** Join a global chat channel by name (1.12 body: cstring name, cstring password). Used to sit
    *  on Turtle's addon-comms "LFT" channel and read world-buff broadcasts. Confirm on a live join. */
@@ -106,6 +111,26 @@ export enum GuildEvent {
   Disbanded = 8,
   SignedOn = 12,
   SignedOff = 13,
+}
+
+/**
+ * FriendsResult — the leading byte of SMSG_FRIEND_STATUS (1.12 values). A fresh add resolves to
+ * ADDED_ONLINE / ADDED_OFFLINE (the presence read); ALREADY carries NO online/offline field, which
+ * is why the broadcast sweep clears the list first so every add is fresh. NOT_FOUND is the server's
+ * reply for a name it could resolve but isn't a valid friend target; a name it CANNOT resolve
+ * (renamed/deleted char) gets no reply at all — the sweep must treat that as unknown, not offline.
+ */
+export enum FriendsResult {
+  ListFull = 0x01,
+  Online = 0x02,
+  Offline = 0x03,
+  NotFound = 0x04,
+  Removed = 0x05,
+  AddedOnline = 0x06,
+  AddedOffline = 0x07,
+  Already = 0x08,
+  Self = 0x09,
+  Enemy = 0x0a,
 }
 
 /** Universal language — readable by everyone, so a whisper is never garbled. */
