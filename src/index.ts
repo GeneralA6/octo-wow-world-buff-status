@@ -1699,12 +1699,32 @@ async function main(): Promise<void> {
     config.characterName,
     ...config.listeners.map((listener) => listener.characterName),
   ]);
-  const announceRealmDown = async (id: string): Promise<void> => {
-    if (serverMonitor.connectionDown(id, Date.now())) await push(formatServerDown(config.realm));
+  // "Back up" is CONFIRMED, not fired on the first reconnect: a recovery starts a stability timer and
+  // only posts if the realm stays up for realmStableMs — so a flappy crash-recovery doesn't announce
+  // recovery early. A full re-down cancels the pending timer.
+  let realmRecoveryTimer: NodeJS.Timeout | null = null;
+  const cancelRealmRecovery = (): void => {
+    if (realmRecoveryTimer) clearTimeout(realmRecoveryTimer);
+    realmRecoveryTimer = null;
   };
-  const announceRealmUp = async (id: string): Promise<void> => {
+  const announceRealmDown = async (id: string): Promise<void> => {
+    const announce = serverMonitor.connectionDown(id, Date.now());
+    if (serverMonitor.isFullyDown()) cancelRealmRecovery(); // flapped fully down again — drop the pending "back up"
+    if (announce) await push(formatServerDown(config.realm));
+  };
+  const announceRealmUp = (id: string): void => {
     const outageMs = serverMonitor.connectionUp(id, Date.now());
-    if (outageMs !== null) await push(formatServerUp(config.realm, outageMs));
+    if (outageMs === null) return; // not the start of a recovery window
+    cancelRealmRecovery();
+    realmRecoveryTimer = setTimeout(() => {
+      realmRecoveryTimer = null;
+      if (serverMonitor.confirmRecovery()) {
+        void push(formatServerUp(config.realm, outageMs)).catch((error) =>
+          logger.error(`realm-up notify: ${describeError(error)}`),
+        );
+      }
+    }, config.realmStableMs);
+    realmRecoveryTimer.unref?.();
   };
 
   const watcherLog = prefixed(logger, config.characterName);
@@ -1719,7 +1739,7 @@ async function main(): Promise<void> {
         backoffMs = 5_000;
         heal.alertedStuck = false; // a clean run clears the "stuck" latch
         if (down.recover()) await notifyAdmin("✅ Watcher back online", "Reconnected and watching again.");
-        await announceRealmUp(config.characterName); // realm-wide recovery (if this ends an outage)
+        announceRealmUp(config.characterName); // realm-wide recovery (starts the stability window)
       } catch (error) {
         if (error instanceof VersionMismatchError) {
           if (await selfHeal(error, config, logger, client, notifyAdmin, heal)) {
@@ -1768,7 +1788,7 @@ async function main(): Promise<void> {
         if (down.recover()) {
           await notifyAdmin(`✅ Listener back online: ${listener.characterName}`, "Reconnected; its capital's buff detection is live again.");
         }
-        await announceRealmUp(listener.characterName); // realm-wide recovery (if this ends an outage)
+        announceRealmUp(listener.characterName); // realm-wide recovery (starts the stability window)
       } catch (error) {
         if (error instanceof VersionMismatchError) {
           // The watcher's self-heal fixes the shared client build; wait and retry (not a listener fault).

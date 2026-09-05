@@ -105,6 +105,9 @@ export interface BotConfig {
   /** A time-sensitive whisper still queued past this is dropped unsent (default 5 min), so a
    *  throttled queue never delivers a "park now" long after the raid it was about cleared. */
   readonly whisperMaxAgeMs: number;
+  /** After the realm answers again post-outage, wait this long confirming it stays up before posting
+   *  "back up" — so a flappy crash-recovery doesn't announce recovery prematurely (default 3 min). */
+  readonly realmStableMs: number;
   /** How long a sent park-alert suppresses a repeat for the same city+kind, so a redeploy,
    *  a wipe (count dipping and recovering) or roster churn can't re-broadcast the same
    *  cycle. Reset early when a fresh buff actually drops for that city. */
@@ -312,6 +315,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
   // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
   const whisperMaxAgeMs = intWithDefault("WOW_WHISPER_MAX_AGE_MINUTES", 5, 1) * 60_000;
+  const realmStableMs = intWithDefault("WOW_REALM_STABLE_MINUTES", 3, 1) * 60_000;
   // Dedup window: how long a (city, kind) park-alert stays muted if no fresh drop is heard, so a
   // redeploy/wipe/roster-churn re-emitting the same event doesn't re-alert. A drop reopens it
   // sooner (new cycle); this is only the ceiling. Not a buff-duration — we model no cooldown.
@@ -420,6 +424,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidClearSustainedMs,
     statusYellMs,
     whisperMaxAgeMs,
+    realmStableMs,
     broadcastDedupMs,
     realmType,
     raidGrouping,

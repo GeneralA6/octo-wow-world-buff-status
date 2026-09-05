@@ -6,9 +6,13 @@
  * The realm is only "down" when EVERY supervised connection is sustained-down at once: all three
  * characters sit on the same realm behind the same host, so a lone flaky character is not a realm
  * outage, but all of them dropping together is the strongest evidence the bot has that the realm
- * is unreachable. It is "back up" the moment ANY connection re-establishes (the realm is answering
- * again), even if a chronically-dead character stays down — that is a character problem, not a
- * realm one.
+ * is unreachable.
+ *
+ * Recovery is CONFIRMED, not announced on the first flicker: when a connection re-establishes the
+ * realm is "answering again" but not yet declared back — the caller starts a stability window and
+ * calls `confirmRecovery()` at the end. If the realm drops fully again before then, the pending
+ * recovery is void (`isFullyDown()` tells the caller to cancel its timer) and the outage stays open
+ * with no repeat "down" post; a flappy recovery yields exactly one "down" and one "back up".
  *
  * Fed the already-latched transitions from each connection's `DownTracker` (which returns true only
  * after a SUSTAINED failure, not a blip), so this inherits the "not a transient blip" threshold for
@@ -17,7 +21,8 @@
 export class ServerMonitor {
   readonly #ids: ReadonlySet<string>;
   readonly #down = new Set<string>();
-  #announced = false;
+  #announced = false; // an outage has been posted and not yet confirmed-recovered
+  #recovering = false; // the realm is answering again, awaiting the stability window
   #downSince: number | null = null;
 
   /** `ids` is every connection supervised — typically the watcher plus each listener character. */
@@ -26,39 +31,62 @@ export class ServerMonitor {
   }
 
   /**
-   * A connection crossed into sustained-down (its `DownTracker.fail()` just returned true). Returns
-   * true iff this is the transition that makes the WHOLE realm down and we have not announced it —
-   * i.e. announce the outage now. Idempotent per connection: a connection already counted down does
-   * not re-trigger.
+   * A connection crossed into sustained-down. Returns true iff this is the transition that makes the
+   * WHOLE realm down and we have not announced it — i.e. announce the outage now. A full-down also
+   * VOIDS any pending recovery (the realm flapped back down), so a stability window in progress must
+   * be cancelled — see `isFullyDown()`.
    */
   connectionDown(id: string, now: number): boolean {
     if (!this.#ids.has(id)) return false;
     this.#down.add(id);
-    if (this.#down.size >= this.#ids.size && !this.#announced) {
-      this.#announced = true;
-      this.#downSince = now;
-      return true;
+    if (this.#down.size >= this.#ids.size) {
+      this.#recovering = false; // fully down again — any tentative recovery is void
+      if (!this.#announced) {
+        this.#announced = true;
+        this.#downSince = now;
+        return true;
+      }
     }
     return false;
   }
 
   /**
-   * A connection came back (its `DownTracker.recover()` just returned true). Returns the outage
-   * duration in ms (>= 0) iff this ends an outage we had announced — i.e. announce recovery now —
-   * else null. Only the first connection back closes the outage; later ones return null.
+   * A connection came back. Returns the outage duration in ms (>= 0) iff this STARTS a recovery
+   * window (an announced outage that is not already recovering) — the caller then waits for the
+   * realm to stay up and calls `confirmRecovery()`. Does NOT end the outage yet; later reconnects
+   * during the same window return null.
    */
   connectionUp(id: string, now: number): number | null {
     if (!this.#ids.has(id)) return null;
     this.#down.delete(id);
-    if (!this.#announced) return null;
-    this.#announced = false;
-    const since = this.#downSince;
-    this.#downSince = null;
-    return since === null ? 0 : Math.max(0, now - since);
+    if (!this.#announced || this.#recovering) return null;
+    this.#recovering = true;
+    return this.#downSince === null ? 0 : Math.max(0, now - this.#downSince);
   }
 
-  /** True while an outage has been announced and not yet recovered — for status/tests. */
+  /**
+   * The stability window elapsed. Returns true iff the realm is still recovering (did not flap fully
+   * down in the window) — i.e. announce "back up" now — and closes the outage. False means a re-down
+   * cancelled it (the caller should not post).
+   */
+  confirmRecovery(): boolean {
+    if (this.#announced && this.#recovering) {
+      this.#announced = false;
+      this.#recovering = false;
+      this.#downSince = null;
+      return true;
+    }
+    return false;
+  }
+
+  /** True while an outage has been announced and not yet confirmed-recovered — for status/tests. */
   get outageActive(): boolean {
     return this.#announced;
+  }
+
+  /** True iff every supervised connection is currently down — the caller cancels a pending recovery
+   *  timer when this becomes true (the realm flapped back down mid-window). */
+  isFullyDown(): boolean {
+    return this.#down.size >= this.#ids.size;
   }
 }
