@@ -284,10 +284,6 @@ async function runConnection(
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
-  // The raid number each lane last fired the "about to clear" heads-up for, so it fires ONCE per
-  // raid — not again a minute later just because a buff dropped (a saved head, or a concurrent
-  // raid's kill) reset the buff-cycle dedup while this raid is still in the lair.
-  const lastEndingRaid = new Map<string, number | null>();
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -513,11 +509,16 @@ async function runConnection(
       // strength). Only ever called for a raid that is genuinely still in progress (the caller
       // gates on that), so it never nudges people to park for a raid that has finished.
       const announceRaidEnding = async (raidNumber: number | null, elapsedMs: number): Promise<void> => {
-        // Fire to every city this lane covers. The caller's per-raid dedup already guarantees this
-        // runs at most once per raid, so there is no buff-cycle dedup here — a mid-raid buff drop
-        // (saved head / concurrent raid) must NOT re-open the heads-up, which the old
-        // shouldBroadcast check did (it re-fired "park now" a minute after the first).
+        // Fire ONCE per raid, and make that survive reconnects/restarts: dedup on the raid number
+        // stored in the PERSISTED ledger, not in per-connection memory (an in-memory map re-fired
+        // the heads-up on every relogin). Keyed on the raid number, not the buff cycle, so a
+        // mid-raid buff drop (saved head / concurrent raid) still can't re-open it.
         const fresh: Faction[] = [...lane.cities];
+        const anyCity = fresh[0];
+        if (anyCity) {
+          const prior = await broadcasts.last(anyCity, "raid-ending").catch(() => null);
+          if (prior && prior.raidNumber != null && prior.raidNumber === raidNumber) return; // already told this raid
+        }
         const typical = await typicalClear();
         const message = formatRaidEnding(raidNumber, fresh, elapsedMs, typical);
         logger.info(`ALERT raid-ending (${fresh.join("/")}): ${message.body}`);
@@ -538,7 +539,7 @@ async function runConnection(
         }
         for (const city of fresh) {
           await broadcasts
-            .record({ city, kind: "raid-ending", cohortLabel: "a raid", peak: 0, lastBroadcastAt: new Date(now) })
+            .record({ city, kind: "raid-ending", cohortLabel: "a raid", peak: 0, raidNumber, lastBroadcastAt: new Date(now) })
             .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
         }
       };
@@ -700,14 +701,12 @@ async function runConnection(
       // If it just cleared above (elapsed is now null), or its roster is already leaving (a pending
       // departure — clearing or wiping), there is no fresh buff to park for, so we stay quiet.
       const endingElapsedMs = lane.watch.raidElapsedMs(now);
-      const endingRaidNumber = lane.watch.raidNumber();
-      // Once per raid: don't re-fire the heads-up for a raid we've already announced (a buff drop
-      // mid-raid must not re-trigger it — that put a second "park now" a minute after the first).
-      if (endingElapsedMs !== null && !lane.watch.pendingClear() && lastEndingRaid.get(lane.label) !== endingRaidNumber) {
+      // announceRaidEnding dedups once-per-raid against the persisted ledger, so this is safe to
+      // reach every poll and across reconnects — it won't re-fire for a raid already announced.
+      if (endingElapsedMs !== null && !lane.watch.pendingClear()) {
         const predictedMs = await predictRaidDurationMs();
         if (raidEndingDue(endingElapsedMs, predictedMs, config.raidEndingLeadMs)) {
-          await announceRaidEnding(endingRaidNumber, endingElapsedMs);
-          lastEndingRaid.set(lane.label, endingRaidNumber);
+          await announceRaidEnding(lane.watch.raidNumber(), endingElapsedMs);
         }
       }
     };

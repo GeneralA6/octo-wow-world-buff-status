@@ -28,6 +28,9 @@ export interface BroadcastRecord {
   /** The raid group this alert was about, for the log and the status query. */
   readonly cohortLabel: string;
   readonly peak: number;
+  /** The raid number this broadcast was for — lets a per-raid dedup (the "about to clear" heads-up)
+   *  survive reconnects and restarts, since it lives in the DB rather than in per-connection memory. */
+  readonly raidNumber?: number | null;
   /** When we last broadcast this (city, kind). */
   readonly lastBroadcastAt: Date;
 }
@@ -88,6 +91,7 @@ interface BroadcastDoc {
   readonly kind: BroadcastKind;
   readonly cohortLabel: string;
   readonly peak: number;
+  readonly raidNumber?: number | null;
   readonly lastBroadcastAt: Date;
 }
 
@@ -132,6 +136,7 @@ export class MongoBroadcastLedger implements BroadcastLedger {
           kind: doc.kind,
           cohortLabel: doc.cohortLabel,
           peak: doc.peak,
+          raidNumber: doc.raidNumber ?? null,
           lastBroadcastAt: doc.lastBroadcastAt,
         }
       : null;
@@ -143,6 +148,7 @@ export class MongoBroadcastLedger implements BroadcastLedger {
       kind: rec.kind,
       cohortLabel: rec.cohortLabel,
       peak: rec.peak,
+      raidNumber: rec.raidNumber ?? null,
       lastBroadcastAt: rec.lastBroadcastAt,
     });
   }

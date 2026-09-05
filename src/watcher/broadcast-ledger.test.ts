@@ -4,13 +4,13 @@ import {
   MongoBroadcastLedger,
   shouldBroadcast,
   type BroadcastDb,
+  type BroadcastKind,
   type BroadcastRecord,
-  type RaidEventKind,
 } from "./broadcast-ledger.js";
 import type { Faction } from "./buff-store.js";
 
 const at = (sec: number): Date => new Date(sec * 1000);
-const rec = (city: Faction, kind: RaidEventKind, sec: number): BroadcastRecord => ({
+const rec = (city: Faction, kind: BroadcastKind, sec: number): BroadcastRecord => ({
   city,
   kind,
   cohortLabel: "the lair",
@@ -71,6 +71,12 @@ describe("InMemoryBroadcastLedger", () => {
     expect(await ledger.last("horde", "raid-forming")).toBeNull();
     expect((await ledger.last("alliance", "raid-forming"))?.city).toBe("alliance");
   });
+
+  it("round-trips the raid number (so the once-per-raid heads-up dedup survives a restart)", async () => {
+    const ledger = new InMemoryBroadcastLedger();
+    await ledger.record({ ...rec("alliance", "raid-ending", 100), raidNumber: 51 });
+    expect((await ledger.last("alliance", "raid-ending"))?.raidNumber).toBe(51);
+  });
 });
 
 describe("MongoBroadcastLedger", () => {
@@ -78,7 +84,7 @@ describe("MongoBroadcastLedger", () => {
     const docs: BroadcastRecord[] = [];
     return {
       docs,
-      get: vi.fn(async (city: Faction, kind: RaidEventKind) =>
+      get: vi.fn(async (city: Faction, kind: BroadcastKind) =>
         docs.find((d) => d.city === city && d.kind === kind) ?? null,
       ),
       upsert: vi.fn(async (doc) => {
@@ -102,6 +108,12 @@ describe("MongoBroadcastLedger", () => {
   it("returns null for a pair never recorded", async () => {
     const ledger = new MongoBroadcastLedger(fakeDb());
     expect(await ledger.last("alliance", "raid-forming")).toBeNull();
+  });
+
+  it("persists and reads back the raid number through the DB", async () => {
+    const ledger = new MongoBroadcastLedger(fakeDb());
+    await ledger.record({ ...rec("horde", "raid-ending", 100), raidNumber: 52 });
+    expect((await ledger.last("horde", "raid-ending"))?.raidNumber).toBe(52);
   });
 
   it("closes the underlying connection", async () => {
