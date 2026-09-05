@@ -276,6 +276,8 @@ interface ConnectionServices {
   readonly push: (message: NotifyMessage, factions?: readonly Faction[]) => Promise<void>;
   /** Post an operational/error notice to the errors Discord channel (or log-only if unset). */
   readonly notifyAdmin: (title: string, body: string) => Promise<void>;
+  /** Post a STAGED/test alert to the tests channel (falls back to errors). */
+  readonly notifyTests: (title: string, body: string) => Promise<void>;
   readonly client: ClientValues;
 }
 
@@ -285,7 +287,7 @@ async function runConnection(
   logger: Logger,
   services: ConnectionServices,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
@@ -975,8 +977,8 @@ async function runConnection(
             if (now - (headIncomingSeen.get(key) ?? 0) > HEAD_INCOMING_DEDUP_MS) {
               headIncomingSeen.set(key, now);
               const msg = formatHeadIncoming(incoming.faction, incoming.witness);
-              logger.info(`LFT head-incoming -> ops: ${incoming.faction} witness=${incoming.witness} at ${incoming.serverHour}:${String(incoming.serverMinute).padStart(2, "0")}`);
-              void notifyAdmin(msg.title, msg.body).catch((e) => logger.error(`head-incoming notify: ${describeError(e)}`));
+              logger.info(`LFT head-incoming -> tests: ${incoming.faction} witness=${incoming.witness} at ${incoming.serverHour}:${String(incoming.serverMinute).padStart(2, "0")}`);
+              void notifyTests(msg.title, msg.body).catch((e) => logger.error(`head-incoming notify: ${describeError(e)}`));
             }
           } else if (obLine) {
             logger.info(`LFT OB message (unparsed/non-onyxia): ${JSON.stringify(obLine)} on ${JSON.stringify(channelName)}`);
@@ -1386,6 +1388,15 @@ async function main(): Promise<void> {
     const result = await dm.postToChannel(config.discordErrorsChannelId, `**${title}**\n${body}`);
     if (!result.ok) logger.error(`ops notify failed (${result.kind}): ${title}`);
   };
+  // Staged/test alerts (features being validated before the public buff channel). Posts to the
+  // dedicated tests channel, falling back to the errors channel if none is set.
+  const notifyTests = async (title: string, body: string): Promise<void> => {
+    const channel = config.discordTestsChannelId ?? config.discordErrorsChannelId;
+    logger.info(`[test] ${title} - ${body}`);
+    if (!channel) return;
+    const result = await dm.postToChannel(channel, `**${title}**\n${body}`);
+    if (!result.ok) logger.error(`test notify failed (${result.kind}): ${title}`);
+  };
 
   const store = config.whispersEnabled
     ? await openStore(config, logger, notifyAdmin)
@@ -1631,6 +1642,7 @@ async function main(): Promise<void> {
     yellSink,
     push,
     notifyAdmin,
+    notifyTests,
     client,
   };
 
