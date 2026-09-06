@@ -29,6 +29,7 @@ import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/rai
 import { summarizeDepartures } from "./watcher/presence.js";
 import { fetchRoster, type Roster } from "./watcher/roster.js";
 import { PresenceSweeper } from "./watcher/presence-sweep.js";
+import { RecentBuffs } from "./watcher/recent-buffs.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
@@ -117,6 +118,10 @@ const TIMER_EVAL_WINDOW = 200;
 /** Suppress a repeat LFT head-incoming alert for the same turn-in within this window — the channel
  *  relays/retransmits the same OB_INC many times, and a turn-in is a momentary event. */
 const HEAD_INCOMING_DEDUP_MS = 15 * 60_000;
+
+/** Collapse a buff yell heard by more than one same-city listener into one drop. A faction's buff
+ *  cannot legitimately re-drop within minutes, so this only ever fuses duplicate detections. */
+const BUFF_DEDUP_MS = 5 * 60_000;
 
 /** Consecutive reconnect failures before a supervisor alerts the errors channel that it's
  *  down (backoff caps at 60s, so this is a couple of minutes of sustained failure, not a blip). */
@@ -1233,9 +1238,11 @@ async function runListener(
           listenerWho.register(listener.characterName, queuedWho);
           // Join the whisper pool so broadcasts can fan across this listener's own throttle budget.
           whisperPool.register(listener.characterName, listener.faction, listenerWhispers);
-          // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone
-          // standing in this capital. Only when the listener's faction is configured.
-          if (listener.faction) {
+          // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone standing
+          // in this capital — only when a faction is set AND this listener is a yeller. A second bot
+          // in the same city with yeller=false stays whisper-only, so the two don't churn the single
+          // yellSink slot. (All listeners join the whisper pool above regardless.)
+          if (listener.faction && listener.yeller) {
             registeredYell = (message: string): void => world.yell(message);
             yellSink[listener.faction] = registeredYell;
             logger.info(`${listener.characterName}: registered as ${listener.faction} yell mouthpiece`);
@@ -1649,7 +1656,14 @@ async function main(): Promise<void> {
   // its own queue only if no listener is in world.
   const whisperPool = new WhisperPool();
 
+  const recentBuffs = new RecentBuffs(BUFF_DEDUP_MS);
   const recordBuff = (faction: Faction, sourceName: string, text: string, detectedBy: string): void => {
+    // Two listeners parked in one capital both hear the same yell; act on it once. Without this a
+    // second same-city bot would double-post to Discord and double-whisper every subscriber.
+    if (!recentBuffs.fresh(faction, Date.now())) {
+      logger.info(`buff drop: ${faction} already recorded moments ago — ignoring duplicate heard by ${detectedBy}`);
+      return;
+    }
     const appliedAt = new Date();
     // Fresh kill (a raid was in the lair), saved head (empty lair), or unknown (we were blind).
     // Only a confident "saved" adds a line to the post; fresh/unknown render exactly as before.

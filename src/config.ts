@@ -30,6 +30,10 @@ export interface ListenerConfig {
   /** Which capital this listener stands in, so its /yell reaches that side's crowd. Null
    *  when unset — the listener still hears buff yells, it just can't be a yell mouthpiece. */
   readonly faction: Faction | null;
+  /** Whether this listener may be its city's /yell mouthpiece. All listeners always join the whisper
+   *  pool; this only governs the public city yell, so a second bot in a capital can be whisper-only
+   *  (yeller=false) rather than fight over the single yell slot. Default true. */
+  readonly yeller: boolean;
 }
 
 export interface BotConfig {
@@ -238,35 +242,93 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const loginRaw = env.WOW_LOGIN_ENABLED?.trim().toLowerCase();
   const loginEnabled = loginRaw !== "false" && loginRaw !== "0" && loginRaw !== "none";
 
-  // Yell listeners: one per city character, each with its own dedicated
-  // WOW_LISTENER_<NAME>_ACCOUNT / _PASSWORD / _CHARACTER. Discovered by scanning for
-  // the _ACCOUNT vars, so there is no separate list to keep in sync — just add a set.
+  // Per-listener field parsers, shared by the array and legacy schemes.
+  const parseOnLogin = (raw: string | undefined, ctx: string): OnLoginAction => {
+    const value = raw?.trim().toLowerCase();
+    if (value === "sit" || value === "interact" || value === "none") return value;
+    if (value) errors.push(`${ctx} must be "sit", "interact", or "none"`);
+    return "none";
+  };
+  const parseFaction = (raw: string | undefined, ctx: string): Faction | null => {
+    const value = raw?.trim().toLowerCase();
+    if (value === "alliance" || value === "horde") return value;
+    if (value) errors.push(`${ctx} must be "alliance" or "horde"`);
+    return null;
+  };
+  // Default true: a faction-set listener yells (the single yellSink slot already prevents a double
+  // yell); set "false"/"0"/"no" to make a second same-city bot whisper-only.
+  const parseYeller = (raw: string | undefined): boolean => {
+    const value = raw?.trim().toLowerCase();
+    return value !== "false" && value !== "0" && value !== "no";
+  };
+
+  // Yell listeners: capital-parked characters that hear their side's buff yell and split the whisper
+  // load. Preferred form is index-aligned ";"-separated arrays (add a listener by appending to each),
+  // e.g. WOW_LISTENER_ACCOUNTS="a1;a2" with matching _PASSWORDS/_CHARACTERS and optional
+  // _FACTIONS/_ONLOGIN/_YELLERS. Passwords must not contain ";". If WOW_LISTENER_ACCOUNTS is unset,
+  // fall back to the legacy per-listener WOW_LISTENER_<LABEL>_* groups.
   const listeners: ListenerConfig[] = [];
-  const listenerLabels = new Set<string>();
-  for (const key of Object.keys(env)) {
-    const match = /^WOW_LISTENER_(.+)_ACCOUNT$/.exec(key);
-    if (match?.[1]) listenerLabels.add(match[1]);
-  }
-  for (const label of [...listenerLabels].sort()) {
-    const prefix = `WOW_LISTENER_${label}`;
-    const onLoginRaw = env[`${prefix}_ONLOGIN`]?.trim().toLowerCase();
-    let onLogin: OnLoginAction = "none";
-    if (onLoginRaw === "sit" || onLoginRaw === "interact" || onLoginRaw === "none") {
-      onLogin = onLoginRaw;
-    } else if (onLoginRaw) {
-      errors.push(`${prefix}_ONLOGIN must be "sit", "interact", or "none"`);
-    }
-    const factionRaw = env[`${prefix}_FACTION`]?.trim().toLowerCase();
-    let faction: Faction | null = null;
-    if (factionRaw === "alliance" || factionRaw === "horde") faction = factionRaw;
-    else if (factionRaw) errors.push(`${prefix}_FACTION must be "alliance" or "horde"`);
-    listeners.push({
-      account: required(`${prefix}_ACCOUNT`),
-      password: required(`${prefix}_PASSWORD`),
-      characterName: required(`${prefix}_CHARACTER`),
-      onLogin,
-      faction,
+  const splitList = (key: string): string[] => {
+    const raw = env[key]?.trim();
+    return raw ? raw.split(";").map((entry) => entry.trim()) : [];
+  };
+  const accountList = splitList("WOW_LISTENER_ACCOUNTS");
+  if (accountList.length > 0) {
+    const passwordList = splitList("WOW_LISTENER_PASSWORDS");
+    const characterList = splitList("WOW_LISTENER_CHARACTERS");
+    const factionList = splitList("WOW_LISTENER_FACTIONS");
+    const onLoginList = splitList("WOW_LISTENER_ONLOGIN");
+    const yellerList = splitList("WOW_LISTENER_YELLERS");
+    const n = accountList.length;
+    // Required lists must match length; optional ones may be omitted, but a present-and-mismatched
+    // list is an index shift and is refused rather than silently misaligning listeners.
+    const checkLen = (key: string, list: string[], optional: boolean): void => {
+      if (optional && list.length === 0) return;
+      if (list.length !== n) {
+        errors.push(
+          `${key} has ${list.length} ";"-separated entries but WOW_LISTENER_ACCOUNTS has ${n} — they must line up by index`,
+        );
+      }
+    };
+    checkLen("WOW_LISTENER_PASSWORDS", passwordList, false);
+    checkLen("WOW_LISTENER_CHARACTERS", characterList, false);
+    checkLen("WOW_LISTENER_FACTIONS", factionList, true);
+    checkLen("WOW_LISTENER_ONLOGIN", onLoginList, true);
+    checkLen("WOW_LISTENER_YELLERS", yellerList, true);
+    accountList.forEach((account, i) => {
+      const nth = i + 1;
+      if (!account) errors.push(`WOW_LISTENER_ACCOUNTS entry ${nth} is empty`);
+      const password = passwordList[i] ?? "";
+      if (!password) errors.push(`WOW_LISTENER_PASSWORDS entry ${nth} is empty`);
+      const characterName = characterList[i] ?? "";
+      if (!characterName) errors.push(`WOW_LISTENER_CHARACTERS entry ${nth} is empty`);
+      listeners.push({
+        account,
+        password,
+        characterName,
+        onLogin: parseOnLogin(onLoginList[i], `WOW_LISTENER_ONLOGIN entry ${nth}`),
+        faction: parseFaction(factionList[i], `WOW_LISTENER_FACTIONS entry ${nth}`),
+        yeller: parseYeller(yellerList[i]),
+      });
     });
+  } else {
+    // Legacy: discovered by scanning for the _ACCOUNT vars, one WOW_LISTENER_<LABEL>_* group each.
+    const listenerLabels = new Set<string>();
+    for (const key of Object.keys(env)) {
+      const match = /^WOW_LISTENER_(.+)_ACCOUNT$/.exec(key);
+      if (match?.[1]) listenerLabels.add(match[1]);
+    }
+    for (const label of [...listenerLabels].sort()) {
+      const prefix = `WOW_LISTENER_${label}`;
+      listeners.push({
+        account: required(`${prefix}_ACCOUNT`),
+        password: required(`${prefix}_PASSWORD`),
+        characterName: required(`${prefix}_CHARACTER`),
+        onLogin: parseOnLogin(env[`${prefix}_ONLOGIN`], `${prefix}_ONLOGIN`),
+        faction: parseFaction(env[`${prefix}_FACTION`], `${prefix}_FACTION`),
+        yeller: parseYeller(env[`${prefix}_YELLER`]),
+      });
+    }
   }
 
   const worldHost = env.WOW_WORLD_HOST?.trim() || null;
