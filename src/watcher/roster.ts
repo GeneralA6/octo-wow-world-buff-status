@@ -12,9 +12,27 @@ import { WHO_RESULT_CAP } from "./presence.js";
  */
 export const CLASS_IDS = [1, 2, 3, 4, 5, 7, 8, 9, 11] as const;
 
-/** Default gap between class-slice /who queries. The server throttles /who: a packed lair's ~9
- *  slices fired back-to-back trip it and it stops replying (every subsequent /who then times out),
- *  which is what blinded the raid tracker at a two-raid peak. Spacing them keeps it answering. */
+/**
+ * Classes grouped into COMBINED-mask buckets so a packed lair takes 3 /who instead of 9. A /who
+ * classMask is a bitmask, so one query can ask for several classes at once; three classes in even a
+ * double raid (~60-80 in the lair) is comfortably under the 49 cap. Firing 9 individual slices per
+ * poll tripped the server's /who throttle and blinded the tracker (52% of polls came back partial
+ * at a two-raid peak); a third of the queries is a third of the throttle pressure. A bucket that DOES
+ * come back capped (an extreme zerg) is sub-sliced into its individual classes — see fetchRoster.
+ * The three popular classes (Warrior 1, Rogue 4, Mage 8) are split one per bucket to keep them even.
+ */
+export const CLASS_BUCKETS: readonly (readonly number[])[] = [
+  [1, 2, 3],
+  [4, 5, 7],
+  [8, 9, 11],
+];
+
+/** classMask (bitmask) selecting every class in the group at once — bit for class C is 1 << (C-1). */
+const maskFor = (classes: readonly number[]): number => classes.reduce((mask, c) => mask | (1 << (c - 1)), 0);
+
+/** Default gap between /who queries on one socket. The server throttles /who: slices fired
+ *  back-to-back trip it and it stops replying (every subsequent /who then times out), which is what
+ *  blinded the raid tracker at a two-raid peak. Spacing them keeps it answering. */
 export const DEFAULT_WHO_SLICE_DELAY_MS = 1_500;
 
 export type WhoFn = (query: WhoQuery) => Promise<WhoResult>;
@@ -49,31 +67,49 @@ export async function fetchRoster(
     return { players: [...base.players], onlineCount: base.onlineCount, complete: true, sliced: false, failedSlices: 0 };
   }
 
-  // Truncated — fill in per-class slices to beat the cap. The server throttles /who per socket, so
-  // firing all ~9 slices on the poll socket trips it and it stops answering (which blinded the raid
-  // tracker at a two-raid peak). Spread them round-robin across every socket we have — the poll
-  // socket plus any idle listener sockets — so each takes only a few, run the sockets in PARALLEL,
-  // and pace each socket's own slices. A slice that still times out is skipped (partial, marked
-  // incomplete) rather than losing the whole poll.
+  // Truncated — fill in per-class-BUCKET slices to beat the cap. The server throttles /who, so we
+  // ask for three classes at once (one query per bucket) rather than one class at a time: 3 /who a
+  // poll instead of 9. Spread the buckets round-robin across every socket we have — the poll socket
+  // plus any idle listener sockets — run the sockets in PARALLEL, and pace each socket's own queries.
+  // A bucket that still comes back capped is sub-sliced into its own classes on that socket. A query
+  // that times out is skipped (partial, marked incomplete) rather than losing the whole poll.
   const runners = [pollWho, ...extraWho];
-  const buckets: number[][] = runners.map(() => []);
-  CLASS_IDS.forEach((classId, i) => buckets[i % runners.length]!.push(classId));
+  const assigned: (readonly number[])[][] = runners.map(() => []);
+  CLASS_BUCKETS.forEach((bucket, i) => assigned[i % runners.length]!.push(bucket));
 
   const perRunner = await Promise.all(
     runners.map(async (who, ri) => {
       const found: WhoPlayer[] = [];
       let complete = true;
       let failed = 0;
-      const bucket = buckets[ri]!;
-      for (let j = 0; j < bucket.length; j++) {
-        if (j > 0) await sleep(sliceDelayMs); // pace this socket's own slices (first fires at once)
+      const query = (mask: number): Promise<WhoResult> =>
+        who({ minLevel: 0, maxLevel: 100, zoneIds: [areaId], classMask: mask });
+      const buckets = assigned[ri]!;
+      let queriesSent = 0;
+      for (const bucket of buckets) {
+        if (queriesSent > 0) await sleep(sliceDelayMs); // pace this socket's own queries
+        queriesSent += 1;
         try {
-          const slice = await who({ minLevel: 0, maxLevel: 100, zoneIds: [areaId], classMask: 1 << (bucket[j]! - 1) });
-          for (const player of slice.players) found.push(player);
-          if (slice.players.length >= WHO_RESULT_CAP) complete = false; // >49 of one class — still truncated
+          const slice = await query(maskFor(bucket));
+          if (slice.players.length < WHO_RESULT_CAP) {
+            for (const player of slice.players) found.push(player);
+            continue;
+          }
+          // Bucket itself hit the cap (an extreme zerg) — sub-slice it into individual classes.
+          for (const classId of bucket) {
+            await sleep(sliceDelayMs);
+            try {
+              const sub = await query(1 << (classId - 1));
+              for (const player of sub.players) found.push(player);
+              if (sub.players.length >= WHO_RESULT_CAP) complete = false; // >49 of one class — still truncated
+            } catch {
+              failed += 1;
+              complete = false;
+            }
+          }
         } catch {
           failed += 1;
-          complete = false; // missing this class's members — a partial roster, but better than none
+          complete = false; // missing this bucket's members — a partial roster, but better than none
         }
       }
       return { found, complete, failed };
