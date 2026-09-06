@@ -254,130 +254,60 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv }).listeners).toEqual([]);
   });
 
-  it("discovers listener sessions from their dedicated vars", () => {
+  it("parses the WOW_LISTENERS JSON array (one object per character)", () => {
     const config = loadConfig({
       ...minimalEnv,
-      WOW_LISTENER_ONYXIABUFFSW_ACCOUNT: "ONYXIABUFFSW",
-      WOW_LISTENER_ONYXIABUFFSW_PASSWORD: "pw1",
-      WOW_LISTENER_ONYXIABUFFSW_CHARACTER: "Onyxiabuffsw",
-      WOW_LISTENER_ONYXIABUFFOG_ACCOUNT: "ONYXIABUFFOG",
-      WOW_LISTENER_ONYXIABUFFOG_PASSWORD: "pw2",
-      WOW_LISTENER_ONYXIABUFFOG_CHARACTER: "Onyxiabuffog",
+      WOW_LISTENERS: JSON.stringify([
+        { account: "ONYXIABUFFOG", password: "pw;1:with!specials", character: "Onyxiabuffog", faction: "horde", onLogin: "sit", yeller: true },
+        { account: "ONYXIABUFFSW", password: "pw2", character: "Onyxiabuffsw", faction: "alliance", onLogin: "interact" },
+        { account: "ONYXIABUFFOGB", password: "pw3", character: "Onybuffogb", faction: "horde", onLogin: "sit", yeller: false },
+      ]),
     });
-    // Sorted by label: ONYXIABUFFOG before ONYXIABUFFSW.
     expect(config.listeners).toEqual([
-      { account: "ONYXIABUFFOG", password: "pw2", characterName: "Onyxiabuffog", onLogin: "none", faction: null, yeller: true },
-      { account: "ONYXIABUFFSW", password: "pw1", characterName: "Onyxiabuffsw", onLogin: "none", faction: null, yeller: true },
+      { account: "ONYXIABUFFOG", password: "pw;1:with!specials", characterName: "Onyxiabuffog", onLogin: "sit", faction: "horde", yeller: true },
+      { account: "ONYXIABUFFSW", password: "pw2", characterName: "Onyxiabuffsw", onLogin: "interact", faction: "alliance", yeller: true }, // yeller defaults true
+      { account: "ONYXIABUFFOGB", password: "pw3", characterName: "Onybuffogb", onLogin: "sit", faction: "horde", yeller: false },
     ]);
   });
 
-  it("parses index-aligned ;-separated listener arrays (the preferred scheme)", () => {
+  it("defaults optional fields (faction null, onLogin none, yeller true)", () => {
     const config = loadConfig({
       ...minimalEnv,
-      WOW_LISTENER_ACCOUNTS: "OGA;SWA;OGB;SWB",
-      WOW_LISTENER_PASSWORDS: "p1;p2;p3;p4",
-      WOW_LISTENER_CHARACTERS: "Oga;Swa;Ogb;Swb",
-      WOW_LISTENER_FACTIONS: "horde;alliance;horde;alliance",
-      WOW_LISTENER_ONLOGIN: "sit;sit;interact;none",
-      WOW_LISTENER_YELLERS: "true;true;false;false",
+      WOW_LISTENERS: JSON.stringify([{ account: "A", password: "p", character: "Ca" }]),
     });
     expect(config.listeners).toEqual([
-      { account: "OGA", password: "p1", characterName: "Oga", onLogin: "sit", faction: "horde", yeller: true },
-      { account: "SWA", password: "p2", characterName: "Swa", onLogin: "sit", faction: "alliance", yeller: true },
-      { account: "OGB", password: "p3", characterName: "Ogb", onLogin: "interact", faction: "horde", yeller: false },
-      { account: "SWB", password: "p4", characterName: "Swb", onLogin: "none", faction: "alliance", yeller: false },
+      { account: "A", password: "p", characterName: "Ca", onLogin: "none", faction: null, yeller: true },
     ]);
   });
 
-  it("defaults optional listener arrays (faction null, onLogin none, yeller true) and ignores legacy vars when arrays are set", () => {
-    const config = loadConfig({
-      ...minimalEnv,
-      WOW_LISTENER_ACCOUNTS: "A;B",
-      WOW_LISTENER_PASSWORDS: "p1;p2",
-      WOW_LISTENER_CHARACTERS: "Ca;Cb",
-      // no FACTIONS / ONLOGIN / YELLERS
-      WOW_LISTENER_LEGACY_ACCOUNT: "IGNORED", // legacy scan is skipped once arrays are present
-      WOW_LISTENER_LEGACY_PASSWORD: "x",
-      WOW_LISTENER_LEGACY_CHARACTER: "Y",
-    });
-    expect(config.listeners).toEqual([
-      { account: "A", password: "p1", characterName: "Ca", onLogin: "none", faction: null, yeller: true },
-      { account: "B", password: "p2", characterName: "Cb", onLogin: "none", faction: null, yeller: true },
-    ]);
-  });
-
-  it("refuses ;-separated lists that don't line up by index", () => {
-    expect(() =>
-      loadConfig({
-        ...minimalEnv,
-        WOW_LISTENER_ACCOUNTS: "A;B;C",
-        WOW_LISTENER_PASSWORDS: "p1;p2", // one short
-        WOW_LISTENER_CHARACTERS: "Ca;Cb;Cc",
-      }),
-    ).toThrow(/WOW_LISTENER_PASSWORDS has 2 ";"-separated entries but WOW_LISTENER_ACCOUNTS has 3/);
-    // A present-but-short optional list is also a misalignment.
-    expect(() =>
-      loadConfig({
-        ...minimalEnv,
-        WOW_LISTENER_ACCOUNTS: "A;B",
-        WOW_LISTENER_PASSWORDS: "p1;p2",
-        WOW_LISTENER_CHARACTERS: "Ca;Cb",
-        WOW_LISTENER_FACTIONS: "horde", // only one for two listeners
-      }),
-    ).toThrow(/WOW_LISTENER_FACTIONS has 1 ";"-separated entries but WOW_LISTENER_ACCOUNTS has 2/);
-  });
-
-  it("reads a per-listener yeller flag (default true, false/0/no disable)", () => {
-    const base = {
-      ...minimalEnv,
-      WOW_LISTENER_SW_ACCOUNT: "A",
-      WOW_LISTENER_SW_PASSWORD: "p",
-      WOW_LISTENER_SW_CHARACTER: "Sw",
-    };
-    expect(loadConfig({ ...base }).listeners[0]?.yeller).toBe(true);
-    expect(loadConfig({ ...base, WOW_LISTENER_SW_YELLER: "false" }).listeners[0]?.yeller).toBe(false);
-    expect(loadConfig({ ...base, WOW_LISTENER_SW_YELLER: "0" }).listeners[0]?.yeller).toBe(false);
-  });
-
-  it("reads a per-listener on-login action and rejects a bad one", () => {
-    const base = {
-      ...minimalEnv,
-      WOW_LISTENER_SW_ACCOUNT: "A",
-      WOW_LISTENER_SW_PASSWORD: "p",
-      WOW_LISTENER_SW_CHARACTER: "Sw",
-    };
-    expect(loadConfig({ ...base, WOW_LISTENER_SW_ONLOGIN: "interact" }).listeners[0]?.onLogin).toBe("interact");
-    expect(loadConfig({ ...base, WOW_LISTENER_SW_ONLOGIN: "SIT" }).listeners[0]?.onLogin).toBe("sit");
-    expect(loadConfig({ ...base }).listeners[0]?.onLogin).toBe("none");
-    expect(() => loadConfig({ ...base, WOW_LISTENER_SW_ONLOGIN: "dance" })).toThrow(/must be "sit", "interact", or "none"/);
-  });
-
-  it("reads a per-listener faction (its capital) and rejects a bad one", () => {
-    const base = {
-      ...minimalEnv,
-      WOW_LISTENER_SW_ACCOUNT: "A",
-      WOW_LISTENER_SW_PASSWORD: "p",
-      WOW_LISTENER_SW_CHARACTER: "Sw",
-    };
-    expect(loadConfig({ ...base }).listeners[0]?.faction).toBeNull();
-    expect(loadConfig({ ...base, WOW_LISTENER_SW_FACTION: "alliance" }).listeners[0]?.faction).toBe("alliance");
-    expect(loadConfig({ ...base, WOW_LISTENER_SW_FACTION: "HORDE" }).listeners[0]?.faction).toBe("horde");
-    expect(() => loadConfig({ ...base, WOW_LISTENER_SW_FACTION: "pandaren" })).toThrow(
-      /WOW_LISTENER_SW_FACTION must be "alliance" or "horde"/,
+  it("rejects invalid WOW_LISTENERS JSON with a clear error", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_LISTENERS: "{not json" })).toThrow(/WOW_LISTENERS is not valid JSON/);
+    expect(() => loadConfig({ ...minimalEnv, WOW_LISTENERS: '{"account":"A"}' })).toThrow(
+      /WOW_LISTENERS must be a JSON array/,
     );
+  });
+
+  it("errors on a listener object missing required fields", () => {
+    expect(() =>
+      loadConfig({ ...minimalEnv, WOW_LISTENERS: JSON.stringify([{ account: "A" }]) }),
+    ).toThrow(/entry 1 needs a non-empty "password"[\s\S]*entry 1 needs a non-empty "character"/);
+  });
+
+  it("rejects a bad faction / onLogin / yeller value in a listener object", () => {
+    expect(() =>
+      loadConfig({ ...minimalEnv, WOW_LISTENERS: JSON.stringify([{ account: "A", password: "p", character: "C", faction: "pandaren" }]) }),
+    ).toThrow(/entry 1 "faction" must be "alliance" or "horde"/);
+    expect(() =>
+      loadConfig({ ...minimalEnv, WOW_LISTENERS: JSON.stringify([{ account: "A", password: "p", character: "C", onLogin: "dance" }]) }),
+    ).toThrow(/entry 1 "onLogin" must be "sit", "interact", or "none"/);
+    expect(() =>
+      loadConfig({ ...minimalEnv, WOW_LISTENERS: JSON.stringify([{ account: "A", password: "p", character: "C", yeller: "yes" }]) }),
+    ).toThrow(/entry 1 "yeller" must be true or false/);
   });
 
   it("defaults the broadcast-dedup window to the buff window (120m) and accepts an override", () => {
     expect(loadConfig({ ...minimalEnv }).broadcastDedupMs).toBe(120 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_BROADCAST_DEDUP_MINUTES: "30" }).broadcastDedupMs).toBe(30 * 60_000);
-  });
-
-  it("errors when a discovered listener is missing its password or character", () => {
-    expect(() =>
-      loadConfig({ ...minimalEnv, WOW_LISTENER_ONYXIABUFFSW_ACCOUNT: "ONYXIABUFFSW" }),
-    ).toThrow(
-      /WOW_LISTENER_ONYXIABUFFSW_PASSWORD is required[\s\S]*WOW_LISTENER_ONYXIABUFFSW_CHARACTER is required/,
-    );
   });
 
   it("enables login by default and disables it on false/0/none", () => {
