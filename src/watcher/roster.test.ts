@@ -48,7 +48,7 @@ describe("fetchRoster", () => {
     expect(CLASS_BUCKETS.length).toBe(3);
   });
 
-  it("spreads the buckets round-robin across sockets, one each, still complete", async () => {
+  it("runs the buckets on the idle listener sockets, never the poll socket, still complete", async () => {
     const all = roster60();
     const poll = slicingWho(all);
     const l1 = slicingWho(all);
@@ -56,10 +56,10 @@ describe("fetchRoster", () => {
     const r = await fetchRoster(poll, [l1, l2], 2159, 0);
     expect(r.complete).toBe(true);
     expect(r.players).toHaveLength(60);
-    // 3 buckets over 3 sockets = 1 each; the poll socket also does the base.
-    expect(poll).toHaveBeenCalledTimes(1 + 1);
-    expect(l1).toHaveBeenCalledTimes(1);
-    expect(l2).toHaveBeenCalledTimes(1);
+    // The poll socket does ONLY the base (it must not fire base + a bucket back-to-back); the 3
+    // buckets run on the listener sockets, rotated (l1 gets buckets 0 and 2, l2 gets bucket 1).
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(l1.mock.calls.length + l2.mock.calls.length).toBe(CLASS_BUCKETS.length);
   });
 
   it("sub-slices a bucket that itself comes back capped (an extreme zerg) into its classes", async () => {
@@ -73,22 +73,24 @@ describe("fetchRoster", () => {
     expect(who).toHaveBeenCalledTimes(1 + 1 + 3 + 2);
   });
 
-  it("keeps a PARTIAL roster when a bucket query times out on one socket", async () => {
+  it("keeps a PARTIAL roster when a bucket query times out", async () => {
     const all = roster60();
-    const poll = slicingWho(all); // bucket [1,2,3]
-    const l1 = slicingWho(all, (classes) => classes.includes(4)); // bucket [4,5,7] fails on l1
-    const l2 = slicingWho(all); // bucket [8,9,11]
+    const poll = slicingWho(all); // base only
+    const l1 = slicingWho(all); // buckets 0 [1,2,3] and 2 [8,9,11]
+    const l2 = slicingWho(all, (classes) => classes.includes(4)); // bucket 1 [4,5,7] runs here, fails
     const r = await fetchRoster(poll, [l1, l2], 2159, 0);
     expect(r.failedSlices).toBe(1);
     expect(r.complete).toBe(false);
     expect(r.players.length).toBeGreaterThanOrEqual(49); // base + the buckets that answered, kept
+    expect(poll).toHaveBeenCalledTimes(1); // poll socket only ever did the base
   });
 
-  it("counts failed buckets across every socket", async () => {
+  it("counts every failed bucket", async () => {
     const all = roster60();
-    const who = () => slicingWho(all, () => true); // every bucket query times out
-    const r = await fetchRoster(who(), [who(), who()], 2159, 0);
-    expect(r.failedSlices).toBe(3); // one bucket per socket, all failed
+    const poll = slicingWho(all);
+    const failAll = () => slicingWho(all, () => true); // every bucket query times out
+    const r = await fetchRoster(poll, [failAll(), failAll()], 2159, 0);
+    expect(r.failedSlices).toBe(CLASS_BUCKETS.length); // all 3 buckets failed
     expect(r.complete).toBe(false);
   });
 
