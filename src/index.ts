@@ -31,6 +31,7 @@ import { WhoRosterSource, type LairView, type RosterSource } from "./watcher/ros
 import { PresenceSweeper } from "./watcher/presence-sweep.js";
 import { BuffTracker } from "./watcher/buff-tracker.js";
 import { createRaidService } from "./raid-service.js";
+import type { DetectionLane, LaneChronicle, YellSink } from "./lanes.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
@@ -181,27 +182,11 @@ function connectSocket(host: string, port: number, timeoutMs = 15_000): Promise<
   });
 }
 
-/**
- * One detection lane: a raid watch over some slice of the lair, and the city buffs it
- * gates against. Crossfaction is one lane over the whole lair gating both cities;
- * faction realm is one lane per side, each gating its own city.
- */
-export interface DetectionLane {
-  readonly label: string;
-  readonly watch: RaidTracker;
-  readonly cities: readonly Faction[];
-  players(split: FactionSplit): readonly WhoPlayer[];
-}
-
 /** A buff drop is heard on a listener but must be whispered from the watcher — the
  *  watcher fills this sink when in world so the listener's recordBuff can reach it. */
 interface BuffDropSink {
   notify: ((faction: Faction, appliedAt: Date, savedHead: boolean) => void) | null;
 }
-
-/** Each listener (parked in its capital) registers a /yell function for its own side once
- *  it knows it; the watcher yells through it to broadcast to everyone nearby in the city. */
-type YellSink = Partial<Record<Faction, (message: string) => void>>;
 
 /** Runs one /who and returns the result — a socket's queued lookup. */
 type WhoRunner = (query: WhoQuery) => Promise<WhoResult>;
@@ -233,17 +218,8 @@ class ListenerWho {
   }
 }
 
-/** Chronicle early-confirm dependencies, or null when it's off (no Mongo / disabled). */
-interface LaneChronicle {
-  readonly client: ChronicleClient;
-  readonly store: ChronicleStore;
-  readonly realm: string;
-  /** How far a kill's pull time may sit from the raid's span and still count as this raid's. */
-  readonly matchWindowMs: number;
-}
-
 /** Everything a connection needs beyond config: shared state and the alert sinks. */
-export interface ConnectionServices {
+interface ConnectionServices {
   readonly lanes: readonly DetectionLane[];
   /** Chronicle early-confirm, or null when off. */
   readonly chronicle: LaneChronicle | null;

@@ -17,19 +17,50 @@ import { evaluateTimer, improvedEstimate, typicalClearText } from "./watcher/tim
 import { splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { raidEndingDue } from "./watcher/raid-ending.js";
 import { summarizeDepartures } from "./watcher/presence.js";
-import { noteLairPoll } from "./watcher/drop-origin.js";
-import { shouldBroadcast } from "./watcher/broadcast-ledger.js";
+import { noteLairPoll, type LairActivity } from "./watcher/drop-origin.js";
+import { shouldBroadcast, type BroadcastLedger } from "./watcher/broadcast-ledger.js";
 import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/raid-events.js";
 import { RaidAlertPolicy } from "./watcher/raid-alert-policy.js";
 import { FACTIONS, type Faction } from "./watcher/buff-store.js";
-import { isPlausibleClear } from "./watcher/duration-store.js";
+import { isPlausibleClear, type DurationStore } from "./watcher/duration-store.js";
 import { confirmingKills } from "./chronicle/confirm.js";
 import { cleanOnyxiaKills } from "./chronicle/parse.js";
 import type { WhisperQueue } from "./chat/whisper-queue.js";
 import type { LairView } from "./watcher/roster-source.js";
 import type { RaidLifecycleEvent } from "./watcher/raid-tracker.js";
 import type { ConfirmedClear, PendingDeparture } from "./watcher/clear-tracker.js";
-import type { ConnectionServices, DetectionLane } from "./index.js";
+import type { DetectionLane, LaneChronicle, YellSink } from "./lanes.js";
+import type { BuffTracker } from "./watcher/buff-tracker.js";
+import type { RaidStateStore } from "./watcher/raid-state-store.js";
+import type { SnapshotStore } from "./watcher/snapshot-store.js";
+import type { SubscriberStore } from "./subscribers/store.js";
+import type { UserLedger } from "./subscribers/user-ledger.js";
+import type { GuildieStore } from "./subscribers/guildie-store.js";
+import type { WhisperPool } from "./chat/whisper-pool.js";
+import type { NotifyMessage } from "./notify/notifier.js";
+
+/**
+ * Exactly what the raid service needs from the connection — a narrow view of index.ts's
+ * ConnectionServices (which is structurally assignable to this). Declared here, from the source
+ * modules, so the service never imports the entry point for a type.
+ */
+export interface RaidServiceDeps {
+  readonly lanes: readonly DetectionLane[];
+  readonly chronicle: LaneChronicle | null;
+  readonly buffTracker: BuffTracker;
+  readonly broadcasts: BroadcastLedger;
+  readonly raidStateStore: RaidStateStore;
+  readonly durationStore: DurationStore;
+  readonly snapshots: SnapshotStore;
+  readonly store: SubscriberStore;
+  readonly userLedger: UserLedger;
+  readonly inviteLedger: UserLedger;
+  readonly guildieStore: GuildieStore;
+  readonly whisperPool: WhisperPool;
+  readonly yellSink: YellSink;
+  readonly lairActivity: LairActivity;
+  readonly push: (message: NotifyMessage, factions?: readonly Faction[]) => Promise<void>;
+}
 
 /** How many recent clears the self-improving timer evaluates over. */
 const TIMER_EVAL_WINDOW = 200;
@@ -50,7 +81,7 @@ function mins(ms: number): number {
  * poll loop, the buffDropSink and the yell timer to the handles it returns.
  */
 export function createRaidService(
-  services: ConnectionServices,
+  services: RaidServiceDeps,
   config: BotConfig,
   logger: Logger,
   broadcastWhisper: (names: readonly string[], message: string, faction: Faction | null, cities?: readonly Faction[], maxAgeMs?: number) => void,
