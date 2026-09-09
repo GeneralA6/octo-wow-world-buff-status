@@ -177,6 +177,13 @@ that extensibility is the whole point of the seam.
 
 Each step is independently shippable and reversible; the live bot never sees a big-bang cut-over.
 
+**Landed so far (2026-09):** steps 1–3 — `RosterSource` (`WhoRosterSource`), `AlertDelivery`, and
+`RaidAlertPolicy` are extracted and live, each behaviour-identical with its own unit tests. The poll
+loop now reads a `LairView` from the roster source, `gateAndAnnounce`/`announceRaidEnding` call
+`alertPolicy.decide()` for the cities and hand them to `delivery.sendCityAlert()`, and the old inline
+gating is gone. Still to do: steps 4–6 (consolidate the trackers, extract `BuffTracker`, land
+`RaidService`).
+
 ## Testing
 
 - `RaidTracker`, `RaidAlertPolicy`, `BuffTracker`, and the roster codecs are **pure** — driven by fixtures
