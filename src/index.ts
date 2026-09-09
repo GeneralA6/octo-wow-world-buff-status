@@ -48,7 +48,7 @@ import {
   isPlausibleClear,
   type DurationStore,
 } from "./watcher/duration-store.js";
-import { RaidWatch, type RaidWatchOptions } from "./watcher/raid-watch.js";
+import { RaidTracker, type RaidLifecycleEvent, type RaidTrackerOptions } from "./watcher/raid-tracker.js";
 import { classifyDropOrigin, newLairActivity, noteLairPoll, type LairActivity } from "./watcher/drop-origin.js";
 import { parseHeadIncoming, isOnyxiaHead } from "./watcher/lft-signals.js";
 import { printableAsciiRuns } from "./protocol/chat.js";
@@ -197,7 +197,7 @@ function connectSocket(host: string, port: number, timeoutMs = 15_000): Promise<
  */
 interface DetectionLane {
   readonly label: string;
-  readonly watch: RaidWatch;
+  readonly watch: RaidTracker;
   readonly cities: readonly Faction[];
   players(split: FactionSplit): readonly WhoPlayer[];
 }
@@ -520,28 +520,28 @@ async function runConnection(
       complete: boolean,
       now: number,
     ): Promise<void> => {
-      const obs = lane.watch.observe(lane.players(split), now, complete);
+      const { events, census } = lane.watch.observe({ present: lane.players(split), complete, at: now });
 
       // Persist the raid in progress (or clear it) so a restart resumes exactly here.
       void raidStateStore
         .save(lane.label, lane.watch.raidStateSnapshot())
         .catch((error) => logger.debug(`raid state save: ${describeError(error)}`));
 
-      // Followed a blind gap: RaidWatch already re-baselined; skip this read so a
+      // Followed a blind gap: the tracker already resumed-or-discarded its raid; skip this read so a
       // crash-and-refill isn't read as a raid starting or ending.
-      if (obs.change.blackout) {
-        logger.warn(`${lane.label}: recovered after a ~${mins(obs.change.gapMs)}m blind gap — re-baselined`);
+      if (census.blackout) {
+        logger.warn(`${lane.label}: recovered after a ~${mins(census.gapMs)}m blind gap — re-baselined`);
         return;
       }
 
-      if (obs.change.arrivals.length > 0 || obs.change.departures.length > 0) {
-        const dep = summarizeDepartures(obs.change.departures.filter((d) => d.confident));
+      if (census.arrivals.length > 0 || census.departures.length > 0) {
+        const dep = summarizeDepartures(census.departures.filter((d) => d.confident));
         const depPart = dep
           ? ` -${dep.count} left (stayed ~${mins(dep.medianStayMs)}m, arrived within ${mins(dep.arrivalSpanMs)}m)`
           : "";
-        const arrPart = obs.change.arrivals.length > 0 ? ` +${obs.change.arrivals.length} arrived` : "";
+        const arrPart = census.arrivals.length > 0 ? ` +${census.arrivals.length} arrived` : "";
         const truncPart = complete ? "" : " [truncated: /who at cap]";
-        logger.info(`census ${lane.label}: ${obs.change.present} in zone${arrPart}${depPart}${truncPart}`);
+        logger.info(`census ${lane.label}: ${census.present} in zone${arrPart}${depPart}${truncPart}`);
       }
 
       // Gate an event against the per-cycle dedup, then announce it (channel post + that side's
@@ -600,26 +600,15 @@ async function runConnection(
         }
       };
 
-      // Both authoritative alerts now come from the ClearTracker's roster-based state, not the
-      // count/temporal detector — the detector's per-cohort events are prone to false transitions
-      // (a guild crossing the split line, a flickery /who, a wipe). The detector's events are only
-      // shadow-logged now:
-      //  - FORMING fires from obs.formed — the poll a raid reaches STRENGTH and first has a number,
-      //    so the alert names it the same #N its clear will (the detector's forming fires earlier,
-      //    at minRaidSize, where the raid has no number yet);
-      //  - CLEAR fires from obs.clear (below), the sustained roster departure.
-      if (obs.formed) {
-        await gateAndAnnounce(formedRaidEvent(obs.formed.peak, obs.formed.number));
-      }
-      // The count/temporal detectors no longer DRIVE anything — both are shadow-logged for
-      // comparison against the ClearTracker-driven alerts above.
-      for (const [name, evs] of [
-        ["count", obs.countEvents],
-        ["temporal", obs.temporalEvents],
-      ] as const) {
-        for (const event of evs) {
-          logger.info(`${lane.label} ${name}(detector): would ${event.kind} — ${event.cohort.label} peak ${event.cohort.peak}`);
-        }
+      // The tracker emits the authoritative lifecycle events, roster-driven. A "formed" fires the
+      // poll a raid reaches STRENGTH and first has a number (so the alert names it the same #N its
+      // clear will); a "cleared" is a sustained roster departure, handled below. Never both in one
+      // poll. The sustained clear carries killConfirmed:false — a Chronicle early-confirm sets it
+      // true on the branch below.
+      let cleared: Extract<RaidLifecycleEvent, { kind: "cleared" }> | null = null;
+      for (const event of events) {
+        if (event.kind === "formed") await gateAndAnnounce(formedRaidEvent(event.peak, event.number));
+        else cleared = event;
       }
 
       // A real, COMPLETED clear drives the park-now alert, the recap, and the duration sample.
@@ -738,8 +727,8 @@ async function runConnection(
         return confirming.length > 0 ? lane.watch.confirmClearNow() : null;
       };
 
-      if (obs.clear) {
-        await handleConfirmedClear(obs.clear, false);
+      if (cleared) {
+        await handleConfirmedClear({ durationMs: cleared.durationMs, peak: cleared.peak, number: cleared.number }, false);
       } else if (chronicle) {
         const pending = lane.watch.pendingClear();
         if (pending) {
@@ -1419,7 +1408,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const watchOptions: RaidWatchOptions = {
+  const watchOptions: RaidTrackerOptions = {
     minRaidSize: config.minRaidSize,
     grouping: config.raidGrouping,
     clearSize: config.raidClearSize,
@@ -1433,13 +1422,13 @@ async function main(): Promise<void> {
   const lanes: DetectionLane[] =
     config.realmType === "faction"
       ? [
-          { label: "alliance", watch: new RaidWatch(watchOptions), cities: ["alliance"], players: (s) => s.alliance },
-          { label: "horde", watch: new RaidWatch(watchOptions), cities: ["horde"], players: (s) => s.horde },
+          { label: "alliance", watch: new RaidTracker(watchOptions), cities: ["alliance"], players: (s) => s.alliance },
+          { label: "horde", watch: new RaidTracker(watchOptions), cities: ["horde"], players: (s) => s.horde },
         ]
       : [
           {
             label: "lair",
-            watch: new RaidWatch(watchOptions),
+            watch: new RaidTracker(watchOptions),
             cities: ["alliance", "horde"],
             players: (s) => [...s.alliance, ...s.horde, ...s.unknown],
           },
