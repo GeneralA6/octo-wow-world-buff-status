@@ -75,11 +75,10 @@ import {
   buffCooldownRemainingMs,
   InMemoryBroadcastLedger,
   MongoBroadcastLedger,
-  onBuffCooldown,
   shouldBroadcast,
-  shouldBroadcastRaid,
   type BroadcastLedger,
 } from "./watcher/broadcast-ledger.js";
+import { RaidAlertPolicy } from "./watcher/raid-alert-policy.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
 import { InMemoryIntroStore, MongoIntroStore, type IntroStore } from "./chat/intro-store.js";
@@ -429,6 +428,16 @@ async function runConnection(
       logger,
     });
 
+    // The ONE gate for raid alerts — per-raid dedup + buff cooldown + which cities — so the announce
+    // functions below just hand it the event and act on the cities it returns. See RAID_ARCHITECTURE.md.
+    const alertPolicy = new RaidAlertPolicy({
+      lastBroadcast: (city, kind) => broadcasts.last(city, kind),
+      lastBuffDropAt: async (city) => (await buffStore.current(city))?.appliedAt ?? null,
+      cooldownMs: config.buffCooldownMs,
+      dedupMs: config.broadcastDedupMs,
+      logger,
+    });
+
     // A buff-parking alert: post to the Onyxia channel (pinging @alliance/@horde per open
     // city), yell in each open capital, and whisper in-game subscribers of that side. The
     // caller already deduped `cities` against the ledger, so this fires at most once per cycle.
@@ -544,28 +553,7 @@ async function runConnection(
       // record, reopens it.
       const gateAndAnnounce = async (event: RaidEvent): Promise<void> => {
         const raidNumber = event.number ?? null;
-        const fresh: Faction[] = [];
-        for (const city of lane.cities) {
-          const last = await broadcasts.last(city, event.kind);
-          const lastBuffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
-          // Buff cooldown: a fresh Rallying Cry can't drop for this side yet, so a "park now" alert
-          // would be misleading — skip it. 0 (default) is no cooldown, so this never fires there.
-          if (onBuffCooldown(lastBuffDropAt, now, config.buffCooldownMs)) {
-            logger.info(`${lane.label} ${event.kind} for ${city} suppressed — Rallying Cry on cooldown`);
-            continue;
-          }
-          // Dedup PER RAID NUMBER (like the about-to-clear), not per buff cycle — so every DISTINCT
-          // raid's clear/forming alerts BOTH cities. A raid that clears within the cycle of an
-          // earlier raid used to have one faction's clear swallowed by the old per-cycle dedup.
-          if (shouldBroadcastRaid(last, raidNumber, lastBuffDropAt, now, config.broadcastDedupMs)) {
-            fresh.push(city);
-          } else {
-            logger.info(
-              `${lane.label} ${event.kind} for ${city} suppressed — ` +
-                (raidNumber != null ? `already broadcast for raid #${raidNumber}` : "already broadcast this cycle"),
-            );
-          }
-        }
+        const fresh = await alertPolicy.decide({ cities: lane.cities, kind: event.kind, raidNumber, label: lane.label, now });
         if (fresh.length === 0) return;
         await announceBuff(event, fresh);
         for (const city of fresh) {
@@ -588,27 +576,14 @@ async function runConnection(
       // strength). Only ever called for a raid that is genuinely still in progress (the caller
       // gates on that), so it never nudges people to park for a raid that has finished.
       const announceRaidEnding = async (raidNumber: number | null, elapsedMs: number): Promise<void> => {
-        // Fire ONCE per raid, and make that survive reconnects/restarts: dedup on the raid number
-        // stored in the PERSISTED ledger, not in per-connection memory (an in-memory map re-fired
-        // the heads-up on every relogin). Keyed on the raid number, not the buff cycle, so a
-        // mid-raid buff drop (saved head / concurrent raid) still can't re-open it.
-        // Drop any side still within the buff cooldown — a fresh Rallying Cry can't drop for it yet,
-        // so "might end soon, park now" would be wrong. 0 cooldown (default) keeps both cities.
-        const fresh: Faction[] = [];
-        for (const city of lane.cities) {
-          const lastBuffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
-          if (onBuffCooldown(lastBuffDropAt, now, config.buffCooldownMs)) {
-            logger.info(`${lane.label} raid-ending for ${city} suppressed — Rallying Cry on cooldown`);
-            continue;
-          }
-          fresh.push(city);
-        }
+        // Fire ONCE per raid, surviving reconnects/restarts, and drop any side still within the buff
+        // cooldown. The RaidAlertPolicy does both: per-raid dedup against the PERSISTED ledger (keyed
+        // on the raid number, not the buff cycle, so a mid-raid buff drop — saved head / concurrent
+        // raid — can't re-open it, and an in-memory map that re-fired on every relogin is gone), plus
+        // the cooldown skip ("might end soon, park now" is wrong while no fresh Cry can drop). 0
+        // cooldown (default) keeps both cities.
+        const fresh = await alertPolicy.decide({ cities: lane.cities, kind: "raid-ending", raidNumber, label: lane.label, now });
         if (fresh.length === 0) return;
-        const anyCity = fresh[0];
-        if (anyCity) {
-          const prior = await broadcasts.last(anyCity, "raid-ending").catch(() => null);
-          if (prior && prior.raidNumber != null && prior.raidNumber === raidNumber) return; // already told this raid
-        }
         const typical = await typicalClear();
         await delivery.sendCityAlert({
           label: "raid-ending",
