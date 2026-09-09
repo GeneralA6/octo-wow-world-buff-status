@@ -92,6 +92,7 @@ import { needsFactionResolution, subscriberKey, type Subscriber, type Subscriber
 import { jitter } from "./schedule.js";
 import { DownTracker } from "./down-tracker.js";
 import { ServerMonitor } from "./server-monitor.js";
+import { InMemoryServerMonitorStore, MongoServerMonitorStore, type ServerMonitorStore } from "./server-monitor-store.js";
 
 /** Client identity values that self-heal from the CDN across OctoWoW patches. */
 interface ClientValues {
@@ -1408,6 +1409,16 @@ async function main(): Promise<void> {
     }
   }
 
+  // The realm-outage state — persisted so a restart mid-outage doesn't re-announce "server down".
+  let serverMonitorStore: ServerMonitorStore = new InMemoryServerMonitorStore();
+  if (config.mongodbUri) {
+    try {
+      serverMonitorStore = await MongoServerMonitorStore.connect(config.mongodbUri, config.mongodbDb);
+    } catch (error) {
+      logger.error(`server monitor: MongoDB connect failed (${describeError(error)}); realm status won't survive restarts`);
+    }
+  }
+
   const watchOptions: RaidTrackerOptions = {
     minRaidSize: config.minRaidSize,
     grouping: config.raidGrouping,
@@ -1781,6 +1792,7 @@ async function main(): Promise<void> {
       guildieStore.close(),
       raidCounterStore.close(),
       raidStateStore.close(),
+      serverMonitorStore.close(),
       chronicleStore ? chronicleStore.close() : Promise.resolve(),
     ]).finally(() => process.exit(0));
   };
@@ -1798,6 +1810,16 @@ async function main(): Promise<void> {
     config.characterName,
     ...config.listeners.map((listener) => listener.characterName),
   ]);
+  // Resume a persisted outage: if a prior process announced "server down" and died mid-outage, we
+  // carry `announced` forward so this process does NOT re-post "down" (the redeploy bombardment), and
+  // posts "back up" once when the realm recovers. A fresh install / cleanly-closed outage restores nothing.
+  const restoredMonitor = await serverMonitorStore.load();
+  if (restoredMonitor) serverMonitor.restore(restoredMonitor);
+  const saveMonitor = (): void => {
+    void serverMonitorStore
+      .save(serverMonitor.snapshot())
+      .catch((error) => logger.debug(`server monitor save: ${describeError(error)}`));
+  };
   // "Back up" is CONFIRMED, not fired on the first reconnect: a recovery starts a stability timer and
   // only posts if the realm stays up for realmStableMs — so a flappy crash-recovery doesn't announce
   // recovery early. A full re-down cancels the pending timer.
@@ -1809,7 +1831,12 @@ async function main(): Promise<void> {
   const announceRealmDown = async (id: string): Promise<void> => {
     const announce = serverMonitor.connectionDown(id, Date.now());
     if (serverMonitor.isFullyDown()) cancelRealmRecovery(); // flapped fully down again — drop the pending "back up"
-    if (announce) await push(formatServerDown(config.realm));
+    if (announce) {
+      saveMonitor(); // persist the open outage so a restart mid-outage doesn't re-announce it
+      // WOW_REALM_STATUS=false silences the community posts (the flapping-realm kill-switch) while
+      // the state is still tracked, so toggling it back on stays consistent.
+      if (config.realmStatusEnabled) await push(formatServerDown(config.realm));
+    }
   };
   const announceRealmUp = (id: string): void => {
     const outageMs = serverMonitor.connectionUp(id, Date.now());
@@ -1818,9 +1845,12 @@ async function main(): Promise<void> {
     realmRecoveryTimer = setTimeout(() => {
       realmRecoveryTimer = null;
       if (serverMonitor.confirmRecovery()) {
-        void push(formatServerUp(config.realm, outageMs)).catch((error) =>
-          logger.error(`realm-up notify: ${describeError(error)}`),
-        );
+        saveMonitor(); // outage closed — persist so a restart doesn't think it's still open
+        if (config.realmStatusEnabled) {
+          void push(formatServerUp(config.realm, outageMs)).catch((error) =>
+            logger.error(`realm-up notify: ${describeError(error)}`),
+          );
+        }
       }
     }, config.realmStableMs);
     realmRecoveryTimer.unref?.();

@@ -122,3 +122,37 @@ describe("ServerMonitor", () => {
     expect(m.confirmRecovery()).toBe(true);
   });
 });
+
+describe("ServerMonitor persistence (snapshot/restore) — no re-announce across a restart", () => {
+  it("snapshots the announced outage and its start time", () => {
+    expect(downAll(7_000).snapshot()).toEqual({ announced: true, downSince: 7_000 });
+    expect(new ServerMonitor(IDS).snapshot()).toEqual({ announced: false, downSince: null });
+  });
+
+  it("resumes a persisted outage without re-announcing 'down', and posts 'back up' once on recovery", () => {
+    const prior = downAll(7_000).snapshot(); // a prior process already announced this outage then died
+    const m = new ServerMonitor(IDS);
+    m.restore(prior);
+    expect(m.outageActive).toBe(true); // carried forward — not a fresh, unannounced state
+
+    // The realm is still down at boot, so each connection crosses sustained-down again. None may
+    // re-announce — this is the redeploy-bombardment the persistence exists to stop.
+    expect(m.connectionDown("Bufftracker", 600_000)).toBe(false);
+    expect(m.connectionDown("Onyxiabuffsw", 600_000)).toBe(false);
+    expect(m.connectionDown("Onyxiabuffog", 600_000)).toBe(false); // 3 of 3, already announced -> quiet
+
+    // When it recovers, 'back up' fires once, its duration timed from the PERSISTED downSince.
+    expect(m.connectionUp("Bufftracker", 700_000)).toBe(693_000); // 700_000 - 7_000
+    expect(m.confirmRecovery()).toBe(true);
+    expect(m.outageActive).toBe(false);
+  });
+
+  it("a restored clean state behaves like a fresh monitor (a later outage announces normally)", () => {
+    const m = new ServerMonitor(IDS);
+    m.restore({ announced: false, downSince: null });
+    expect(m.outageActive).toBe(false);
+    m.connectionDown("Bufftracker", 0);
+    m.connectionDown("Onyxiabuffsw", 0);
+    expect(m.connectionDown("Onyxiabuffog", 0)).toBe(true); // a genuine new outage still announces
+  });
+});

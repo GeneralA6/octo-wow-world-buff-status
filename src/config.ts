@@ -112,6 +112,9 @@ export interface BotConfig {
   /** After the realm answers again post-outage, wait this long confirming it stays up before posting
    *  "back up" — so a flappy crash-recovery doesn't announce recovery prematurely (default 3 min). */
   readonly realmStableMs: number;
+  /** Whether to post realm "down"/"back up" notices to the community channel at all (default true).
+   *  A kill-switch for a flapping realm: set WOW_REALM_STATUS=false to silence them instantly. */
+  readonly realmStatusEnabled: boolean;
   /** How long a sent park-alert suppresses a repeat for the same city+kind, so a redeploy,
    *  a wipe (count dipping and recovering) or roster churn can't re-broadcast the same
    *  cycle. Reset early when a fresh buff actually drops for that city. */
@@ -404,6 +407,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
 
   const whispersRaw = env.WOW_WHISPERS?.trim().toLowerCase();
   const whispersEnabled = whispersRaw !== "false" && whispersRaw !== "0" && whispersRaw !== "none";
+  const realmStatusRaw = env.WOW_REALM_STATUS?.trim().toLowerCase();
+  const realmStatusEnabled = realmStatusRaw !== "false" && realmStatusRaw !== "0" && realmStatusRaw !== "none";
   const presenceRaw = env.WOW_PRESENCE_ENABLED?.trim().toLowerCase();
   const presenceEnabled = presenceRaw === "true" || presenceRaw === "1";
   const presenceProbeRaw = env.WOW_PRESENCE_PROBE?.trim().toLowerCase();
@@ -490,6 +495,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     statusYellMs,
     whisperMaxAgeMs,
     realmStableMs,
+    realmStatusEnabled,
     broadcastDedupMs,
     buffCooldownMs,
     realmType,

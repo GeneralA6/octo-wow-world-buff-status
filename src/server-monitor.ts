@@ -17,7 +17,19 @@
  * Fed the already-latched transitions from each connection's `DownTracker` (which returns true only
  * after a SUSTAINED failure, not a blip), so this inherits the "not a transient blip" threshold for
  * free. Pure and clock-injected, so the quorum logic is unit-tested without a network or a clock.
+ *
+ * The announced/ongoing state is PERSISTED (`snapshot`/`restore`): a restart mid-outage resumes with
+ * `announced` true, so it does NOT re-post "down" for an outage a prior process already announced —
+ * it just posts "back up" once when the realm recovers. Without this, every redeploy during an outage
+ * re-announced it, bombarding the channel (the flappy-realm + frequent-deploy case this was added for).
  */
+export interface ServerMonitorState {
+  /** An outage has been posted and not yet confirmed-recovered. */
+  readonly announced: boolean;
+  /** When the outage began (for the recovery post's duration), or null. */
+  readonly downSince: number | null;
+}
+
 export class ServerMonitor {
   readonly #ids: ReadonlySet<string>;
   readonly #down = new Set<string>();
@@ -28,6 +40,20 @@ export class ServerMonitor {
   /** `ids` is every connection supervised — typically the watcher plus each listener character. */
   constructor(ids: readonly string[]) {
     this.#ids = new Set(ids);
+  }
+
+  /** The persistable outage state, to survive a restart. `#recovering`/`#down` are NOT persisted:
+   *  a fresh process is (re)connecting, so it rebuilds those from the live connections. */
+  snapshot(): ServerMonitorState {
+    return { announced: this.#announced, downSince: this.#downSince };
+  }
+
+  /** Resume a persisted outage on startup, so a mid-outage restart doesn't re-announce "down". */
+  restore(state: ServerMonitorState): void {
+    this.#announced = state.announced;
+    this.#downSince = state.downSince;
+    this.#recovering = false;
+    this.#down.clear();
   }
 
   /**
