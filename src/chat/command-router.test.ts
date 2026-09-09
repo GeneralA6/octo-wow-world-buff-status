@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
-import { CohortDetector } from "../watcher/cohort-detector.js";
-import type { WhoPlayer } from "../protocol/who.js";
+import type { ActiveRaid } from "../watcher/raid-events.js";
 import { CommandRouter, isSubscribeRequest, type BuffCooldown } from "./command-router.js";
 
 function deps(
@@ -13,12 +12,12 @@ function deps(
   } = {},
 ) {
   const store = new InMemorySubscriberStore();
-  const tracker = new CohortDetector(15);
+  const active: ActiveRaid[] = []; // the raid(s) the status command sees; a test pushes to make it non-empty
   const feedback: { from: string; text: string }[] = [];
   const subscribed: string[] = [];
   const router = new CommandRouter({
     store,
-    activeRaids: () => tracker.activeRaids(),
+    activeRaids: () => active,
     raidElapsed: opts.raidElapsed,
     raidNumber: opts.raidNumber,
     buffCooldowns: opts.buffCooldowns,
@@ -28,14 +27,11 @@ function deps(
     onFeedback: opts.withFeedback === false ? undefined : (from, text) => feedback.push({ from, text }),
     onSubscribe: (name) => subscribed.push(name),
   });
-  return { store, tracker, router, feedback, subscribed };
+  return { store, active, router, feedback, subscribed };
 }
 
-function crowd(guild: string, count: number): WhoPlayer[] {
-  return Array.from({ length: count }, (_, i) => ({
-    name: `${guild}${i}`, guild, level: 60, classId: 1, raceId: 1, areaId: 2159,
-  }));
-}
+/** The status readout of an in-progress raid — what activeRaids() returns while one is tracked. */
+const nightfallRaid: ActiveRaid = { label: "the lair (mostly <Nightfall>)", count: 20, peak: 20 };
 
 describe("isSubscribeRequest", () => {
   it("is true for the exact commands (with a leading !/./ tolerated) and the subscribe intent", () => {
@@ -108,7 +104,7 @@ describe("CommandRouter", () => {
   });
 
   it("reports the raid #, how long it's been in, and when the buff last dropped on status", async () => {
-    const { tracker, router } = deps({
+    const { active, router } = deps({
       raidElapsed: () => 42 * 60_000,
       raidNumber: () => 834,
       buffCooldowns: async () => [
@@ -116,7 +112,7 @@ describe("CommandRouter", () => {
         { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0 }, // last dropped 1h12m ago
       ],
     });
-    tracker.update(crowd("Nightfall", 20));
+    active.push(nightfallRaid);
     // "Raider" isn't subscribed and no /who detect is wired here, so both capitals show.
     const reply = await router.handle("Raider", "status");
     expect(reply[0]).toMatch(/raid #834.*in for ~42m/);
@@ -127,13 +123,13 @@ describe("CommandRouter", () => {
   });
 
   it("reports the cooldown wait when a server buff cooldown is configured and active", async () => {
-    const { tracker, router } = deps({
+    const { active, router } = deps({
       buffCooldowns: async () => [
         { faction: "alliance", sinceLastDropMs: 10 * 60_000, cooldownRemainingMs: 0 }, // off cooldown
         { faction: "horde", sinceLastDropMs: 5 * 60_000, cooldownRemainingMs: 25 * 60_000 }, // 25m to go
       ],
     });
-    tracker.update(crowd("Nightfall", 20));
+    active.push(nightfallRaid);
     const reply = (await router.handle("Raider", "status")).join(" ");
     expect(reply).toMatch(/Orgrimmar: on cooldown - a fresh Rallying Cry can drop in ~25m/);
     expect(reply).toMatch(/Stormwind: last Rallying Cry ~10m ago/); // side off cooldown keeps normal wording

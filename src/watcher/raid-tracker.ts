@@ -5,7 +5,7 @@ import {
   type ConfirmedClear,
   type PendingDeparture,
 } from "./clear-tracker.js";
-import { dominantGuild, type ActiveRaid, type GroupingMode } from "./cohort-detector.js";
+import { dominantGuild, type ActiveRaid, type GroupingMode } from "./raid-events.js";
 import { PresenceTracker, type PresenceChange } from "./presence.js";
 import type { LairView } from "./roster-source.js";
 

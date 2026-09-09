@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RaidCohortSnapshot } from "../watcher/cohort-detector.js";
+import type { RaidCohortSnapshot } from "../watcher/raid-events.js";
 import {
   formatBuffAlert,
   formatBuffDropped,

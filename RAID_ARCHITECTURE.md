@@ -177,12 +177,27 @@ that extensibility is the whole point of the seam.
 
 Each step is independently shippable and reversible; the live bot never sees a big-bang cut-over.
 
-**Landed so far (2026-09):** steps 1–3 — `RosterSource` (`WhoRosterSource`), `AlertDelivery`, and
-`RaidAlertPolicy` are extracted and live, each behaviour-identical with its own unit tests. The poll
-loop now reads a `LairView` from the roster source, `gateAndAnnounce`/`announceRaidEnding` call
-`alertPolicy.decide()` for the cities and hand them to `delivery.sendCityAlert()`, and the old inline
-gating is gone. Still to do: steps 4–6 (consolidate the trackers, extract `BuffTracker`, land
-`RaidService`).
+**Landed so far (2026-09):** steps 1–4 — `RosterSource` (`WhoRosterSource`), `AlertDelivery`,
+`RaidAlertPolicy`, and the unified `RaidTracker` are extracted and live, each behaviour-identical with
+its own unit tests. The poll loop reads a `LairView`, `RaidTracker.observe()` emits a
+`RaidLifecycleEvent` stream (`formed`/`cleared`), `alertPolicy.decide()` picks the cities, and
+`delivery.sendCityAlert()` sends. The old inline gating and the three overlapping trackers are gone.
+
+**Step 4 was done as consolidation, NOT the concurrent-raid rewrite — deliberately.** `RaidTracker`
+composes `PresenceTracker` + one `ClearTracker` over the whole roster (the authoritative,
+thoroughly-tested single-raid path), and the dead count/temporal shadow detectors were deleted
+(`RaidSessions` entirely; `CohortDetector`'s class, keeping only the raid-event vocab in
+`raid-events.ts`). The doc's concurrent-raid cohort partitioning was **not** built, on a finding made
+during the work: that partitioning IS the guild/pickup approach the codebase already demoted for
+flaky per-cohort transitions ("a guild crossing the split line, a flickery /who, a wipe"), and the
+#64/#67-#68 mis-splits it was meant to fix were actually incomplete-`/who` (completeness) bugs,
+already handled by `ClearTracker`'s `complete:false` hold. Concurrent-raid separation is therefore
+deferred to the **`FriendRosterSource`** (see below) — per-listener friend lists yield pre-separated
+per-raid rosters, so the tracker gets clean concurrency with no flaky `/who` guessing. The
+`RaidLifecycleEvent` stream is the seam that lets that source drop in later without touching the loop.
+
+Still to do: steps 5–6 (extract `BuffTracker`, land `RaidService`); and, when wanted, the
+`FriendRosterSource` for concurrent raids.
 
 ## Testing
 
