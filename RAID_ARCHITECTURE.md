@@ -2,8 +2,9 @@
 
 Everything the bot does about an Onyxia raid — seeing who is in the lair, deciding a raid has
 formed/cleared, choosing whether to alert and whom, sending the alert, and recording it — as one
-deliberate pipeline instead of the current tangle. This is the target design and a migration plan;
-it is not yet the code.
+deliberate pipeline instead of the current tangle. This design is now IMPLEMENTED (all six migration
+steps landed, 2026-09 — see "Migration COMPLETE" below); the one deferred piece is the
+`FriendRosterSource` for concurrent raids.
 
 ## Why this exists (the tangle today)
 
@@ -177,14 +178,17 @@ that extensibility is the whole point of the seam.
 
 Each step is independently shippable and reversible; the live bot never sees a big-bang cut-over.
 
-**Landed so far (2026-09):** steps 1–5 — `RosterSource` (`WhoRosterSource`), `AlertDelivery`,
-`RaidAlertPolicy`, the unified `RaidTracker`, and `BuffTracker` are extracted and live, each
-behaviour-identical with its own unit tests. The poll loop reads a `LairView`, `RaidTracker.observe()`
-emits a `RaidLifecycleEvent` stream (`formed`/`cleared`), `alertPolicy.decide()` picks the cities
-(reading `BuffTracker`'s last-drop/cooldown state), and `delivery.sendCityAlert()` sends. `BuffTracker`
-owns the buff-drop domain (dedup + fresh/saved/unknown classification + persistence + cooldown state);
-`recordBuff` delegates to it and only delivers. The old inline gating and the three overlapping
-trackers are gone.
+**Migration COMPLETE (2026-09): all six steps landed**, each behaviour-identical with its own unit
+tests (676 in total). `RosterSource` (`WhoRosterSource`), `AlertDelivery`, `RaidAlertPolicy`, the
+unified `RaidTracker`, `BuffTracker`, and `RaidService` (`src/raid-service.ts`, the `createRaidService`
+factory) are all extracted and live. `index.ts` is wiring only for detection now (1627 lines, down
+from ~2070): it builds the sources/stores/sinks and the service, and hands the service the poll loop,
+the buff-drop sink and the yell timer. The service runs the pipeline — the poll `LairView` →
+`RaidTracker.observe()` `RaidLifecycleEvent`s (`formed`/`cleared`) → `alertPolicy.decide()` (reading
+`BuffTracker`'s last-drop/cooldown state) → `delivery.sendCityAlert()` — plus the disband stand-down,
+Chronicle early-confirm, about-to-clear heads-up, buff-drop announce and heartbeat log. `BuffTracker`
+owns the buff-drop domain (dedup + fresh/saved/unknown classification + persistence + cooldown state).
+The old inline gating and the three overlapping trackers are gone.
 
 **Step 4 was done as consolidation, NOT the concurrent-raid rewrite — deliberately.** `RaidTracker`
 composes `PresenceTracker` + one `ClearTracker` over the whole roster (the authoritative,
@@ -203,8 +207,9 @@ per-raid rosters, so the tracker gets clean concurrency with no flaky `/who` gue
 about-to-clear prediction, not buff state) rather than folded into `BuffTracker` per the doc, to avoid
 spreading the buff module into the clear handler.
 
-Still to do: step 6 (land `RaidService`); and, when wanted, the
-`FriendRosterSource` for concurrent raids.
+Still to do (optional, when wanted): the `FriendRosterSource` for concurrent raids — the one piece
+deliberately deferred (see the step 4 note above). It drops in as a new `RosterSource` behind the
+existing seam, needing no change to the tracker, policy, delivery or service.
 
 ## Testing
 
