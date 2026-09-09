@@ -2,7 +2,7 @@ import type { LogLevel } from "./logger.js";
 import { DEFAULT_INTEGRITY_CHECKSUM } from "./crypto/integrity.js";
 import { CLIENT_BUILD } from "./protocol/opcodes.js";
 import { OCTOWOW_CDN } from "./net/client-resolver.js";
-import type { GroupingMode } from "./watcher/raid-tracker.js";
+import type { GroupingMode } from "./watcher/cohort-detector.js";
 import type { Faction } from "./watcher/buff-store.js";
 
 const GROUPING_MODES: readonly GroupingMode[] = ["auto", "guild", "lair"];

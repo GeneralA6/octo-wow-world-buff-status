@@ -1,4 +1,4 @@
-import type { RaidEvent } from "../watcher/raid-tracker.js";
+import type { RaidEvent } from "../watcher/cohort-detector.js";
 import type { Faction } from "../watcher/buff-store.js";
 import type { NotifyMessage } from "./notifier.js";
 

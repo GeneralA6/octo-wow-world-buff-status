@@ -25,7 +25,7 @@ import {
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
 import { AlertDelivery } from "./notify/alert-delivery.js";
-import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/raid-tracker.js";
+import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/cohort-detector.js";
 import { summarizeDepartures } from "./watcher/presence.js";
 import { WhoRosterSource, type LairView, type RosterSource } from "./watcher/roster-source.js";
 import { PresenceSweeper } from "./watcher/presence-sweep.js";

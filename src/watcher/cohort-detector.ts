@@ -118,7 +118,7 @@ interface CohortState {
   members: Map<string, WhoPlayer>;
 }
 
-export class RaidTracker {
+export class CohortDetector {
   readonly #formAt: number;
   readonly #leaveAt: number;
   readonly #mode: GroupingMode;

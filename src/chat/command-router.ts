@@ -5,7 +5,7 @@ import {
   type Faction,
   type SubscriberStore,
 } from "../subscribers/store.js";
-import type { ActiveRaid } from "../watcher/raid-tracker.js";
+import type { ActiveRaid } from "../watcher/cohort-detector.js";
 import { CITY_FOR, humanClock } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
 

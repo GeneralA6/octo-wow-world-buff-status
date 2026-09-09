@@ -1,5 +1,5 @@
 import { summarizeDepartures, type PresenceChange } from "./presence.js";
-import type { ActiveRaid, RaidEvent } from "./raid-tracker.js";
+import type { ActiveRaid, RaidEvent } from "./cohort-detector.js";
 
 /**
  * Temporal raid detection (step 2) — reads raids from WHEN players arrive and leave

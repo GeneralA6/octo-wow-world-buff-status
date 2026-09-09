@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
-import { RaidTracker } from "../watcher/raid-tracker.js";
+import { CohortDetector } from "../watcher/cohort-detector.js";
 import type { WhoPlayer } from "../protocol/who.js";
 import { CommandRouter, isSubscribeRequest, type BuffCooldown } from "./command-router.js";
 
@@ -13,7 +13,7 @@ function deps(
   } = {},
 ) {
   const store = new InMemorySubscriberStore();
-  const tracker = new RaidTracker(15);
+  const tracker = new CohortDetector(15);
   const feedback: { from: string; text: string }[] = [];
   const subscribed: string[] = [];
   const router = new CommandRouter({

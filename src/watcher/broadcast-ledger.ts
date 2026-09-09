@@ -1,6 +1,6 @@
 import { MongoClient } from "mongodb";
 import type { Faction } from "./buff-store.js";
-import type { RaidEvent } from "./raid-tracker.js";
+import type { RaidEvent } from "./cohort-detector.js";
 
 /**
  * Remembers the last park-alert we broadcast for each (city, kind), so a repeat of the

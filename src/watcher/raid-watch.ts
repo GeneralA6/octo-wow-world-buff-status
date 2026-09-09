@@ -8,7 +8,7 @@ import {
 } from "./clear-tracker.js";
 import { PresenceTracker, type PresenceChange } from "./presence.js";
 import { RaidSessions } from "./raid-sessions.js";
-import { RaidTracker, type ActiveRaid, type GroupingMode, type RaidEvent } from "./raid-tracker.js";
+import { CohortDetector, type ActiveRaid, type GroupingMode, type RaidEvent } from "./cohort-detector.js";
 
 /**
  * Raid detection over one roster — a whole lair (crossfaction realm) or one faction's
@@ -51,12 +51,12 @@ export interface RaidObservation {
 
 export class RaidWatch {
   readonly #presence = new PresenceTracker();
-  readonly #tracker: RaidTracker;
+  readonly #tracker: CohortDetector;
   readonly #sessions: RaidSessions;
   readonly #clears: ClearTracker;
 
   constructor(options: RaidWatchOptions) {
-    this.#tracker = new RaidTracker(options.minRaidSize, options.grouping, options.clearSize);
+    this.#tracker = new CohortDetector(options.minRaidSize, options.grouping, options.clearSize);
     this.#sessions = new RaidSessions({ formAt: options.minRaidSize });
     this.#clears = new ClearTracker({
       // The clock/tracking starts at "strength" (>= forming); the clear floor is the "leaving"
