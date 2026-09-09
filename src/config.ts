@@ -115,6 +115,10 @@ export interface BotConfig {
   /** Whether to post realm "down"/"back up" notices to the community channel at all (default true).
    *  A kill-switch for a flapping realm: set WOW_REALM_STATUS=false to silence them instantly. */
   readonly realmStatusEnabled: boolean;
+  /** Realm counts as recovered only once its keepalive ping's median is at/under this (ms). */
+  readonly realmMaxPingMs: number;
+  /** ...and its spread (max-min over the window) is at/under this (ms) — steady, not spiking. */
+  readonly realmPingSpreadMs: number;
   /** How long a sent park-alert suppresses a repeat for the same city+kind, so a redeploy,
    *  a wipe (count dipping and recovering) or roster churn can't re-broadcast the same
    *  cycle. Reset early when a fresh buff actually drops for that city. */
@@ -375,6 +379,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
   const whisperMaxAgeMs = intWithDefault("WOW_WHISPER_MAX_AGE_MINUTES", 5, 1) * 60_000;
   const realmStableMs = intWithDefault("WOW_REALM_STABLE_MINUTES", 3, 1) * 60_000;
+  // Realm is "back up" only once its keepalive ping is reasonable AND steady over the stability
+  // window: median RTT at/under maxPingMs, spread (max-min) at/under pingSpreadMs. A raid can't run
+  // on a laggy server, so recovery waits for a healthy ping with no cap.
+  const realmMaxPingMs = intWithDefault("WOW_REALM_MAX_PING_MS", 300, 1);
+  const realmPingSpreadMs = intWithDefault("WOW_REALM_PING_SPREAD_MS", 200, 1);
   // Dedup window: how long a (city, kind) park-alert stays muted if no fresh drop is heard, so a
   // redeploy/wipe/roster-churn re-emitting the same event doesn't re-alert. A drop reopens it
   // sooner (new cycle); this is only the ceiling, separate from the buff cooldown below.
@@ -496,6 +505,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     whisperMaxAgeMs,
     realmStableMs,
     realmStatusEnabled,
+    realmMaxPingMs,
+    realmPingSpreadMs,
     broadcastDedupMs,
     buffCooldownMs,
     realmType,

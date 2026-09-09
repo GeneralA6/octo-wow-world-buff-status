@@ -93,6 +93,7 @@ import { jitter } from "./schedule.js";
 import { DownTracker } from "./down-tracker.js";
 import { ServerMonitor } from "./server-monitor.js";
 import { InMemoryServerMonitorStore, MongoServerMonitorStore, type ServerMonitorStore } from "./server-monitor-store.js";
+import { isRealmStable, medianLatency, type PingSample, type RealmHealthThresholds } from "./realm-health.js";
 
 /** Client identity values that self-heal from the CDN across OctoWoW patches. */
 interface ClientValues {
@@ -299,6 +300,9 @@ async function runConnection(
   // reconnect must announce "back up" WITHOUT waiting for the connection to later close, which is
   // exactly what the old post-close wiring got wrong (a healthy recovery never fired it).
   onConnected: () => void,
+  // Each keepalive round-trip's latency (ms) — the realm's world latency, used to gate recovery
+  // on a stable, reasonable ping (a raid can't run on a laggy server).
+  onLatency: (rttMs: number) => void,
 ): Promise<void> {
   const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
@@ -954,6 +958,7 @@ async function runConnection(
       build: client.worldBuild,
       logger,
       handlers: {
+        onLatency,
         onReady: () => {
           if (readyTimer) clearTimeout(readyTimer);
           readyTimer = null;
@@ -1820,9 +1825,23 @@ async function main(): Promise<void> {
       .save(serverMonitor.snapshot())
       .catch((error) => logger.debug(`server monitor save: ${describeError(error)}`));
   };
-  // "Back up" is CONFIRMED, not fired on the first reconnect: a recovery starts a stability timer and
-  // only posts if the realm stays up for realmStableMs — so a flappy crash-recovery doesn't announce
-  // recovery early. A full re-down cancels the pending timer.
+  // The realm counts as "back up" only once it is reconnected AND its keepalive ping is stable and
+  // reasonable over the stability window — a raid can't run on a laggy server, so a sluggish or spiky
+  // realm keeps waiting, no cap. Ping samples come from the watcher's connection (all characters share
+  // the realm); samples older than the window are ignored, so pre-outage pings never count.
+  const watcherPings: PingSample[] = [];
+  const recordWatcherPing = (rttMs: number): void => {
+    watcherPings.push({ ms: rttMs, at: Date.now() });
+    if (watcherPings.length > 40) watcherPings.shift();
+  };
+  const health: RealmHealthThresholds = {
+    windowMs: config.realmStableMs,
+    maxMedianMs: config.realmMaxPingMs,
+    maxSpreadMs: config.realmPingSpreadMs,
+    minSamples: 3, // a few pongs must have arrived in the window — proof the realm is answering
+  };
+  const RECOVERY_RECHECK_MS = 30_000; // re-check cadence after the first window (the ping period)
+
   let realmRecoveryTimer: NodeJS.Timeout | null = null;
   const cancelRealmRecovery = (): void => {
     if (realmRecoveryTimer) clearTimeout(realmRecoveryTimer);
@@ -1838,21 +1857,38 @@ async function main(): Promise<void> {
       if (config.realmStatusEnabled) await push(formatServerDown(config.realm));
     }
   };
+  // Has the realm stayed connected AND settled to a healthy ping? If so post "back up" once; else
+  // re-arm and keep waiting (no cap). A full re-down cancels this via announceRealmDown, and
+  // confirmRecovery only fires while the monitor is still recovering.
+  const checkRecovery = (outageMs: number): void => {
+    realmRecoveryTimer = null; // the timer that called this has fired
+    if (serverMonitor.isFullyDown()) return; // re-down mid-window; a later connectionUp restarts it
+    const now = Date.now();
+    if (!isRealmStable(watcherPings, now, health)) {
+      const ping = medianLatency(watcherPings, now, health.windowMs);
+      logger.info(
+        `${config.realm} reconnected but ping isn't stable+reasonable yet ` +
+          `(${ping === null ? "no pongs yet" : `median ~${ping}ms`}) — holding "back up"`,
+      );
+      realmRecoveryTimer = setTimeout(() => checkRecovery(outageMs), RECOVERY_RECHECK_MS);
+      realmRecoveryTimer.unref?.();
+      return;
+    }
+    if (serverMonitor.confirmRecovery()) {
+      saveMonitor(); // outage closed — persist so a restart doesn't think it's still open
+      if (config.realmStatusEnabled) {
+        void push(formatServerUp(config.realm, outageMs)).catch((error) =>
+          logger.error(`realm-up notify: ${describeError(error)}`),
+        );
+      }
+    }
+  };
   const announceRealmUp = (id: string): void => {
     const outageMs = serverMonitor.connectionUp(id, Date.now());
     if (outageMs === null) return; // not the start of a recovery window
     cancelRealmRecovery();
-    realmRecoveryTimer = setTimeout(() => {
-      realmRecoveryTimer = null;
-      if (serverMonitor.confirmRecovery()) {
-        saveMonitor(); // outage closed — persist so a restart doesn't think it's still open
-        if (config.realmStatusEnabled) {
-          void push(formatServerUp(config.realm, outageMs)).catch((error) =>
-            logger.error(`realm-up notify: ${describeError(error)}`),
-          );
-        }
-      }
-    }, config.realmStableMs);
+    // First check after the full stability window, then every RECOVERY_RECHECK_MS until healthy.
+    realmRecoveryTimer = setTimeout(() => checkRecovery(outageMs), config.realmStableMs);
     realmRecoveryTimer.unref?.();
   };
 
@@ -1863,7 +1899,7 @@ async function main(): Promise<void> {
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runConnection(config, watcherLog, services, () => announceRealmUp(config.characterName));
+        await runConnection(config, watcherLog, services, () => announceRealmUp(config.characterName), recordWatcherPing);
         watcherLog.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
         heal.alertedStuck = false; // a clean run clears the "stuck" latch

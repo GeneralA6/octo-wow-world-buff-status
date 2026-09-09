@@ -41,6 +41,7 @@ import {
   WORLD_CLIENT_HEADER_SIZE,
   WORLD_SERVER_HEADER_SIZE,
 } from "./world-packets.js";
+import { pongLatency } from "../realm-health.js";
 
 export interface WorldClientHandlers {
   /** Character is in the world; /who can now be requested. */
@@ -76,6 +77,9 @@ export interface WorldClientHandlers {
   onClose?: () => void;
   /** Server sent warden data — anticheat is active and unhandled. */
   onWarden?: () => void;
+  /** Round-trip latency (ms) of the keepalive ping just answered by SMSG_PONG — the realm's world
+   *  latency. Fires once per matched pong (~every pingIntervalMs). */
+  onLatency?: (rttMs: number) => void;
 }
 
 export interface WorldClientOptions {
@@ -123,6 +127,8 @@ export class WorldClient {
   #closed = false;
   #pingTimer: NodeJS.Timeout | null = null;
   #pingSequence = 0;
+  /** The keepalive ping awaiting its pong, to measure round-trip latency. */
+  #pendingPing: { seq: number; sentAt: number } | null = null;
   /** Resolved sender names, and whispers held while a name query is in flight. */
   readonly #nameCache = new Map<bigint, string>();
   readonly #pendingWhispers = new Map<bigint, string[]>();
@@ -366,6 +372,7 @@ export class WorldClient {
           this.#handlePlayerNotFound(body);
           break;
         case WorldOpcode.SMSG_PONG:
+          this.#handlePong(body);
           break;
         case WorldOpcode.SMSG_WARDEN_DATA:
           this.#logger.warn("world: server sent warden data (anticheat active, unhandled)");
@@ -552,6 +559,15 @@ export class WorldClient {
 
   #sendPing(): void {
     this.#pingSequence += 1;
+    this.#pendingPing = { seq: this.#pingSequence, sentAt: Date.now() };
     this.#send(WorldOpcode.CMSG_PING, buildPingBody(this.#pingSequence, 0));
+  }
+
+  #handlePong(body: Buffer): void {
+    if (body.length < 4) return; // SMSG_PONG echoes the u32 ping sequence
+    const rttMs = pongLatency(this.#pendingPing, body.readUInt32LE(0), Date.now());
+    if (rttMs === null) return; // a stale/duplicate pong, or none pending
+    this.#pendingPing = null;
+    this.#handlers.onLatency?.(rttMs);
   }
 }

@@ -196,6 +196,10 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
           ]),
         );
         break;
+      case WorldOpcode.CMSG_PING:
+        // Echo the ping sequence back as SMSG_PONG, the way the realm answers a keepalive.
+        this.#sendServer(WorldOpcode.SMSG_PONG, new PacketWriter().u32LE(new PacketReader(body).u32LE()).toBuffer());
+        break;
       default:
         break;
     }
@@ -564,6 +568,41 @@ describe("WorldClient (against a scripted mock server)", () => {
 
     socket.pushPlayerNotFound("OfflineGuy");
     expect(await withTimeout(undelivered)).toBe("OfflineGuy");
+
+    client.close();
+  });
+
+  it("measures realm latency from the keepalive ping/pong and reports it via onLatency", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    let deliverLatency: (ms: number) => void = () => {};
+    const measured = new Promise<number>((resolve) => {
+      deliverLatency = resolve;
+    });
+
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x55,
+      pingIntervalMs: 5, // fire a keepalive shortly after login so the test needn't wait 30s
+      handlers: {
+        onReady: () => markReady(),
+        onLatency: (ms) => deliverLatency(ms),
+      },
+    });
+
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    // The keepalive ping fires, the server echoes SMSG_PONG with the same sequence, and the
+    // round-trip is measured and reported.
+    expect(await withTimeout(measured)).toBeGreaterThanOrEqual(0);
 
     client.close();
   });
