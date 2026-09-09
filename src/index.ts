@@ -27,7 +27,7 @@ import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from ".
 import { groupByRelevantCities } from "./notify/faction-routing.js";
 import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
-import { fetchRoster, type Roster } from "./watcher/roster.js";
+import { WhoRosterSource, type LairView, type RosterSource } from "./watcher/roster-source.js";
 import { PresenceSweeper } from "./watcher/presence-sweep.js";
 import { RecentBuffs } from "./watcher/recent-buffs.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
@@ -856,15 +856,10 @@ async function runConnection(
       );
     };
 
-    const processRoster = async (roster: Roster): Promise<void> => {
+    const processRoster = async (view: LairView): Promise<void> => {
       const now = Date.now();
-      const inZone = roster.players.filter((player) => player.areaId === config.watchAreaId);
-      const complete = roster.complete;
-      logger.info(
-        `who ${config.watchAreaName}: ${inZone.length} in zone ` +
-          `(${roster.players.length} returned, ${roster.onlineCount} online)` +
-          (roster.sliced ? ` [class-sliced, complete=${complete}${roster.failedSlices > 0 ? `, ${roster.failedSlices} slices timed out` : ""}]` : ""),
-      );
+      const inZone = view.present; // players in the watch area; the source already filtered + logged it
+      const complete = view.complete;
 
       // Persist the raw observation for offline replay/stats.
       void snapshots
@@ -918,6 +913,17 @@ async function runConnection(
       );
       return result;
     };
+
+    // Where the lair roster comes from. The poll consumes this interface, never /who directly, so a
+    // friends-list source can replace it later without touching detection (see RAID_ARCHITECTURE.md).
+    const rosterSource: RosterSource = new WhoRosterSource({
+      who: queuedWho,
+      extraWho: () => listenerWho.all(), // fresh each poll — listeners come and go
+      areaId: config.watchAreaId,
+      areaName: config.watchAreaName,
+      sliceDelayMs: config.whoSliceDelayMs,
+      logger,
+    });
 
     // Resolve a player's side with a targeted /who — they're online, having just whispered.
     // Null if it can't run, they're not found, or their race is custom. Used to tailor the
@@ -1059,9 +1065,8 @@ async function runConnection(
           }
           const poll = async (): Promise<void> => {
             try {
-              // Spread the class slices across the idle listener sockets too, not just this one.
-              const roster = await fetchRoster(queuedWho, listenerWho.all(), config.watchAreaId, config.whoSliceDelayMs);
-              if (!settled) await processRoster(roster);
+              const view = await rosterSource.poll();
+              if (!settled) await processRoster(view);
             } catch (error) {
               logger.warn(`who failed: ${describeError(error)}`);
             }
