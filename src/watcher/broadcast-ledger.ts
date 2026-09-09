@@ -57,6 +57,31 @@ export function shouldBroadcast(
   return false;
 }
 
+/**
+ * Should a raid-event alert (forming/cleared) fire for a (city, kind)? Deduped PER RAID NUMBER, the
+ * same way the "about to clear" heads-up is: fire once per DISTINCT raid, so a single raid's
+ * wipe/roster-churn re-emitting the same event (same number) is suppressed, but every distinct raid
+ * alerts BOTH cities. There is no re-drop cooldown on this server — each clear is a fresh buff
+ * opportunity — so a new raid must never be muted by an older one's alert.
+ *
+ * Falls back to the per-buff-cycle `shouldBroadcast` only when the event carries NO number (a
+ * detector-emitted forming below strength), where there is no raid number to dedup on yet.
+ *
+ * (Before this, the clear used the per-cycle dedup, a cooldown-era remnant: a raid that cleared
+ * within `maxCycleMs` of an earlier raid's clear — with no buff dropped for that city since — had its
+ * clear silently swallowed for that city, which is how one faction vanished from a raid's clear post.)
+ */
+export function shouldBroadcastRaid(
+  last: Pick<BroadcastRecord, "lastBroadcastAt" | "raidNumber"> | null,
+  raidNumber: number | null,
+  lastBuffDropAt: Date | null,
+  now: number,
+  maxCycleMs: number,
+): boolean {
+  if (raidNumber != null) return last?.raidNumber == null || last.raidNumber !== raidNumber;
+  return shouldBroadcast(last, lastBuffDropAt, now, maxCycleMs);
+}
+
 export interface BroadcastLedger {
   /** The last broadcast for a (city, kind), or null if there's never been one. */
   last(city: Faction, kind: BroadcastKind): Promise<BroadcastRecord | null>;

@@ -3,6 +3,7 @@ import {
   InMemoryBroadcastLedger,
   MongoBroadcastLedger,
   shouldBroadcast,
+  shouldBroadcastRaid,
   type BroadcastDb,
   type BroadcastKind,
   type BroadcastRecord,
@@ -47,6 +48,42 @@ describe("shouldBroadcast", () => {
     const last = { lastBroadcastAt: at(1000) };
     const now = 1000 * 1000 + HOUR; // exactly one window later
     expect(shouldBroadcast(last, null, now, HOUR)).toBe(true);
+  });
+});
+
+describe("shouldBroadcastRaid (per-raid dedup — every distinct raid alerts both cities)", () => {
+  const prior = (raidNumber: number | null, sec: number) => ({ raidNumber, lastBroadcastAt: at(sec) });
+  const TWO_HOURS = 2 * HOUR;
+
+  it("fires when there is no prior record", () => {
+    expect(shouldBroadcastRaid(null, 81, null, 1000, HOUR)).toBe(true);
+  });
+
+  it("suppresses a re-emit of the SAME raid (wipe / roster churn re-firing the event)", () => {
+    expect(shouldBroadcastRaid(prior(81, 1000), 81, null, 1000_000 + 60_000, HOUR)).toBe(false);
+  });
+
+  it("fires for a DISTINCT raid even within the cycle with no buff dropped since — the #81 fix", () => {
+    // Raid #80's clear was 91 min ago; no buff for this city since. The OLD per-cycle dedup swallowed
+    // #81's clear here (that's the bug). Per-raid dedup fires it, because #81 is a different raid.
+    const last = prior(80, 3000);
+    const now = 3000 * 1000 + 91 * 60_000; // 91 min later — inside the 120m cycle ceiling
+    expect(shouldBroadcast(last, null, now, TWO_HOURS)).toBe(false); // old behavior: suppressed
+    expect(shouldBroadcastRaid(last, 81, null, now, TWO_HOURS)).toBe(true); // new behavior: fires
+  });
+
+  it("fires for each of several back-to-back distinct raids (no cooldown)", () => {
+    let last: { raidNumber: number | null; lastBroadcastAt: Date } | null = null;
+    for (const n of [90, 91, 92]) {
+      expect(shouldBroadcastRaid(last, n, null, 1000_000, TWO_HOURS)).toBe(true);
+      last = prior(n, 1000); // record it, next distinct raid still fires
+    }
+  });
+
+  it("falls back to the per-cycle dedup when the event carries no raid number (sub-strength forming)", () => {
+    const last = { lastBroadcastAt: at(1000), raidNumber: null };
+    expect(shouldBroadcastRaid(last, null, null, 1000_000 + 60_000, HOUR)).toBe(false); // within cycle
+    expect(shouldBroadcastRaid(last, null, at(1500), 1500_000 + 10_000, HOUR)).toBe(true); // buff dropped since
   });
 });
 

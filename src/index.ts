@@ -75,6 +75,7 @@ import {
   InMemoryBroadcastLedger,
   MongoBroadcastLedger,
   shouldBroadcast,
+  shouldBroadcastRaid,
   type BroadcastLedger,
 } from "./watcher/broadcast-ledger.js";
 import { CommandRouter } from "./chat/command-router.js";
@@ -556,12 +557,22 @@ async function runConnection(
       // re-emitting the same event doesn't re-alert. A fresh drop for the city, or a stale
       // record, reopens it.
       const gateAndAnnounce = async (event: RaidEvent): Promise<void> => {
+        const raidNumber = event.number ?? null;
         const fresh: Faction[] = [];
         for (const city of lane.cities) {
           const last = await broadcasts.last(city, event.kind);
           const lastBuffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
-          if (shouldBroadcast(last, lastBuffDropAt, now, config.broadcastDedupMs)) fresh.push(city);
-          else logger.info(`${lane.label} ${event.kind} for ${city} suppressed — already broadcast this cycle`);
+          // Dedup PER RAID NUMBER (like the about-to-clear), not per buff cycle — so every DISTINCT
+          // raid's clear/forming alerts BOTH cities. A raid that clears within the cycle of an
+          // earlier raid used to have one faction's clear swallowed by the old per-cycle dedup.
+          if (shouldBroadcastRaid(last, raidNumber, lastBuffDropAt, now, config.broadcastDedupMs)) {
+            fresh.push(city);
+          } else {
+            logger.info(
+              `${lane.label} ${event.kind} for ${city} suppressed — ` +
+                (raidNumber != null ? `already broadcast for raid #${raidNumber}` : "already broadcast this cycle"),
+            );
+          }
         }
         if (fresh.length === 0) return;
         await announceBuff(event, fresh);
@@ -572,6 +583,7 @@ async function runConnection(
               kind: event.kind,
               cohortLabel: event.cohort.label,
               peak: event.cohort.peak,
+              raidNumber,
               lastBroadcastAt: new Date(now),
             })
             .catch((error) => logger.error(`broadcast-ledger: ${describeError(error)}`));
