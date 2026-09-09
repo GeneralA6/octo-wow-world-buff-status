@@ -29,7 +29,7 @@ import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/rai
 import { summarizeDepartures } from "./watcher/presence.js";
 import { WhoRosterSource, type LairView, type RosterSource } from "./watcher/roster-source.js";
 import { PresenceSweeper } from "./watcher/presence-sweep.js";
-import { RecentBuffs } from "./watcher/recent-buffs.js";
+import { BuffTracker } from "./watcher/buff-tracker.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
@@ -49,7 +49,7 @@ import {
   type DurationStore,
 } from "./watcher/duration-store.js";
 import { RaidTracker, type RaidLifecycleEvent, type RaidTrackerOptions } from "./watcher/raid-tracker.js";
-import { classifyDropOrigin, newLairActivity, noteLairPoll, type LairActivity } from "./watcher/drop-origin.js";
+import { newLairActivity, noteLairPoll, type LairActivity } from "./watcher/drop-origin.js";
 import { parseHeadIncoming, isOnyxiaHead } from "./watcher/lft-signals.js";
 import { printableAsciiRuns } from "./protocol/chat.js";
 import { evaluateTimer, improvedEstimate, typicalClearText } from "./watcher/timer-eval.js";
@@ -72,7 +72,6 @@ import {
 import { factionOfRace, splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { raidEndingDue } from "./watcher/raid-ending.js";
 import {
-  buffCooldownRemainingMs,
   InMemoryBroadcastLedger,
   MongoBroadcastLedger,
   shouldBroadcast,
@@ -264,6 +263,8 @@ interface ConnectionServices {
    *  back to its own queue only when the pool is empty. */
   readonly whisperPool: WhisperPool;
   readonly buffStore: BuffStore;
+  /** The buff-drop domain: last-drop/cooldown state for the alert policy, and drop classification. */
+  readonly buffTracker: BuffTracker;
   readonly broadcasts: BroadcastLedger;
   readonly raidStateStore: RaidStateStore;
   readonly durationStore: DurationStore;
@@ -304,7 +305,7 @@ async function runConnection(
   // on a stable, reasonable ping (a raid can't run on a laggy server).
   onLatency: (rttMs: number) => void,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffStore, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, notifyTests, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const lastChronicleCheck = new Map<string, number>();
@@ -437,7 +438,7 @@ async function runConnection(
     // functions below just hand it the event and act on the cities it returns. See RAID_ARCHITECTURE.md.
     const alertPolicy = new RaidAlertPolicy({
       lastBroadcast: (city, kind) => broadcasts.last(city, kind),
-      lastBuffDropAt: async (city) => (await buffStore.current(city))?.appliedAt ?? null,
+      lastBuffDropAt: (city) => buffTracker.lastDropAt(city),
       cooldownMs: config.buffCooldownMs,
       dedupMs: config.broadcastDedupMs,
       logger,
@@ -632,7 +633,7 @@ async function runConnection(
         const notified: Faction[] = [];
         for (const city of lane.cities) {
           const forming = await broadcasts.last(city, "raid-forming");
-          const buffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
+          const buffDropAt = await buffTracker.lastDropAt(city);
           if (!shouldBroadcast(forming, buffDropAt, now, config.broadcastDedupMs)) notified.push(city);
         }
         if (notified.length === 0) return; // forming never alerted this cycle — nobody was told to park
@@ -771,8 +772,8 @@ async function runConnection(
         guildieStore.count().catch(() => 0),
         Promise.all(
           FACTIONS.map(async (faction) => {
-            const drop = await buffStore.current(faction);
-            const sinceLastDropMs = drop ? now - drop.appliedAt.getTime() : null;
+            const dropAt = await buffTracker.lastDropAt(faction);
+            const sinceLastDropMs = dropAt ? now - dropAt.getTime() : null;
             return { faction, sinceLastDropMs };
           }),
         ),
@@ -1647,25 +1648,22 @@ async function main(): Promise<void> {
   // its own queue only if no listener is in world.
   const whisperPool = new WhisperPool();
 
-  const recentBuffs = new RecentBuffs(BUFF_DEDUP_MS);
+  // The buff-drop domain: dedup a second same-city listener, classify fresh/saved/unknown from the
+  // shared lair signal, and persist. Also the last-drop/cooldown state the policy and status read.
+  const buffTracker = new BuffTracker({
+    store: buffStore,
+    dedupWindowMs: BUFF_DEDUP_MS,
+    freshWindowMs: config.raidFreshWindowMs,
+    cooldownMs: config.buffCooldownMs,
+    activity: lairActivity,
+    logger,
+  });
   const recordBuff = (faction: Faction, sourceName: string, text: string, detectedBy: string): void => {
-    // Two listeners parked in one capital both hear the same yell; act on it once. Without this a
-    // second same-city bot would double-post to Discord and double-whisper every subscriber.
-    if (!recentBuffs.fresh(faction, Date.now())) {
-      logger.info(`buff drop: ${faction} already recorded moments ago — ignoring duplicate heard by ${detectedBy}`);
-      return;
-    }
-    const appliedAt = new Date();
-    // Fresh kill (a raid was in the lair), saved head (empty lair), or unknown (we were blind).
-    // Only a confident "saved" adds a line to the post; fresh/unknown render exactly as before.
-    const origin = classifyDropOrigin(appliedAt.getTime(), lairActivity, { freshWindowMs: config.raidFreshWindowMs });
-    logger.info(`buff drop: ${faction} buff is up (${origin}) — ${detectedBy} heard "${text}" from ${sourceName}`);
-    void buffStore
-      .record({ faction, appliedAt })
-      .catch((error) => logger.error(`buff-store: ${describeError(error)}`));
+    const drop = buffTracker.record(faction, { sourceName, text, detectedBy }, Date.now());
+    if (drop === null) return; // a duplicate a second same-city listener heard
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
-    void push(formatBuffDropped(faction, config.author, origin === "saved"), [faction]); // channel, pinging that side's role
-    buffDropSink.notify?.(faction, appliedAt, origin === "saved");
+    void push(formatBuffDropped(faction, config.author, drop.origin === "saved"), [faction]); // channel, pinging that side's role
+    buffDropSink.notify?.(faction, drop.appliedAt, drop.origin === "saved");
   };
 
   // A player's feedback: persist it (for review) and post it to the feedback channel,
@@ -1700,17 +1698,7 @@ async function main(): Promise<void> {
     },
     buffCooldowns: async () => {
       const nowMs = Date.now();
-      return Promise.all(
-        FACTIONS.map(async (faction) => {
-          const drop = await buffStore.current(faction);
-          const lastBuffDropAt = drop?.appliedAt ?? null;
-          return {
-            faction,
-            sinceLastDropMs: lastBuffDropAt ? nowMs - lastBuffDropAt.getTime() : null,
-            cooldownRemainingMs: buffCooldownRemainingMs(lastBuffDropAt, nowMs, config.buffCooldownMs),
-          };
-        }),
-      );
+      return Promise.all(FACTIONS.map((faction) => buffTracker.cooldownState(faction, nowMs)));
     },
     areaName: config.watchAreaName,
     guildName: config.guildName,
@@ -1741,6 +1729,7 @@ async function main(): Promise<void> {
     listenerWho,
     whisperPool,
     buffStore,
+    buffTracker,
     broadcasts,
     raidStateStore,
     durationStore,
