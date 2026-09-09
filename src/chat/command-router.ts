@@ -21,11 +21,14 @@ export function isSubscribeRequest(text: string): boolean {
   return parseIntent(text) === "subscribe";
 }
 
-/** Per-faction last-drop info for the status query. */
+/** Per-faction buff-drop info for the status query. */
 export interface BuffCooldown {
   readonly faction: Faction;
   /** ms since the last recorded Rallying Cry drop in this faction's capital, or null if none seen. */
   readonly sinceLastDropMs: number | null;
+  /** ms until a fresh Rallying Cry can drop again for this side, or 0 when off cooldown / when the
+   *  server has no cooldown configured (a buff drops on any clear). */
+  readonly cooldownRemainingMs: number;
 }
 
 /** A reader-friendly name for a set of subscribed sides. */
@@ -207,13 +210,17 @@ export class CommandRouter {
       const factions = await this.#relevantFactions(sender, sourceFaction);
       const part = (await buffCooldowns())
         .filter((cd) => factions.includes(cd.faction))
-        .map((cd) =>
-          // A fresh Rallying Cry drops whenever a raid clears Onyxia — there is no cooldown to
-          // report. Show when the last one dropped so a parker knows how fresh the city is.
-          cd.sinceLastDropMs === null
-            ? `${CITY_FOR[cd.faction]}: no Rallying Cry seen yet - one drops when a raid clears Onyxia`
-            : `${CITY_FOR[cd.faction]}: last Rallying Cry ~${humanClock(cd.sinceLastDropMs)} ago - a fresh one drops when a raid clears`,
-        )
+        .map((cd) => {
+          const city = CITY_FOR[cd.faction];
+          // On cooldown: a fresh one can't drop yet — report the wait. Otherwise (the default, no
+          // cooldown) show when the last one dropped so a parker knows how fresh the city is.
+          if (cd.cooldownRemainingMs > 0) {
+            return `${city}: on cooldown - a fresh Rallying Cry can drop in ~${humanClock(cd.cooldownRemainingMs)}`;
+          }
+          return cd.sinceLastDropMs === null
+            ? `${city}: no Rallying Cry seen yet - one drops when a raid clears Onyxia`
+            : `${city}: last Rallying Cry ~${humanClock(cd.sinceLastDropMs)} ago - a fresh one drops when a raid clears`;
+        })
         .join(" | ");
       if (part) lines.push(`Rallying Cry - ${part}.`);
     }

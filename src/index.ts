@@ -72,8 +72,10 @@ import {
 import { factionOfRace, splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { raidEndingDue } from "./watcher/raid-ending.js";
 import {
+  buffCooldownRemainingMs,
   InMemoryBroadcastLedger,
   MongoBroadcastLedger,
+  onBuffCooldown,
   shouldBroadcast,
   shouldBroadcastRaid,
   type BroadcastLedger,
@@ -562,6 +564,12 @@ async function runConnection(
         for (const city of lane.cities) {
           const last = await broadcasts.last(city, event.kind);
           const lastBuffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
+          // Buff cooldown: a fresh Rallying Cry can't drop for this side yet, so a "park now" alert
+          // would be misleading — skip it. 0 (default) is no cooldown, so this never fires there.
+          if (onBuffCooldown(lastBuffDropAt, now, config.buffCooldownMs)) {
+            logger.info(`${lane.label} ${event.kind} for ${city} suppressed — Rallying Cry on cooldown`);
+            continue;
+          }
           // Dedup PER RAID NUMBER (like the about-to-clear), not per buff cycle — so every DISTINCT
           // raid's clear/forming alerts BOTH cities. A raid that clears within the cycle of an
           // earlier raid used to have one faction's clear swallowed by the old per-cycle dedup.
@@ -600,7 +608,18 @@ async function runConnection(
         // stored in the PERSISTED ledger, not in per-connection memory (an in-memory map re-fired
         // the heads-up on every relogin). Keyed on the raid number, not the buff cycle, so a
         // mid-raid buff drop (saved head / concurrent raid) still can't re-open it.
-        const fresh: Faction[] = [...lane.cities];
+        // Drop any side still within the buff cooldown — a fresh Rallying Cry can't drop for it yet,
+        // so "might end soon, park now" would be wrong. 0 cooldown (default) keeps both cities.
+        const fresh: Faction[] = [];
+        for (const city of lane.cities) {
+          const lastBuffDropAt = (await buffStore.current(city))?.appliedAt ?? null;
+          if (onBuffCooldown(lastBuffDropAt, now, config.buffCooldownMs)) {
+            logger.info(`${lane.label} raid-ending for ${city} suppressed — Rallying Cry on cooldown`);
+            continue;
+          }
+          fresh.push(city);
+        }
+        if (fresh.length === 0) return;
         const anyCity = fresh[0];
         if (anyCity) {
           const prior = await broadcasts.last(anyCity, "raid-ending").catch(() => null);
@@ -1724,7 +1743,12 @@ async function main(): Promise<void> {
       return Promise.all(
         FACTIONS.map(async (faction) => {
           const drop = await buffStore.current(faction);
-          return { faction, sinceLastDropMs: drop ? nowMs - drop.appliedAt.getTime() : null };
+          const lastBuffDropAt = drop?.appliedAt ?? null;
+          return {
+            faction,
+            sinceLastDropMs: lastBuffDropAt ? nowMs - lastBuffDropAt.getTime() : null,
+            cooldownRemainingMs: buffCooldownRemainingMs(lastBuffDropAt, nowMs, config.buffCooldownMs),
+          };
         }),
       );
     },

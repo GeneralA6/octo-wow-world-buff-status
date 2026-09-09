@@ -112,8 +112,8 @@ describe("CommandRouter", () => {
       raidElapsed: () => 42 * 60_000,
       raidNumber: () => 834,
       buffCooldowns: async () => [
-        { faction: "alliance", sinceLastDropMs: null }, // none seen yet
-        { faction: "horde", sinceLastDropMs: 72 * 60_000 }, // last dropped 1h12m ago
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 }, // none seen yet
+        { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0 }, // last dropped 1h12m ago
       ],
     });
     tracker.update(crowd("Nightfall", 20));
@@ -122,15 +122,28 @@ describe("CommandRouter", () => {
     expect(reply[0]).toMatch(/raid #834.*in for ~42m/);
     expect(reply[0]).not.toMatch(/\b20\b/); // player count is redundant to a user — omitted
     expect(reply[1]).toContain("Stormwind: no Rallying Cry seen yet");
-    expect(reply[1]).not.toMatch(/cooldown/); // no cooldown concept on this server
+    expect(reply[1]).not.toMatch(/cooldown/); // 0 cooldown here → no cooldown wording
     expect(reply[1]).toMatch(/Orgrimmar: last Rallying Cry ~1h12m ago/);
+  });
+
+  it("reports the cooldown wait when a server buff cooldown is configured and active", async () => {
+    const { tracker, router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", sinceLastDropMs: 10 * 60_000, cooldownRemainingMs: 0 }, // off cooldown
+        { faction: "horde", sinceLastDropMs: 5 * 60_000, cooldownRemainingMs: 25 * 60_000 }, // 25m to go
+      ],
+    });
+    tracker.update(crowd("Nightfall", 20));
+    const reply = (await router.handle("Raider", "status")).join(" ");
+    expect(reply).toMatch(/Orgrimmar: on cooldown - a fresh Rallying Cry can drop in ~25m/);
+    expect(reply).toMatch(/Stormwind: last Rallying Cry ~10m ago/); // side off cooldown keeps normal wording
   });
 
   it("shows only the subscriber's own side's last drop, not both", async () => {
     const { store, router } = deps({
       buffCooldowns: async () => [
-        { faction: "alliance", sinceLastDropMs: null },
-        { faction: "horde", sinceLastDropMs: 72 * 60_000 },
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0 },
       ],
     });
     await store.add("Raider");
@@ -143,8 +156,8 @@ describe("CommandRouter", () => {
   it("detects a non-subscriber's side via /who and shows only that capital", async () => {
     const { router } = deps({
       buffCooldowns: async () => [
-        { faction: "alliance", sinceLastDropMs: null },
-        { faction: "horde", sinceLastDropMs: 72 * 60_000 },
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0 },
       ],
     });
     router.setFactionDetect(async () => "alliance"); // /who resolves them to alliance
@@ -226,8 +239,8 @@ describe("CommandRouter", () => {
   it("status for a non-subscriber uses the listener hint instead of a /who", async () => {
     const { router } = deps({
       buffCooldowns: async () => [
-        { faction: "alliance", sinceLastDropMs: null },
-        { faction: "horde", sinceLastDropMs: 72 * 60_000 },
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0 },
       ],
     });
     let detects = 0;
@@ -244,8 +257,8 @@ describe("CommandRouter", () => {
   it("status without a raid still reports when the buff last dropped", async () => {
     const { router } = deps({
       buffCooldowns: async () => [
-        { faction: "alliance", sinceLastDropMs: null },
-        { faction: "horde", sinceLastDropMs: null },
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 },
+        { faction: "horde", sinceLastDropMs: null, cooldownRemainingMs: 0 },
       ],
     });
     const reply = await router.handle("Raider", "status");

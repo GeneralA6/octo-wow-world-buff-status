@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buffCooldownRemainingMs,
   InMemoryBroadcastLedger,
   MongoBroadcastLedger,
+  onBuffCooldown,
   shouldBroadcast,
   shouldBroadcastRaid,
   type BroadcastDb,
@@ -84,6 +86,41 @@ describe("shouldBroadcastRaid (per-raid dedup — every distinct raid alerts bot
     const last = { lastBroadcastAt: at(1000), raidNumber: null };
     expect(shouldBroadcastRaid(last, null, null, 1000_000 + 60_000, HOUR)).toBe(false); // within cycle
     expect(shouldBroadcastRaid(last, null, at(1500), 1500_000 + 10_000, HOUR)).toBe(true); // buff dropped since
+  });
+});
+
+describe("onBuffCooldown", () => {
+  const COOLDOWN = 30 * 60_000; // 30 min
+
+  it("is never on cooldown when cooldownMs is 0 (no cooldown — the default)", () => {
+    expect(onBuffCooldown(at(1000), 1000_000 + 60_000, 0)).toBe(false);
+  });
+
+  it("is never on cooldown when no buff has dropped yet", () => {
+    expect(onBuffCooldown(null, 5_000_000, COOLDOWN)).toBe(false);
+  });
+
+  it("is on cooldown within the window after a drop, and off it once the window elapses", () => {
+    const dropped = at(1000);
+    expect(onBuffCooldown(dropped, 1000_000 + 10 * 60_000, COOLDOWN)).toBe(true); // 10m in, still cooling
+    expect(onBuffCooldown(dropped, 1000_000 + COOLDOWN - 1, COOLDOWN)).toBe(true); // just before it elapses
+    expect(onBuffCooldown(dropped, 1000_000 + COOLDOWN, COOLDOWN)).toBe(false); // exactly elapsed → off
+    expect(onBuffCooldown(dropped, 1000_000 + COOLDOWN + 60_000, COOLDOWN)).toBe(false); // well after
+  });
+});
+
+describe("buffCooldownRemainingMs", () => {
+  const COOLDOWN = 30 * 60_000;
+
+  it("is 0 with no cooldown, no drop, or off cooldown", () => {
+    expect(buffCooldownRemainingMs(at(1000), 1000_000 + 60_000, 0)).toBe(0); // no cooldown
+    expect(buffCooldownRemainingMs(null, 5_000_000, COOLDOWN)).toBe(0); // never dropped
+    expect(buffCooldownRemainingMs(at(1000), 1000_000 + COOLDOWN, COOLDOWN)).toBe(0); // just elapsed
+  });
+
+  it("counts down the remaining time while on cooldown", () => {
+    const dropped = at(1000);
+    expect(buffCooldownRemainingMs(dropped, 1000_000 + 10 * 60_000, COOLDOWN)).toBe(20 * 60_000); // 20m left
   });
 });
 

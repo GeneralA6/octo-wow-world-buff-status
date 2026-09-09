@@ -82,6 +82,23 @@ export function shouldBroadcastRaid(
   return shouldBroadcast(last, lastBuffDropAt, now, maxCycleMs);
 }
 
+/**
+ * Is `faction` still within a server Rallying Cry cooldown — a fresh buff cannot drop for it yet,
+ * so a "park now" alert would be misleading and is suppressed? `cooldownMs` of 0 means no cooldown
+ * (always false — a buff can drop on any clear, this server's default).
+ */
+export function onBuffCooldown(lastBuffDropAt: Date | null, now: number, cooldownMs: number): boolean {
+  return cooldownMs > 0 && lastBuffDropAt != null && now - lastBuffDropAt.getTime() < cooldownMs;
+}
+
+/** Milliseconds until the cooldown elapses for a side (a fresh buff can drop again), or 0 when off
+ *  cooldown / when there is no cooldown. For the status readout. */
+export function buffCooldownRemainingMs(lastBuffDropAt: Date | null, now: number, cooldownMs: number): number {
+  if (cooldownMs <= 0 || lastBuffDropAt == null) return 0;
+  const remaining = cooldownMs - (now - lastBuffDropAt.getTime());
+  return remaining > 0 ? remaining : 0;
+}
+
 export interface BroadcastLedger {
   /** The last broadcast for a (city, kind), or null if there's never been one. */
   last(city: Faction, kind: BroadcastKind): Promise<BroadcastRecord | null>;

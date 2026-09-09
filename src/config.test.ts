@@ -310,6 +310,12 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_BROADCAST_DEDUP_MINUTES: "30" }).broadcastDedupMs).toBe(30 * 60_000);
   });
 
+  it("defaults the buff cooldown to 0 (none) and reads a minutes override", () => {
+    expect(loadConfig({ ...minimalEnv }).buffCooldownMs).toBe(0);
+    expect(loadConfig({ ...minimalEnv, WOW_BUFF_COOLDOWN_MINUTES: "0" }).buffCooldownMs).toBe(0);
+    expect(loadConfig({ ...minimalEnv, WOW_BUFF_COOLDOWN_MINUTES: "180" }).buffCooldownMs).toBe(180 * 60_000);
+  });
+
   it("enables login by default and disables it on false/0/none", () => {
     expect(loadConfig({ ...minimalEnv }).loginEnabled).toBe(true);
     for (const value of ["false", "0", "none"]) {

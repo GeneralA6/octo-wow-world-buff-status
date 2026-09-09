@@ -116,6 +116,9 @@ export interface BotConfig {
    *  a wipe (count dipping and recovering) or roster churn can't re-broadcast the same
    *  cycle. Reset early when a fresh buff actually drops for that city. */
   readonly broadcastDedupMs: number;
+  /** Server Rallying Cry cooldown per faction (ms); park alerts are suppressed for a side still
+   *  within it. 0 = no cooldown (a buff can drop on any clear). */
+  readonly buffCooldownMs: number;
   /** crossfaction (Octo: /who is mixed, gate both cities) or faction (split per side). */
   readonly realmType: RealmType;
   /** How to tell concurrent raids apart: auto (guild raids + a pickup pool), guild, or lair. */
@@ -371,8 +374,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const realmStableMs = intWithDefault("WOW_REALM_STABLE_MINUTES", 3, 1) * 60_000;
   // Dedup window: how long a (city, kind) park-alert stays muted if no fresh drop is heard, so a
   // redeploy/wipe/roster-churn re-emitting the same event doesn't re-alert. A drop reopens it
-  // sooner (new cycle); this is only the ceiling. Not a buff-duration — we model no cooldown.
+  // sooner (new cycle); this is only the ceiling, separate from the buff cooldown below.
   const broadcastDedupMs = intWithDefault("WOW_BROADCAST_DEDUP_MINUTES", 120, 1) * 60_000;
+  // Server Rallying Cry cooldown PER FACTION, in minutes: after a buff drops, a fresh one can't drop
+  // for that side until this elapses, so park alerts (forming / about-to-clear / clear) are
+  // suppressed for it meanwhile. 0 = NO cooldown (OctoWoW's default — a buff drops on any clear).
+  const buffCooldownMs = intWithDefault("WOW_BUFF_COOLDOWN_MINUTES", 0, 0) * 60_000;
 
   const realmRaw = env.WOW_REALM_TYPE?.trim().toLowerCase();
   const realmType: RealmType = realmRaw === "faction" ? "faction" : "crossfaction";
@@ -484,6 +491,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     whisperMaxAgeMs,
     realmStableMs,
     broadcastDedupMs,
+    buffCooldownMs,
     realmType,
     raidGrouping,
     raidDetector,
