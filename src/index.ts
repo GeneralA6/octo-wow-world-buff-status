@@ -24,7 +24,7 @@ import {
   formatServerUp,
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
-import { groupByRelevantCities } from "./notify/faction-routing.js";
+import { AlertDelivery } from "./notify/alert-delivery.js";
 import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/raid-tracker.js";
 import { summarizeDepartures } from "./watcher/presence.js";
 import { WhoRosterSource, type LairView, type RosterSource } from "./watcher/roster-source.js";
@@ -418,6 +418,17 @@ async function runConnection(
       })().catch((error) => logger.error(`broadcast whisper: ${describeError(error)}`));
     };
 
+    // The single fan-out: Discord post + per-capital yell + per-side subscriber whisper. The announce
+    // functions below only pick formatters; HOW it's sent lives in AlertDelivery.
+    const delivery = new AlertDelivery({
+      push,
+      yell: (city, text) => yellSink[city]?.(text),
+      whispersEnabled: config.whispersEnabled,
+      subscribers: () => store.all(),
+      broadcastWhisper,
+      logger,
+    });
+
     // A buff-parking alert: post to the Onyxia channel (pinging @alliance/@horde per open
     // city), yell in each open capital, and whisper in-game subscribers of that side. The
     // caller already deduped `cities` against the ledger, so this fires at most once per cycle.
@@ -425,44 +436,15 @@ async function runConnection(
       // The "raid starting" alert quotes how long a raid usually takes, so a reader can judge
       // whether to park now; the "raid ended" alert already carries its own duration.
       const typical = event.kind === "raid-forming" ? await typicalClear() : undefined;
-      const message = formatBuffAlert(event, cities, typical);
-      logger.info(`ALERT ${event.kind} (${cities.join("/")}): ${message.body}`);
-      await push(message, cities);
-      if (!config.whispersEnabled) return;
-
-      // Yell in each open capital via its listener, so everyone standing there hears it.
-      for (const city of cities) yellSink[city]?.(formatBuffWhisper(event, [city], typical));
-
-      // Whisper the in-game subscribers, each hearing only their side.
-      let subscribers: Subscriber[] = [];
-      try {
-        subscribers = await store.all();
-      } catch (error) {
-        logger.error(`subscribers: ${describeError(error)}`);
-        return;
-      }
-      if (subscribers.length === 0) return;
-      for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, cities)) {
-        const line = formatBuffWhisper(event, groupCities, typical);
+      await delivery.sendCityAlert({
+        label: event.kind,
+        discord: formatBuffAlert(event, cities, typical),
+        cities,
+        yellFor: (city) => formatBuffWhisper(event, [city], typical),
+        whisperFor: (groupCities) => formatBuffWhisper(event, groupCities, typical),
         // Tag with the cities this park-now is about, so a buff dropping there purges it as stale.
-        broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities, config.whisperMaxAgeMs);
-      }
-    };
-
-    // Whisper one side's in-game subscribers (used by buff drops).
-    const notifyFactionSubscribers = async (faction: Faction, whisperLine: string): Promise<void> => {
-      if (!config.whispersEnabled) return;
-      let subscribers: Subscriber[] = [];
-      try {
-        subscribers = await store.all();
-      } catch (error) {
-        logger.error(`subscribers: ${describeError(error)}`);
-        return;
-      }
-      subscribers = subscribers.filter((s) => s.factions.includes(faction));
-      if (subscribers.length === 0) return;
-      // A drop whisper delivered minutes late (throttle backlog) is the Owlofelune case — expire it.
-      broadcastWhisper(subscribers.map((s) => s.name), whisperLine, faction, undefined, config.whisperMaxAgeMs);
+        whisperMaxAgeMs: config.whisperMaxAgeMs,
+      });
     };
 
     // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
@@ -472,9 +454,11 @@ async function runConnection(
       // park after being told it already dropped.
       const dropped = whisperPool.dropForFaction(faction) + (whisperQueue?.dropForFaction(faction) ?? 0);
       if (dropped > 0) logger.info(`dropped ${dropped} stale park-now whisper(s) for ${faction} — buff is up`);
-      return notifyFactionSubscribers(
+      // A drop whisper delivered minutes late (throttle backlog) is the Owlofelune case — expire it.
+      return delivery.sendFactionWhisper(
         faction,
         formatBuffDroppedWhisper(faction, config.author, config.discordServerInvite ?? undefined, savedHead),
+        config.whisperMaxAgeMs,
       );
     };
 
@@ -626,23 +610,14 @@ async function runConnection(
           if (prior && prior.raidNumber != null && prior.raidNumber === raidNumber) return; // already told this raid
         }
         const typical = await typicalClear();
-        const message = formatRaidEnding(raidNumber, fresh, elapsedMs, typical);
-        logger.info(`ALERT raid-ending (${fresh.join("/")}): ${message.body}`);
-        await push(message, fresh);
-        if (config.whispersEnabled) {
-          for (const city of fresh) {
-            yellSink[city]?.(formatRaidEndingWhisper(raidNumber, [city], elapsedMs, typical));
-          }
-          try {
-            const subscribers = await store.all();
-            for (const { cities: groupCities, members } of groupByRelevantCities(subscribers, fresh)) {
-              const line = formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, typical);
-              broadcastWhisper(members.map((s) => s.name), line, groupCities[0] ?? null, groupCities, config.whisperMaxAgeMs);
-            }
-          } catch (error) {
-            logger.error(`subscribers: ${describeError(error)}`);
-          }
-        }
+        await delivery.sendCityAlert({
+          label: "raid-ending",
+          discord: formatRaidEnding(raidNumber, fresh, elapsedMs, typical),
+          cities: fresh,
+          yellFor: (city) => formatRaidEndingWhisper(raidNumber, [city], elapsedMs, typical),
+          whisperFor: (groupCities) => formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, typical),
+          whisperMaxAgeMs: config.whisperMaxAgeMs,
+        });
         for (const city of fresh) {
           await broadcasts
             .record({ city, kind: "raid-ending", cohortLabel: "a raid", peak: 0, raidNumber, lastBroadcastAt: new Date(now) })
