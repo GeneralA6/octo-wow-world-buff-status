@@ -12,6 +12,7 @@ const sample: ServerStatusWidgetState = {
   messageId: "msg42",
   lastOutageEndedAt: 1_700_000_000_000,
   lastOutageDurationMs: 720_000,
+  channelName: "🟢-server-status",
 };
 
 describe("InMemoryServerStatusWidgetStore", () => {
@@ -33,14 +34,30 @@ describe("InMemoryServerStatusWidgetStore", () => {
 describe("state <-> document mapping", () => {
   it("drops nothing on the round trip and never invents an _id", () => {
     const doc = stateToDoc(sample);
-    expect(doc).toEqual({ messageId: "msg42", lastOutageEndedAt: 1_700_000_000_000, lastOutageDurationMs: 720_000 });
+    expect(doc).toEqual({
+      messageId: "msg42",
+      lastOutageEndedAt: 1_700_000_000_000,
+      lastOutageDurationMs: 720_000,
+      channelName: "🟢-server-status",
+    });
     expect("_id" in doc).toBe(false);
     expect(docToState({ _id: "status", ...doc })).toEqual(sample);
   });
 
   it("carries a fresh widget with no message yet", () => {
-    const fresh: ServerStatusWidgetState = { messageId: null, lastOutageEndedAt: null, lastOutageDurationMs: null };
+    const fresh: ServerStatusWidgetState = {
+      messageId: null,
+      lastOutageEndedAt: null,
+      lastOutageDurationMs: null,
+      channelName: null,
+    };
     expect(docToState({ _id: "status", ...stateToDoc(fresh) })).toEqual(fresh);
+  });
+
+  it("reads a legacy document that predates channelName as null", () => {
+    // channelName is optional on the stored doc, so a pre-rename document is valid input.
+    const legacy = { _id: "status", messageId: "m", lastOutageEndedAt: null, lastOutageDurationMs: null };
+    expect(docToState(legacy).channelName).toBeNull();
   });
 });
 

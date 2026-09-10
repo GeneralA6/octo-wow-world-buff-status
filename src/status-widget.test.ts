@@ -8,6 +8,7 @@ import {
   ServerStatusWidget,
   buildServerStatusEmbed,
   humanSpan,
+  statusChannelName,
   type LiveRealmStatus,
   type ServerStatusView,
   type StatusChannel,
@@ -43,6 +44,14 @@ describe("humanSpan", () => {
     expect(humanSpan((3 * 60 + 20) * 60_000)).toBe("3h20m");
     expect(humanSpan(5 * 24 * 60 * 60_000)).toBe("5d");
     expect(humanSpan((2 * 24 + 4) * 60 * 60_000)).toBe("2d4h");
+  });
+});
+
+describe("statusChannelName", () => {
+  it("prefixes 🟢 when up and 🔴 when down", () => {
+    expect(statusChannelName(true, "server-status")).toBe("🟢-server-status");
+    expect(statusChannelName(false, "server-status")).toBe("🔴-server-status");
+    expect(statusChannelName(true, "realm-status")).toBe("🟢-realm-status");
   });
 });
 
@@ -170,7 +179,7 @@ describe("ServerStatusWidget", () => {
     };
     const w1 = new ServerStatusWidget({
       channel: on404,
-      store: memoryStore({ messageId: "old", lastOutageEndedAt: null, lastOutageDurationMs: null }),
+      store: memoryStore({ messageId: "old", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: null }),
       snapshot: () => liveSnapshot(),
       logger: silentLogger,
     });
@@ -185,7 +194,7 @@ describe("ServerStatusWidget", () => {
     };
     const w2 = new ServerStatusWidget({
       channel: on403,
-      store: memoryStore({ messageId: "old", lastOutageEndedAt: null, lastOutageDurationMs: null }),
+      store: memoryStore({ messageId: "old", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: null }),
       snapshot: () => liveSnapshot(),
       logger: spyLogger(),
     });
@@ -204,13 +213,18 @@ describe("ServerStatusWidget", () => {
         return { ok: true };
       }),
     };
-    const store = memoryStore({ messageId: "m1", lastOutageEndedAt: null, lastOutageDurationMs: null });
+    const store = memoryStore({ messageId: "m1", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: null });
     const widget = new ServerStatusWidget({ channel, store, snapshot: () => liveSnapshot(), logger: silentLogger });
 
     await widget.load();
     await widget.recordOutageEnd(NOW, 12 * 60_000);
 
-    expect(store.saved.at(-1)).toEqual({ messageId: "m1", lastOutageEndedAt: NOW, lastOutageDurationMs: 12 * 60_000 });
+    expect(store.saved.at(-1)).toEqual({
+      messageId: "m1",
+      lastOutageEndedAt: NOW,
+      lastOutageDurationMs: 12 * 60_000,
+      channelName: null,
+    });
     const outageField = edited.at(-1)?.embeds?.[0]?.fields?.find((f) => f.name === "Last outage");
     expect(outageField?.value).toContain("lasted 12m");
   });
@@ -222,7 +236,7 @@ describe("ServerStatusWidget", () => {
     };
     const widget = new ServerStatusWidget({
       channel,
-      store: memoryStore({ messageId: "kept", lastOutageEndedAt: NOW - 60 * 60_000, lastOutageDurationMs: 5 * 60_000 }),
+      store: memoryStore({ messageId: "kept", lastOutageEndedAt: NOW - 60 * 60_000, lastOutageDurationMs: 5 * 60_000, channelName: null }),
       snapshot: () => liveSnapshot(),
       logger: silentLogger,
     });
@@ -255,5 +269,111 @@ describe("ServerStatusWidget", () => {
 
     expect(channel.create).toHaveBeenCalledOnce(); // the second refresh edited m1 instead of creating
     expect(channel.edit).toHaveBeenCalledWith("m1", expect.anything());
+  });
+
+  // --- channel-name rename indicator ---
+
+  function okChannel(): StatusChannel {
+    return {
+      create: vi.fn<StatusChannel["create"]>().mockResolvedValue({ ok: true, messageId: "m1" }),
+      edit: vi.fn<StatusChannel["edit"]>().mockResolvedValue({ ok: true }),
+    };
+  }
+
+  it("renames the channel to the current state, once, and persists it", async () => {
+    const rename = vi.fn<(name: string) => Promise<DmResult>>().mockResolvedValue({ ok: true });
+    const store = memoryStore();
+    const widget = new ServerStatusWidget({
+      channel: okChannel(),
+      store,
+      snapshot: () => liveSnapshot({ up: true }),
+      renameChannel: rename,
+      channelBaseName: "server-status",
+      logger: silentLogger,
+    });
+
+    await widget.load();
+    await widget.refresh();
+    await widget.refresh(); // same state — must NOT rename again
+
+    expect(rename).toHaveBeenCalledOnce();
+    expect(rename).toHaveBeenCalledWith("🟢-server-status");
+    expect(store.saved.at(-1)?.channelName).toBe("🟢-server-status");
+  });
+
+  it("renames again when up/down flips", async () => {
+    const rename = vi.fn<(name: string) => Promise<DmResult>>().mockResolvedValue({ ok: true });
+    let up = true;
+    const widget = new ServerStatusWidget({
+      channel: okChannel(),
+      store: memoryStore(),
+      snapshot: () => liveSnapshot({ up }),
+      renameChannel: rename,
+      channelBaseName: "server-status",
+      logger: silentLogger,
+    });
+
+    await widget.load();
+    await widget.refresh(); // 🟢
+    up = false;
+    await widget.refresh(); // 🔴
+
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(rename).toHaveBeenLastCalledWith("🔴-server-status");
+  });
+
+  it("does not persist the name on a failed rename, so it retries next time", async () => {
+    const rename = vi
+      .fn<(name: string) => Promise<DmResult>>()
+      .mockResolvedValueOnce({ ok: false, kind: "error", status: 429 }) // rate-limited
+      .mockResolvedValueOnce({ ok: true });
+    const store = memoryStore();
+    const widget = new ServerStatusWidget({
+      channel: okChannel(),
+      store,
+      snapshot: () => liveSnapshot({ up: true }),
+      renameChannel: rename,
+      channelBaseName: "server-status",
+      logger: spyLogger(),
+    });
+
+    await widget.load();
+    await widget.refresh(); // rename 429s — name not applied
+    expect(store.saved.at(-1)?.channelName ?? null).toBeNull();
+    await widget.refresh(); // retries, succeeds
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(store.saved.at(-1)?.channelName).toBe("🟢-server-status");
+  });
+
+  it("skips the rename when the persisted name already matches (no rename on redeploy)", async () => {
+    const rename = vi.fn<(name: string) => Promise<DmResult>>().mockResolvedValue({ ok: true });
+    const widget = new ServerStatusWidget({
+      channel: okChannel(),
+      store: memoryStore({ messageId: "m1", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: "🟢-server-status" }),
+      snapshot: () => liveSnapshot({ up: true }),
+      renameChannel: rename,
+      channelBaseName: "server-status",
+      logger: silentLogger,
+    });
+
+    await widget.load();
+    await widget.refresh();
+
+    expect(rename).not.toHaveBeenCalled();
+  });
+
+  it("never renames when no renamer is configured (embed-only)", async () => {
+    const store = memoryStore();
+    const widget = new ServerStatusWidget({
+      channel: okChannel(),
+      store,
+      snapshot: () => liveSnapshot({ up: false }),
+      logger: silentLogger,
+    });
+
+    await widget.load();
+    await widget.refresh();
+
+    expect(store.saved.at(-1)?.channelName ?? null).toBeNull(); // nothing renamed
   });
 });

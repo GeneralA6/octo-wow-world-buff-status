@@ -119,17 +119,24 @@ export interface StatusChannel {
   edit(messageId: string, message: ChannelMessage): Promise<DmResult>;
 }
 
-/** The durable state the widget reads/writes (message id + last outage), behind a store. */
+/** The durable state the widget reads/writes (message id, last outage, applied channel name). */
+export interface StatusWidgetState {
+  readonly messageId: string | null;
+  readonly lastOutageEndedAt: number | null;
+  readonly lastOutageDurationMs: number | null;
+  readonly channelName: string | null;
+}
+
 export interface StatusWidgetStore {
-  load(): Promise<
-    | { readonly messageId: string | null; readonly lastOutageEndedAt: number | null; readonly lastOutageDurationMs: number | null }
-    | null
-  >;
-  save(state: {
-    readonly messageId: string | null;
-    readonly lastOutageEndedAt: number | null;
-    readonly lastOutageDurationMs: number | null;
-  }): Promise<void>;
+  load(): Promise<StatusWidgetState | null>;
+  save(state: StatusWidgetState): Promise<void>;
+}
+
+/** The channel name for a given up/down state — the status emoji prefixed to the base name. Pure.
+ *  Only the leading 🟢/🔴 changes; laggy is deliberately NOT reflected here (it would flap the name
+ *  against Discord's rename limit), so the name is coarse up/down and the embed carries the nuance. */
+export function statusChannelName(up: boolean, base: string): string {
+  return `${up ? "🟢" : "🔴"}-${base}`;
 }
 
 export interface ServerStatusWidgetDeps {
@@ -137,6 +144,10 @@ export interface ServerStatusWidgetDeps {
   readonly store: StatusWidgetStore;
   /** Reads the current live realm facts at render time. */
   readonly snapshot: () => LiveRealmStatus;
+  /** Optional: rename the channel to reflect up/down (🟢/🔴). Omitted = embed only, no rename. */
+  readonly renameChannel?: (name: string) => Promise<DmResult>;
+  /** Base name the rename prefixes the status emoji onto (e.g. "server-status"). */
+  readonly channelBaseName?: string;
   readonly logger: Logger;
 }
 
@@ -144,9 +155,12 @@ export class ServerStatusWidget {
   readonly #channel: StatusChannel;
   readonly #store: StatusWidgetStore;
   readonly #snapshot: () => LiveRealmStatus;
+  readonly #renameChannel: ((name: string) => Promise<DmResult>) | null;
+  readonly #channelBaseName: string;
   readonly #logger: Logger;
   #messageId: string | null = null;
   #lastOutage: LastOutage | null = null;
+  #channelName: string | null = null; // the channel name last applied by the rename indicator
   /** Serialises refreshes so a startup transition can't race the periodic timer into two posts. */
   #queue: Promise<void> = Promise.resolve();
 
@@ -154,6 +168,8 @@ export class ServerStatusWidget {
     this.#channel = deps.channel;
     this.#store = deps.store;
     this.#snapshot = deps.snapshot;
+    this.#renameChannel = deps.renameChannel ?? null;
+    this.#channelBaseName = deps.channelBaseName ?? "server-status";
     this.#logger = deps.logger;
   }
 
@@ -162,6 +178,7 @@ export class ServerStatusWidget {
     const state = await this.#store.load();
     if (!state) return;
     this.#messageId = state.messageId;
+    this.#channelName = state.channelName;
     this.#lastOutage =
       state.lastOutageEndedAt !== null && state.lastOutageDurationMs !== null
         ? { endedAt: state.lastOutageEndedAt, durationMs: state.lastOutageDurationMs }
@@ -185,6 +202,13 @@ export class ServerStatusWidget {
 
   async #render(): Promise<void> {
     const view: ServerStatusView = { ...this.#snapshot(), lastOutage: this.#lastOutage };
+    // The embed and the channel-name indicator are independent surfaces — a failure of one must not
+    // skip the other (e.g. Send-Messages missing but Manage-Channels granted, or vice versa).
+    await this.#renderEmbed(view);
+    await this.#renderChannelName(view);
+  }
+
+  async #renderEmbed(view: ServerStatusView): Promise<void> {
     const message: ChannelMessage = { embeds: [buildServerStatusEmbed(view)] };
 
     if (this.#messageId) {
@@ -208,11 +232,28 @@ export class ServerStatusWidget {
     }
   }
 
+  /** Reflect up/down in the channel name — only when rename is configured AND the name would change,
+   *  so a normal refresh renames nothing and Discord's ~2/10min rename limit is not a concern. */
+  async #renderChannelName(view: ServerStatusView): Promise<void> {
+    if (!this.#renameChannel) return;
+    const desired = statusChannelName(view.up, this.#channelBaseName);
+    if (desired === this.#channelName) return; // already applied — no rename this refresh
+    const renamed = await this.#renameChannel(desired);
+    if (renamed.ok) {
+      this.#channelName = desired;
+      await this.#persist();
+    } else {
+      // Leave #channelName as-is so the next transition/refresh retries (e.g. a 429 backs off).
+      this.#logger.error(`server-status channel rename failed (${describe(renamed)})`);
+    }
+  }
+
   #persist(): Promise<void> {
     return this.#store.save({
       messageId: this.#messageId,
       lastOutageEndedAt: this.#lastOutage?.endedAt ?? null,
       lastOutageDurationMs: this.#lastOutage?.durationMs ?? null,
+      channelName: this.#channelName,
     });
   }
 }

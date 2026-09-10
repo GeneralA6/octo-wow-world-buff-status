@@ -18,6 +18,9 @@ export interface ServerStatusWidgetState {
   readonly lastOutageEndedAt: number | null;
   /** How long that outage lasted (ms), or null. */
   readonly lastOutageDurationMs: number | null;
+  /** The channel name last applied by the rename indicator, or null if rename is off / never set.
+   *  Persisted so a redeploy doesn't re-rename to a name the channel already has. */
+  readonly channelName: string | null;
 }
 
 export interface ServerStatusWidgetStore {
@@ -54,6 +57,8 @@ interface WidgetDoc {
   readonly messageId: string | null;
   readonly lastOutageEndedAt: number | null;
   readonly lastOutageDurationMs: number | null;
+  /** Optional: a document written before the rename indicator existed has no channelName. */
+  readonly channelName?: string | null;
 }
 
 /** Narrow port over the Mongo collection, so the store's logic is unit-tested with a fake. */
@@ -73,15 +78,18 @@ export function stateToDoc(state: ServerStatusWidgetState): Omit<WidgetDoc, "_id
     messageId: state.messageId,
     lastOutageEndedAt: state.lastOutageEndedAt,
     lastOutageDurationMs: state.lastOutageDurationMs,
+    channelName: state.channelName,
   };
 }
 
-/** Read a stored document back into state, ignoring the `_id`. */
+/** Read a stored document back into state, ignoring the `_id`. A document written before the
+ *  channelName field existed reads back as null (rename simply re-applies on the next transition). */
 export function docToState(doc: WidgetDoc): ServerStatusWidgetState {
   return {
     messageId: doc.messageId,
     lastOutageEndedAt: doc.lastOutageEndedAt,
     lastOutageDurationMs: doc.lastOutageDurationMs,
+    channelName: doc.channelName ?? null,
   };
 }
 

@@ -1494,7 +1494,18 @@ async function main(): Promise<void> {
         now,
       };
     };
-    statusWidget = new ServerStatusWidget({ channel, store: statusWidgetStore, snapshot, logger: prefixed(logger, "status") });
+    // Optional sidebar indicator: reflect up/down in the channel NAME too (needs Manage Channels).
+    const renameChannel = config.statusChannelRenameEnabled
+      ? (name: string) => dm.renameChannel(statusChannelId, name)
+      : undefined;
+    statusWidget = new ServerStatusWidget({
+      channel,
+      store: statusWidgetStore,
+      snapshot,
+      renameChannel,
+      channelBaseName: config.statusChannelName,
+      logger: prefixed(logger, "status"),
+    });
     await statusWidget.load();
     void statusWidget.refresh(); // paint it once on boot; transitions + the timer keep it current
     statusRefreshTimer = setInterval(() => void statusWidget?.refresh(), config.statusWidgetRefreshMs);
