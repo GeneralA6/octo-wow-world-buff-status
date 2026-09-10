@@ -114,7 +114,7 @@ export interface BotConfig {
    *  throttled queue never delivers a "park now" long after the raid it was about cleared. */
   readonly whisperMaxAgeMs: number;
   /** After the realm answers again post-outage, wait this long confirming it stays up before posting
-   *  "back up" — so a flappy crash-recovery doesn't announce recovery prematurely (default 3 min). */
+   *  "back up" — so a flappy crash-recovery doesn't announce recovery prematurely (default 5 min). */
   readonly realmStableMs: number;
   /** Whether to post realm "down"/"back up" notices to the community channel at all (default true).
    *  A kill-switch for a flapping realm: set WOW_REALM_STATUS=false to silence them instantly. */
@@ -390,7 +390,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
   // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
   const whisperMaxAgeMs = intWithDefault("WOW_WHISPER_MAX_AGE_MINUTES", 5, 1) * 60_000;
-  const realmStableMs = intWithDefault("WOW_REALM_STABLE_MINUTES", 3, 1) * 60_000;
+  const realmStableMs = intWithDefault("WOW_REALM_STABLE_MINUTES", 5, 1) * 60_000;
   // Realm is "back up" only once its keepalive ping is reasonable AND steady over the stability
   // window: median RTT at/under maxPingMs, spread (max-min) at/under pingSpreadMs. A raid can't run
   // on a laggy server, so recovery waits for a healthy ping with no cap.

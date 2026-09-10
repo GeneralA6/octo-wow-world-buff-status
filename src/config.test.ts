@@ -217,6 +217,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_INTERACT_ENTRY: "notanumber" }).interactEntry).toBeNull();
   });
 
+  it("defaults the realm stability window to 5 minutes and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).realmStableMs).toBe(5 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_REALM_STABLE_MINUTES: "10" }).realmStableMs).toBe(10 * 60_000);
+  });
+
   it("defaults the realm type to crossfaction and accepts faction", () => {
     expect(loadConfig({ ...minimalEnv }).realmType).toBe("crossfaction");
     expect(loadConfig({ ...minimalEnv, WOW_REALM_TYPE: "faction" }).realmType).toBe("faction");
