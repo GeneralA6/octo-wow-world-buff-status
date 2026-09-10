@@ -176,6 +176,13 @@ export interface BotConfig {
   /** Channel for STAGED / test alerts — features being validated before they go to the public buff
    *  channel (e.g. the LFT head-incoming advance warning). Null falls back to the errors channel. */
   readonly discordTestsChannelId: string | null;
+  /** Channel the bot keeps a live SERVER-STATUS widget in: one message, edited in place, showing the
+   *  realm up/down + health at a glance. Distinct from the community down/up event posts (which stay
+   *  in the Onyxia channel with their role pings). Null = the widget is off. */
+  readonly discordServerStatusChannelId: string | null;
+  /** How often the live server-status widget re-renders (to keep uptime/latency fresh), in ms. The
+   *  realm up/down transitions refresh it immediately; this is the idle cadence between them. */
+  readonly statusWidgetRefreshMs: number;
   /** Role pinged for alliance (Stormwind) notifications, and horde (Orgrimmar) notifications —
    *  a Discord-side opt-in, unrelated to any in-game character's chosen side. */
   readonly discordAllianceRoleId: string | null;
@@ -436,6 +443,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordOnyxiaChannelId = env.DISCORD_ONYXIA_CHANNEL_ID?.trim() || null;
   const discordErrorsChannelId = env.DISCORD_ERRORS_CHANNEL_ID?.trim() || null;
   const discordTestsChannelId = env.DISCORD_TESTS_CHANNEL_ID?.trim() || null;
+  const discordServerStatusChannelId = env.DISCORD_SERVER_STATUS_CHANNEL_ID?.trim() || null;
+  const statusWidgetRefreshMs = intWithDefault("WOW_STATUS_REFRESH_SECONDS", 300, 30) * 1000;
   const discordAllianceRoleId = env.DISCORD_ALLIANCE_ROLE_ID?.trim() || null;
   const discordHordeRoleId = env.DISCORD_HORDE_ROLE_ID?.trim() || null;
   for (const [name, value] of [
@@ -531,6 +540,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordOnyxiaChannelId,
     discordErrorsChannelId,
     discordTestsChannelId,
+    discordServerStatusChannelId,
+    statusWidgetRefreshMs,
     discordAllianceRoleId,
     discordHordeRoleId,
     mongodbUri,
