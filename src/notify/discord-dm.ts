@@ -21,9 +21,41 @@ export type DiscordFetch = (
   init: { method: string; headers: Record<string, string>; body: string },
 ) => Promise<DiscordResponse>;
 
-export type DmResult =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly kind: "unreachable" | "not-configured" | "error"; readonly status?: number };
+/** The shared failure shape of every send/create/edit call. */
+export type SendFailure = {
+  readonly ok: false;
+  readonly kind: "unreachable" | "not-configured" | "error";
+  readonly status?: number;
+};
+
+export type DmResult = { readonly ok: true } | SendFailure;
+
+/** A create result also carries the new message's id, so the caller can edit it later in place. */
+export type CreateResult = { readonly ok: true; readonly messageId: string } | SendFailure;
+
+export interface DiscordEmbedField {
+  readonly name: string;
+  readonly value: string;
+  readonly inline?: boolean;
+}
+
+/** The subset of a Discord embed the bot builds — enough for the live server-status widget. */
+export interface DiscordEmbed {
+  readonly title?: string;
+  readonly description?: string;
+  /** Sidebar colour as a 24-bit int (0xRRGGBB). */
+  readonly color?: number;
+  readonly fields?: readonly DiscordEmbedField[];
+  readonly footer?: { readonly text: string };
+  /** ISO 8601; Discord renders it as a localised "today at hh:mm" under the embed. */
+  readonly timestamp?: string;
+}
+
+/** A message body: plain content, one or more embeds, or both. */
+export interface ChannelMessage {
+  readonly content?: string;
+  readonly embeds?: readonly DiscordEmbed[];
+}
 
 const API = "https://discord.com/api/v10";
 
@@ -75,6 +107,44 @@ export class DiscordDmSender {
     }
   }
 
+  /** Post a message (content and/or embeds) to a channel and return the new message's id, so a
+   *  caller keeping a live "widget" can edit that one message in place instead of reposting. */
+  async createChannelMessage(channelId: string, message: ChannelMessage): Promise<CreateResult> {
+    if (!this.#botToken) return { ok: false, kind: "not-configured" };
+    try {
+      const response = await this.#fetch(`${API}/channels/${channelId}/messages`, {
+        method: "POST",
+        headers: this.#headers(this.#botToken),
+        body: JSON.stringify(message),
+      });
+      if (!response.ok) return classify(response.status);
+      const messageId = readChannelId(await response.json());
+      return messageId ? { ok: true, messageId } : { ok: false, kind: "error" };
+    } catch {
+      return { ok: false, kind: "error" };
+    }
+  }
+
+  /** Edit a message posted earlier (by id) in place. A 404 comes back as `unreachable` so the
+   *  caller can tell "someone deleted it" (recreate) from a systemic error (leave it). */
+  async editChannelMessage(
+    channelId: string,
+    messageId: string,
+    message: ChannelMessage,
+  ): Promise<DmResult> {
+    if (!this.#botToken) return { ok: false, kind: "not-configured" };
+    try {
+      const response = await this.#fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+        method: "PATCH",
+        headers: this.#headers(this.#botToken),
+        body: JSON.stringify(message),
+      });
+      return response.ok ? { ok: true } : classify(response.status);
+    } catch {
+      return { ok: false, kind: "error" };
+    }
+  }
+
   async send(discordUserId: string, content: string): Promise<DmResult> {
     if (!this.#botToken) return { ok: false, kind: "not-configured" };
     try {
@@ -95,7 +165,7 @@ export class DiscordDmSender {
   }
 }
 
-function classify(status: number): DmResult {
+function classify(status: number): SendFailure {
   if (status === 403 || status === 404) return { ok: false, kind: "unreachable", status };
   return { ok: false, kind: "error", status };
 }

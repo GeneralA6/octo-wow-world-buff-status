@@ -85,4 +85,64 @@ describe("DiscordDmSender", () => {
       expect(await sender.postToChannel("chan9", "hi")).toEqual({ ok: false, kind: "unreachable", status: 403 });
     });
   });
+
+  describe("createChannelMessage / editChannelMessage", () => {
+    it("posts an embed and returns the new message id", async () => {
+      const fetchImpl = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200, { id: "msg7" }));
+      const embed = { title: "🟢 N'Zoth — Online", color: 0x2ecc71 };
+      const result = await new DiscordDmSender("tok", fetchImpl).createChannelMessage("chan9", { embeds: [embed] });
+
+      expect(result).toEqual({ ok: true, messageId: "msg7" });
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toContain("/channels/chan9/messages");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toEqual({ embeds: [embed] });
+    });
+
+    it("errors when the create response carries no message id", async () => {
+      const fetchImpl = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200, { nope: true }));
+      expect(await new DiscordDmSender("tok", fetchImpl).createChannelMessage("chan9", { content: "x" })).toEqual({
+        ok: false,
+        kind: "error",
+      });
+    });
+
+    it("reports not-configured without a token", async () => {
+      expect(await new DiscordDmSender(null).createChannelMessage("chan9", { content: "x" })).toEqual({
+        ok: false,
+        kind: "not-configured",
+      });
+      expect(await new DiscordDmSender(null).editChannelMessage("chan9", "msg7", { content: "x" })).toEqual({
+        ok: false,
+        kind: "not-configured",
+      });
+    });
+
+    it("edits an existing message in place via PATCH", async () => {
+      const fetchImpl = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200));
+      const result = await new DiscordDmSender("tok", fetchImpl).editChannelMessage("chan9", "msg7", {
+        content: "updated",
+      });
+      expect(result).toEqual({ ok: true });
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toContain("/channels/chan9/messages/msg7");
+      expect(init.method).toBe("PATCH");
+      expect(JSON.parse(init.body)).toEqual({ content: "updated" });
+    });
+
+    it("surfaces a 404 on edit as unreachable (the message was deleted)", async () => {
+      const sender = new DiscordDmSender("tok", () => Promise.resolve(res(false, 404)));
+      expect(await sender.editChannelMessage("chan9", "gone", { content: "x" })).toEqual({
+        ok: false,
+        kind: "unreachable",
+        status: 404,
+      });
+    });
+
+    it("treats a thrown fetch as an error on both", async () => {
+      const throwing = new DiscordDmSender("tok", () => Promise.reject(new Error("network")));
+      expect(await throwing.createChannelMessage("chan9", { content: "x" })).toEqual({ ok: false, kind: "error" });
+      expect(await throwing.editChannelMessage("chan9", "m", { content: "x" })).toEqual({ ok: false, kind: "error" });
+    });
+  });
 });
