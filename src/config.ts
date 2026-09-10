@@ -189,7 +189,7 @@ export interface BotConfig {
    *  ~2-renames-per-10-min channel limit. */
   readonly statusChannelRenameEnabled: boolean;
   /** Base name the status channel is renamed around (the status emoji is prefixed): "server-status"
-   *  becomes "🟢-server-status" / "🔴-server-status". Only the leading emoji ever changes. */
+   *  becomes "🟢server-status" / "🔴server-status". Only the leading emoji ever changes. */
   readonly statusChannelName: string;
   /** Role pinged for alliance (Stormwind) notifications, and horde (Orgrimmar) notifications —
    *  a Discord-side opt-in, unrelated to any in-game character's chosen side. */

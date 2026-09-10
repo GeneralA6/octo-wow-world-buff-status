@@ -91,10 +91,10 @@ export function buildServerStatusEmbed(view: ServerStatusView): DiscordEmbed {
   const dot = !view.up ? "🔴" : laggy ? "🟡" : "🟢"; // 🔴 🟡 🟢
   const title = `${dot} ${view.realm} — ${view.up ? (laggy ? "Online (laggy)" : "Online") : "Down"}`;
   const description = !view.up
-    ? `The realm looks unreachable. Onyxia buff tracking is paused until it's back.`
+    ? `The realm is not responding — it looks down.`
     : laggy
-      ? `The realm is up but responding slowly — a raid may lag.`
-      : `The realm is up and Onyxia buff tracking is live.`;
+      ? `The realm is online but responding slowly.`
+      : `The realm is online and responding normally.`;
 
   const fields: DiscordEmbed["fields"] = [
     { name: "Status", value: statusField(view), inline: true },
@@ -132,11 +132,13 @@ export interface StatusWidgetStore {
   save(state: StatusWidgetState): Promise<void>;
 }
 
-/** The channel name for a given up/down state — the status emoji prefixed to the base name. Pure.
- *  Only the leading 🟢/🔴 changes; laggy is deliberately NOT reflected here (it would flap the name
- *  against Discord's rename limit), so the name is coarse up/down and the embed carries the nuance. */
+/** The channel name for a given up/down state — the status emoji prefixed straight onto the base
+ *  name, with NO separator of our own (Discord inserts its own dash after the emoji, so adding one
+ *  here produced a double dash "🔴--server-status"). Pure. Only the leading 🟢/🔴 changes; laggy is
+ *  deliberately NOT reflected here (it would flap the name against Discord's rename limit), so the
+ *  name is coarse up/down and the embed carries the nuance. */
 export function statusChannelName(up: boolean, base: string): string {
-  return `${up ? "🟢" : "🔴"}-${base}`;
+  return `${up ? "🟢" : "🔴"}${base}`;
 }
 
 export interface ServerStatusWidgetDeps {

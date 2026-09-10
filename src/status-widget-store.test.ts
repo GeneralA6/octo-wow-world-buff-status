@@ -12,7 +12,7 @@ const sample: ServerStatusWidgetState = {
   messageId: "msg42",
   lastOutageEndedAt: 1_700_000_000_000,
   lastOutageDurationMs: 720_000,
-  channelName: "🟢-server-status",
+  channelName: "🟢server-status",
 };
 
 describe("InMemoryServerStatusWidgetStore", () => {
@@ -38,7 +38,7 @@ describe("state <-> document mapping", () => {
       messageId: "msg42",
       lastOutageEndedAt: 1_700_000_000_000,
       lastOutageDurationMs: 720_000,
-      channelName: "🟢-server-status",
+      channelName: "🟢server-status",
     });
     expect("_id" in doc).toBe(false);
     expect(docToState({ _id: "status", ...doc })).toEqual(sample);

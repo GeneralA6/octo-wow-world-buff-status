@@ -49,9 +49,9 @@ describe("humanSpan", () => {
 
 describe("statusChannelName", () => {
   it("prefixes 🟢 when up and 🔴 when down", () => {
-    expect(statusChannelName(true, "server-status")).toBe("🟢-server-status");
-    expect(statusChannelName(false, "server-status")).toBe("🔴-server-status");
-    expect(statusChannelName(true, "realm-status")).toBe("🟢-realm-status");
+    expect(statusChannelName(true, "server-status")).toBe("🟢server-status");
+    expect(statusChannelName(false, "server-status")).toBe("🔴server-status");
+    expect(statusChannelName(true, "realm-status")).toBe("🟢realm-status");
   });
 });
 
@@ -60,7 +60,7 @@ describe("buildServerStatusEmbed", () => {
     const embed = buildServerStatusEmbed(view());
     expect(embed.color).toBe(COLOR_UP);
     expect(embed.title).toBe("🟢 N'Zoth — Online");
-    expect(embed.description).toContain("live");
+    expect(embed.description).toContain("online");
     expect(fieldValue(embed, "Status")).toBe("Online, up 3h");
     expect(fieldValue(embed, "Realm response")).toBe("Responsive (~74 ms)");
     expect(fieldValue(embed, "Last outage")).toBe("None recorded");
@@ -86,7 +86,7 @@ describe("buildServerStatusEmbed", () => {
     const embed = buildServerStatusEmbed(view({ up: false, responsive: false, pingMs: null, stateSince: NOW - 12 * 60_000 }));
     expect(embed.color).toBe(COLOR_DOWN);
     expect(embed.title).toBe("🔴 N'Zoth — Down");
-    expect(embed.description).toContain("unreachable");
+    expect(embed.description).toContain("not responding");
     expect(fieldValue(embed, "Status")).toBe("Down, 12m");
     expect(fieldValue(embed, "Realm response")).toBeUndefined();
   });
@@ -297,8 +297,8 @@ describe("ServerStatusWidget", () => {
     await widget.refresh(); // same state — must NOT rename again
 
     expect(rename).toHaveBeenCalledOnce();
-    expect(rename).toHaveBeenCalledWith("🟢-server-status");
-    expect(store.saved.at(-1)?.channelName).toBe("🟢-server-status");
+    expect(rename).toHaveBeenCalledWith("🟢server-status");
+    expect(store.saved.at(-1)?.channelName).toBe("🟢server-status");
   });
 
   it("renames again when up/down flips", async () => {
@@ -319,7 +319,7 @@ describe("ServerStatusWidget", () => {
     await widget.refresh(); // 🔴
 
     expect(rename).toHaveBeenCalledTimes(2);
-    expect(rename).toHaveBeenLastCalledWith("🔴-server-status");
+    expect(rename).toHaveBeenLastCalledWith("🔴server-status");
   });
 
   it("does not persist the name on a failed rename, so it retries next time", async () => {
@@ -342,14 +342,14 @@ describe("ServerStatusWidget", () => {
     expect(store.saved.at(-1)?.channelName ?? null).toBeNull();
     await widget.refresh(); // retries, succeeds
     expect(rename).toHaveBeenCalledTimes(2);
-    expect(store.saved.at(-1)?.channelName).toBe("🟢-server-status");
+    expect(store.saved.at(-1)?.channelName).toBe("🟢server-status");
   });
 
   it("skips the rename when the persisted name already matches (no rename on redeploy)", async () => {
     const rename = vi.fn<(name: string) => Promise<DmResult>>().mockResolvedValue({ ok: true });
     const widget = new ServerStatusWidget({
       channel: okChannel(),
-      store: memoryStore({ messageId: "m1", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: "🟢-server-status" }),
+      store: memoryStore({ messageId: "m1", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: "🟢server-status" }),
       snapshot: () => liveSnapshot({ up: true }),
       renameChannel: rename,
       channelBaseName: "server-status",
