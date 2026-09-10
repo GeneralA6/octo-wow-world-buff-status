@@ -95,6 +95,12 @@ import { DownTracker } from "./down-tracker.js";
 import { ServerMonitor } from "./server-monitor.js";
 import { InMemoryServerMonitorStore, MongoServerMonitorStore, type ServerMonitorStore } from "./server-monitor-store.js";
 import { isRealmStable, medianLatency, type PingSample, type RealmHealthThresholds } from "./realm-health.js";
+import { ServerStatusWidget, type LiveRealmStatus, type StatusChannel } from "./status-widget.js";
+import {
+  InMemoryServerStatusWidgetStore,
+  MongoServerStatusWidgetStore,
+  type ServerStatusWidgetStore,
+} from "./status-widget-store.js";
 
 /** Client identity values that self-heal from the CDN across OctoWoW patches. */
 interface ClientValues {
@@ -980,6 +986,20 @@ async function main(): Promise<void> {
     }
   }
 
+  // The live server-status widget's durable state (message id + last outage) — persisted so a
+  // redeploy edits the existing widget instead of orphaning it. The widget itself is wired further
+  // down (it needs the monitor + ping samples); these are declared here so shutdown can release them.
+  let statusWidgetStore: ServerStatusWidgetStore = new InMemoryServerStatusWidgetStore();
+  if (config.mongodbUri) {
+    try {
+      statusWidgetStore = await MongoServerStatusWidgetStore.connect(config.mongodbUri, config.mongodbDb);
+    } catch (error) {
+      logger.error(`status widget: MongoDB connect failed (${describeError(error)}); the widget will repost after a restart`);
+    }
+  }
+  let statusWidget: ServerStatusWidget | null = null;
+  let statusRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
   const watchOptions: RaidTrackerOptions = {
     minRaidSize: config.minRaidSize,
     grouping: config.raidGrouping,
@@ -1326,6 +1346,7 @@ async function main(): Promise<void> {
     shutdownStarted = true;
     shuttingDown = true;
     logger.info(`shutting down (${signal})`);
+    if (statusRefreshTimer) clearInterval(statusRefreshTimer);
     // Exit even if a store.close() hangs, so we log out fast and don't overlap a redeploy.
     const hardExit = setTimeout(() => process.exit(0), 3_000);
     hardExit.unref?.();
@@ -1343,6 +1364,7 @@ async function main(): Promise<void> {
       raidCounterStore.close(),
       raidStateStore.close(),
       serverMonitorStore.close(),
+      statusWidgetStore.close(),
       chronicleStore ? chronicleStore.close() : Promise.resolve(),
     ]).finally(() => process.exit(0));
   };
@@ -1392,6 +1414,11 @@ async function main(): Promise<void> {
     if (realmRecoveryTimer) clearTimeout(realmRecoveryTimer);
     realmRecoveryTimer = null;
   };
+  // For the live status widget: when the bot began watching, and when the realm last came up. The
+  // widget shows "up N" from `realmUpSince` while up, and "down N" from the monitor's downSince while
+  // down; the two are updated at the same transitions the community posts fire on.
+  const watchingSince = Date.now();
+  let realmUpSince = Date.now();
   const announceRealmDown = async (id: string): Promise<void> => {
     const announce = serverMonitor.connectionDown(id, Date.now());
     if (serverMonitor.isFullyDown()) cancelRealmRecovery(); // flapped fully down again — drop the pending "back up"
@@ -1400,6 +1427,7 @@ async function main(): Promise<void> {
       // WOW_REALM_STATUS=false silences the community posts (the flapping-realm kill-switch) while
       // the state is still tracked, so toggling it back on stays consistent.
       if (config.realmStatusEnabled) await push(formatServerDown(config.realm));
+      void statusWidget?.refresh(); // flip the always-there widget to "down" (independent of the kill-switch)
     }
   };
   // Has the realm stayed connected AND settled to a healthy ping? If so post "back up" once; else
@@ -1421,11 +1449,16 @@ async function main(): Promise<void> {
     }
     if (serverMonitor.confirmRecovery()) {
       saveMonitor(); // outage closed — persist so a restart doesn't think it's still open
+      realmUpSince = now; // the realm is up as of this confirmed recovery
       if (config.realmStatusEnabled) {
         void push(formatServerUp(config.realm, outageMs)).catch((error) =>
           logger.error(`realm-up notify: ${describeError(error)}`),
         );
       }
+      // Record the finished outage on the widget (persists "last outage" + flips it back to up).
+      void statusWidget?.recordOutageEnd(now, outageMs).catch((error) =>
+        logger.error(`status widget outage-end: ${describeError(error)}`),
+      );
     }
   };
   const announceRealmUp = (id: string): void => {
@@ -1436,6 +1469,39 @@ async function main(): Promise<void> {
     realmRecoveryTimer = setTimeout(() => checkRecovery(outageMs), config.realmStableMs);
     realmRecoveryTimer.unref?.();
   };
+
+  // The always-there status widget: ONE message in #server-status, edited in place. Reads the same
+  // monitor + ping signals the community down/up posts use, but is a separate surface — the widget
+  // says "what is true now", the posts say "something just changed". Off unless the channel is set
+  // (and needs the bot token). The up/down transitions above refresh it immediately; this timer keeps
+  // "up N" / latency fresh between them.
+  const statusChannelId = config.discordServerStatusChannelId;
+  if (statusChannelId && dm.isConfigured) {
+    const channel: StatusChannel = {
+      create: (message) => dm.createChannelMessage(statusChannelId, message),
+      edit: (messageId, message) => dm.editChannelMessage(statusChannelId, messageId, message),
+    };
+    const snapshot = (): LiveRealmStatus => {
+      const now = Date.now();
+      const up = !serverMonitor.outageActive;
+      return {
+        realm: config.realm,
+        up,
+        pingMs: medianLatency(watcherPings, now, health.windowMs),
+        responsive: up && isRealmStable(watcherPings, now, health),
+        stateSince: up ? realmUpSince : serverMonitor.snapshot().downSince,
+        watchingSince,
+        now,
+      };
+    };
+    statusWidget = new ServerStatusWidget({ channel, store: statusWidgetStore, snapshot, logger: prefixed(logger, "status") });
+    await statusWidget.load();
+    void statusWidget.refresh(); // paint it once on boot; transitions + the timer keep it current
+    statusRefreshTimer = setInterval(() => void statusWidget?.refresh(), config.statusWidgetRefreshMs);
+    statusRefreshTimer.unref?.();
+  } else if (statusChannelId && !dm.isConfigured) {
+    logger.warn("DISCORD_SERVER_STATUS_CHANNEL_ID is set but no DISCORD_BOT_TOKEN — the status widget is off");
+  }
 
   const watcherLog = prefixed(logger, config.characterName);
   const runWatcher = async (): Promise<void> => {
