@@ -239,6 +239,12 @@ export class AuthClient {
       }
       const realms = parseRealmList(realmResponse.subarray(3));
       this.#logger.debug(`auth: ${realms.length} realm(s) returned`);
+      // Log the population float + character count the realm list carries (parseRealmList used to
+      // discard both). Their meaning is core-specific, so this is a measurement to read off the logs
+      // before deciding whether population is worth showing in the status widget — not yet a feature.
+      for (const realm of realms) {
+        this.#logger.info(`auth: realm "${realm.name}" population=${realm.population} characters=${realm.characters}`);
+      }
 
       return { sessionKey: proof.sessionKey, realms };
     } finally {

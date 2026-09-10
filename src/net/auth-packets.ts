@@ -123,6 +123,11 @@ export interface RealmEntry {
   readonly name: string;
   /** "host:port" as advertised by the realm list. */
   readonly address: string;
+  /** The raw population float the realm list carries. Its meaning is core-specific (often a
+   *  low/med/high bucket rather than a live count), so it is captured and logged, not yet shown. */
+  readonly population: number;
+  /** How many characters this account has on the realm. */
+  readonly characters: number;
 }
 
 /** Parse the realm-list payload (the bytes after the opcode + u16 size header). */
@@ -137,11 +142,11 @@ export function parseRealmList(payload: Buffer): RealmEntry[] {
     reader.u8(); // realm flags / colour
     const name = reader.cString();
     const address = reader.cString();
-    reader.f32LE(); // population
-    reader.u8(); // character count
+    const population = reader.f32LE();
+    const characters = reader.u8();
     reader.u8(); // timezone
     reader.u8(); // realm id
-    realms.push({ name, address });
+    realms.push({ name, address, population, characters });
   }
   return realms;
 }

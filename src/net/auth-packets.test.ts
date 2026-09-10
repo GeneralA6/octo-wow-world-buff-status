@@ -115,14 +115,14 @@ describe("parseRealmList", () => {
       .u8(0) // flags
       .cString("Turtle WoW")
       .cString("51.15.0.1:8085")
-      .u32LE(0) // population float bytes (0.0)
+      .f32LE(2) // population (raw float — captured, meaning is core-specific)
       .u8(40) // characters
       .u8(1) // timezone
       .u8(1) // realm id
       .toBuffer();
 
     expect(parseRealmList(payload)).toEqual([
-      { name: "Turtle WoW", address: "51.15.0.1:8085" },
+      { name: "Turtle WoW", address: "51.15.0.1:8085", population: 2, characters: 40 },
     ]);
   });
 });
