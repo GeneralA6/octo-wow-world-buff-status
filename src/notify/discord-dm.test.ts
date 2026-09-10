@@ -145,4 +145,26 @@ describe("DiscordDmSender", () => {
       expect(await throwing.editChannelMessage("chan9", "m", { content: "x" })).toEqual({ ok: false, kind: "error" });
     });
   });
+
+  describe("renameChannel", () => {
+    it("PATCHes the channel name", async () => {
+      const fetchImpl = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200));
+      const result = await new DiscordDmSender("tok", fetchImpl).renameChannel("chan9", "🟢-server-status");
+      expect(result).toEqual({ ok: true });
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toContain("/channels/chan9");
+      expect(url).not.toContain("/messages");
+      expect(init.method).toBe("PATCH");
+      expect(JSON.parse(init.body)).toEqual({ name: "🟢-server-status" });
+    });
+
+    it("surfaces a 429 rate-limit as an error with its status", async () => {
+      const sender = new DiscordDmSender("tok", () => Promise.resolve(res(false, 429)));
+      expect(await sender.renameChannel("chan9", "🔴-server-status")).toEqual({ ok: false, kind: "error", status: 429 });
+    });
+
+    it("reports not-configured without a token", async () => {
+      expect(await new DiscordDmSender(null).renameChannel("chan9", "x")).toEqual({ ok: false, kind: "not-configured" });
+    });
+  });
 });
