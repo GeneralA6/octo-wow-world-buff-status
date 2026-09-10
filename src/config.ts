@@ -183,6 +183,14 @@ export interface BotConfig {
   /** How often the live server-status widget re-renders (to keep uptime/latency fresh), in ms. The
    *  realm up/down transitions refresh it immediately; this is the idle cadence between them. */
   readonly statusWidgetRefreshMs: number;
+  /** Also reflect up/down in the #server-status channel's NAME (🟢/🔴 prefix), not just the embed —
+   *  a glance in the sidebar. Needs the bot to have Manage Channels there; the embed alone doesn't.
+   *  Off by default. Renamed only on a confirmed up/down transition, so it stays under Discord's
+   *  ~2-renames-per-10-min channel limit. */
+  readonly statusChannelRenameEnabled: boolean;
+  /** Base name the status channel is renamed around (the status emoji is prefixed): "server-status"
+   *  becomes "🟢-server-status" / "🔴-server-status". Only the leading emoji ever changes. */
+  readonly statusChannelName: string;
   /** Role pinged for alliance (Stormwind) notifications, and horde (Orgrimmar) notifications —
    *  a Discord-side opt-in, unrelated to any in-game character's chosen side. */
   readonly discordAllianceRoleId: string | null;
@@ -445,6 +453,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordTestsChannelId = env.DISCORD_TESTS_CHANNEL_ID?.trim() || null;
   const discordServerStatusChannelId = env.DISCORD_SERVER_STATUS_CHANNEL_ID?.trim() || null;
   const statusWidgetRefreshMs = intWithDefault("WOW_STATUS_REFRESH_SECONDS", 300, 30) * 1000;
+  const statusRenameRaw = env.WOW_STATUS_CHANNEL_RENAME?.trim().toLowerCase();
+  const statusChannelRenameEnabled = statusRenameRaw === "true" || statusRenameRaw === "1";
+  const statusChannelName = env.WOW_STATUS_CHANNEL_NAME?.trim() || "server-status";
   const discordAllianceRoleId = env.DISCORD_ALLIANCE_ROLE_ID?.trim() || null;
   const discordHordeRoleId = env.DISCORD_HORDE_ROLE_ID?.trim() || null;
   for (const [name, value] of [
@@ -542,6 +553,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordTestsChannelId,
     discordServerStatusChannelId,
     statusWidgetRefreshMs,
+    statusChannelRenameEnabled,
+    statusChannelName,
     discordAllianceRoleId,
     discordHordeRoleId,
     mongodbUri,

@@ -357,6 +357,8 @@ describe("loadConfig", () => {
     expect(bare.discordErrorsChannelId).toBeNull();
     expect(bare.discordServerStatusChannelId).toBeNull();
     expect(bare.statusWidgetRefreshMs).toBe(300_000);
+    expect(bare.statusChannelRenameEnabled).toBe(false);
+    expect(bare.statusChannelName).toBe("server-status");
     expect(bare.discordAllianceRoleId).toBeNull();
     expect(bare.discordHordeRoleId).toBeNull();
     expect(bare.guildInviteEnabled).toBe(false);
@@ -372,6 +374,8 @@ describe("loadConfig", () => {
       DISCORD_ERRORS_CHANNEL_ID: "1544243835771551794",
       DISCORD_SERVER_STATUS_CHANNEL_ID: "1547634262730088508",
       WOW_STATUS_REFRESH_SECONDS: "120",
+      WOW_STATUS_CHANNEL_RENAME: "true",
+      WOW_STATUS_CHANNEL_NAME: "realm-status",
       DISCORD_ALLIANCE_ROLE_ID: "111",
       DISCORD_HORDE_ROLE_ID: "222",
     });
@@ -384,6 +388,8 @@ describe("loadConfig", () => {
     expect(configured.discordErrorsChannelId).toBe("1544243835771551794");
     expect(configured.discordServerStatusChannelId).toBe("1547634262730088508");
     expect(configured.statusWidgetRefreshMs).toBe(120_000);
+    expect(configured.statusChannelRenameEnabled).toBe(true);
+    expect(configured.statusChannelName).toBe("realm-status");
     expect(configured.discordAllianceRoleId).toBe("111");
     expect(configured.discordHordeRoleId).toBe("222");
     expect(configured.guildInviteEnabled).toBe(true);
