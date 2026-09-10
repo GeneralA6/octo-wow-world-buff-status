@@ -62,3 +62,11 @@ export function medianLatency(samples: readonly PingSample[], now: number, windo
   if (recent.length === 0) return null;
   return recent[Math.floor(recent.length / 2)] ?? null;
 }
+
+/** The spread (max - min) of the RTTs in the window, or null if none — a jitter measure for the
+ *  status widget's "steady vs fluctuating" verdict. */
+export function latencySpread(samples: readonly PingSample[], now: number, windowMs: number): number | null {
+  const recent = samples.filter((s) => now - s.at <= windowMs).map((s) => s.ms);
+  if (recent.length === 0) return null;
+  return Math.max(...recent) - Math.min(...recent);
+}
