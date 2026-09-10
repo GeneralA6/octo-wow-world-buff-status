@@ -334,3 +334,79 @@ describe("ClearTracker pending() / confirmNow() — Chronicle early-confirm", ()
     expect(t.tracking).toBe(true); // and it did not disturb the tracked raid
   });
 });
+
+describe("ClearTracker formation confirm window (formConfirmMs)", () => {
+  const opts = { formAt: 15, sustainedMs: 5 * MIN, formConfirmMs: 5 * MIN };
+
+  it("does not announce until the roster has held >= floor for the confirm window", () => {
+    const t = tracker(opts);
+    expect(t.observe(R(20), 0, false).formed).toBeNull(); // reached strength, not yet confirmed
+    expect(t.observe(R(20), 2 * MIN, false).formed).toBeNull(); // still holding, 2m < 5m
+    const formed = t.observe(R(20), 5 * MIN, false).formed; // 5m held → announce
+    expect(formed).not.toBeNull();
+    expect(formed?.peak).toBe(20);
+  });
+
+  it("keeps a forming raid out of status/persistence until it confirms", () => {
+    const t = tracker(opts);
+    t.observe(R(20), 0, false);
+    expect(t.elapsedMs(2 * MIN)).toBeNull(); // not "in" yet
+    expect(t.snapshot()).toBeNull(); // a restart mid-forming restarts the count, so nothing to persist
+    expect(t.pending()).toBeNull();
+    t.observe(R(20), 5 * MIN, false); // confirm
+    expect(t.elapsedMs(6 * MIN)).toBe(6 * MIN); // counts from strength (t=0), not from confirmation
+    expect(t.snapshot()).not.toBeNull();
+  });
+
+  it("RESETS the count when the roster drops below the floor and returns (left and re-entered)", () => {
+    const t = tracker(opts);
+    t.observe(R(20), 0, false);
+    t.observe(R(20), 3 * MIN, false); // 3m held
+    t.observe(R(5), 4 * MIN, false); // below floor — "left"
+    t.observe(R(20), 5 * MIN, false); // back — the count restarts here
+    expect(t.observe(R(20), 9 * MIN, false).formed).toBeNull(); // only 4m since the restart
+    expect(t.observe(R(20), 10 * MIN, false).formed).not.toBeNull(); // 5m since the restart → announce
+  });
+
+  it("RESETS the count on a disconnect, resuming when the members return", () => {
+    const t = tracker(opts);
+    t.observe(R(20), 0, false);
+    t.observe(R(20), 3 * MIN, false); // 3m held
+    t.observe(R(20), 4 * MIN, true); // BLACKOUT, members still present → resume, count restarts
+    expect(t.observe(R(20), 8 * MIN, false).formed).toBeNull(); // only 4m since the reconnect
+    expect(t.observe(R(20), 9 * MIN, false).formed).not.toBeNull(); // 5m since the reconnect → announce
+  });
+
+  it("discards a flash that leaves before confirming — and it consumes no raid number", () => {
+    let n = 40;
+    const t = tracker({ ...opts, nextNumber: () => ++n });
+    t.observe(R(20), 0, false); // strength, forming
+    t.observe(R(0), 1 * MIN, false);
+    t.observe(R(0), 6 * MIN, false); // sustained gone → discarded as a flash, no formation announced
+    expect(t.tracking).toBe(false);
+    // The next REAL raid is #41 — the flash never took a number (numbers are assigned at confirm).
+    t.observe(C(20), 20 * MIN, false);
+    expect(t.observe(C(20), 25 * MIN, false).formed?.number).toBe(41);
+  });
+
+  it("discards a forming raid if the realm comes back empty after a disconnect", () => {
+    const t = tracker(opts);
+    t.observe(R(20), 0, false);
+    expect(t.observe(R(0), 4 * MIN, true).formed).toBeNull(); // blackout, empty on recovery → discard
+    expect(t.tracking).toBe(false);
+  });
+
+  it("a truncated /who undercount neither confirms early nor resets the count (untrusted)", () => {
+    const t = tracker(opts);
+    t.observe(R(20), 0, false); // strength
+    t.observe(R(2), 3 * MIN, false, false); // below floor BUT incomplete → held, count not reset
+    expect(t.observe(R(20), 5 * MIN, false).formed).not.toBeNull(); // 5m since strength → confirm
+  });
+
+  it("confirms on a continuous hold even across ordinary churn above the floor", () => {
+    const t = tracker(opts);
+    t.observe(R(20), 0, false);
+    t.observe(R(16), 2 * MIN, false); // dipped to 16 — above the 15 floor, not a reset
+    expect(t.observe(R(20), 5 * MIN, false).formed).not.toBeNull(); // still a 5m continuous hold
+  });
+});

@@ -34,6 +34,12 @@ export interface ClearTrackerOptions {
   readonly clearFloor?: number;
   /** Roster members must stay below `clearFloor` this long to confirm a clear (not a wipe). */
   readonly sustainedMs: number;
+  /** After reaching strength, the roster must hold at/above `clearFloor` CONTINUOUSLY for this long
+   *  before the formation is announced — so a group that assembles and leaves without committing does
+   *  not fire a "raid forming" alert. A disconnect (blackout) or a drop below the floor and back
+   *  (players left and re-entered) RESETS the count. Default 0 = announce the instant strength is
+   *  reached (the original behaviour). */
+  readonly formConfirmMs?: number;
   /** A newcomer joins the tracked raid only if they first appeared within this long of formation.
    *  Measured raid assembly is median 2 min / p90 5 min. Default 5 min. */
   readonly fillWindowMs?: number;
@@ -107,6 +113,7 @@ export class ClearTracker {
   readonly #fillWindowMs: number;
   readonly #rosterCap: number;
   readonly #stintGapMs: number;
+  readonly #confirmMs: number;
   readonly #nextNumber?: () => number;
 
   #formedAt: number | null = null;
@@ -114,6 +121,8 @@ export class ClearTracker {
   #roster = new Set<string>(); // this raid's members — the arrival cohort, capped, not everyone present
   #peak = 0;
   #belowSince: number | null = null; // when the roster's presence first fell below strength
+  #confirmed = false; // the forming raid has held long enough to announce (see #confirmMs)
+  #stableSince: number | null = null; // start of the current uninterrupted >= floor stretch, while forming
   // Lair-wide arrival tracking, used to decide who belongs to the current raid. Persists across
   // raids (a clear resets the raid, not this); only a blackout clears it.
   #firstSeen = new Map<string, number>();
@@ -126,6 +135,7 @@ export class ClearTracker {
     this.#fillWindowMs = options.fillWindowMs ?? DEFAULT_FILL_WINDOW_MS;
     this.#rosterCap = options.rosterCap ?? DEFAULT_ROSTER_CAP;
     this.#stintGapMs = options.stintGapMs ?? Math.max(8 * 60_000, options.sustainedMs * 2);
+    this.#confirmMs = options.formConfirmMs ?? 0;
     this.#nextNumber = options.nextNumber;
   }
 
@@ -139,9 +149,10 @@ export class ClearTracker {
     return this.#number;
   }
 
-  /** A snapshot of the raid in progress for persistence, or null if none is being tracked. */
+  /** A snapshot of the raid in progress for persistence, or null. Only a CONFIRMED raid is persisted:
+   *  a restart is itself a disconnect, so a still-forming raid restarts its confirm count after it. */
   snapshot(): ClearTrackerState | null {
-    if (this.#formedAt === null) return null;
+    if (this.#formedAt === null || !this.#confirmed) return null;
     return {
       formedAt: this.#formedAt,
       number: this.#number,
@@ -160,11 +171,13 @@ export class ClearTracker {
     this.#roster = new Set(state.roster);
     this.#peak = state.peak;
     this.#belowSince = state.belowSince;
+    this.#confirmed = true; // only confirmed raids are ever snapshotted
   }
 
-  /** How long the tracked raid has been in (form → now, spanning wipes), or null if none. */
+  /** How long the tracked raid has been in (form → now, spanning wipes), or null if none — or if the
+   *  raid is still forming (not yet confirmed), so a forming raid never appears in the status/heads-up. */
   elapsedMs(now: number): number | null {
-    return this.#formedAt === null ? null : now - this.#formedAt;
+    return this.#formedAt === null || !this.#confirmed ? null : now - this.#formedAt;
   }
 
   /**
@@ -173,7 +186,7 @@ export class ClearTracker {
    * null — so it only ever reports a departure that is genuinely still waiting.
    */
   pending(): PendingDeparture | null {
-    if (this.#formedAt === null || this.#belowSince === null) return null;
+    if (this.#formedAt === null || !this.#confirmed || this.#belowSince === null) return null;
     return {
       roster: [...this.#roster],
       number: this.#number,
@@ -190,7 +203,7 @@ export class ClearTracker {
    * Null if no departure is pending: it can never manufacture a clear on its own.
    */
   confirmNow(): ConfirmedClear | null {
-    if (this.#formedAt === null || this.#belowSince === null) return null;
+    if (this.#formedAt === null || !this.#confirmed || this.#belowSince === null) return null;
     const clear: ConfirmedClear = {
       durationMs: this.#belowSince - this.#formedAt,
       peak: this.#peak,
@@ -224,7 +237,8 @@ export class ClearTracker {
         let cohort = 0;
         for (const name of names) if (this.#roster.has(name)) cohort += 1;
         if (cohort >= this.#clearFloor) {
-          this.#belowSince = null; // same raid survived the gap — keep its number, roster and clock
+          if (this.#confirmed) this.#belowSince = null; // confirmed raid survived the gap — keep its clock
+          else this.#stableSince = now; // a disconnect interrupts a forming raid — restart the confirm count
           return { clear: null, formed: null };
         }
         this.#reset(); // the raid we were tracking is gone across the gap
@@ -237,11 +251,12 @@ export class ClearTracker {
     if (this.#formedAt === null) {
       if (names.length >= this.#formAt) {
         this.#formedAt = now;
-        this.#number = this.#nextNumber?.() ?? null;
         this.#roster = new Set(names.slice(0, this.#rosterCap));
         this.#peak = this.#roster.size;
         this.#belowSince = null;
-        return { clear: null, formed: { number: this.#number, peak: this.#peak } };
+        this.#stableSince = now;
+        this.#confirmed = false;
+        return this.#tryConfirm(now); // confirmMs 0 → announce immediately (the original behaviour)
       }
       return { clear: null, formed: null };
     }
@@ -259,6 +274,24 @@ export class ClearTracker {
     // How many of THIS raid's members are visible now (ambient/new arrivals don't count).
     let cohort = 0;
     for (const name of names) if (this.#roster.has(name)) cohort += 1;
+
+    if (!this.#confirmed) {
+      // FORMING: the raid reached strength but has not yet held >= floor for `confirmMs`. A drop
+      // below the floor and back (players left and returned) restarts the count; a disconnect does
+      // too (handled in the blackout branch). Only a genuinely stable, uninterrupted hold announces.
+      if (cohort >= this.#clearFloor) {
+        if (cohort > this.#peak) this.#peak = cohort;
+        if (this.#belowSince !== null) {
+          this.#stableSince = now; // recovered from a dip — the raid "left and came back", restart the count
+          this.#belowSince = null;
+        }
+        return this.#tryConfirm(now);
+      }
+      if (!complete) return { clear: null, formed: null }; // truncated /who — an untrusted undercount, hold
+      if (this.#belowSince === null) this.#belowSince = now; // dipped below the floor while forming
+      if (now - this.#belowSince >= this.#sustainedMs) this.#reset(); // gone before it ever committed — a flash
+      return { clear: null, formed: null };
+    }
 
     if (cohort >= this.#clearFloor) {
       // Up, or recovered from a wipe (the same members are back). Trusted even on an incomplete
@@ -291,6 +324,19 @@ export class ClearTracker {
     return { clear: null, formed: null }; // still within the window — the roster could yet run back (a wipe)
   }
 
+  /** Announce the formation once the roster has held >= floor for `confirmMs` since `#stableSince`
+   *  (immediately when that is 0). The raid's number is assigned HERE, at confirmation, so a flash
+   *  that never confirms consumes no number. */
+  #tryConfirm(now: number): ClearObservation {
+    if (this.#stableSince === null || now - this.#stableSince < this.#confirmMs) {
+      return { clear: null, formed: null };
+    }
+    this.#confirmed = true;
+    this.#number = this.#nextNumber?.() ?? null;
+    this.#belowSince = null;
+    return { clear: null, formed: { number: this.#number, peak: this.#peak } };
+  }
+
   /** Record when each present player was first seen (their arrival), resetting anyone who
    *  returns after an absence longer than a stint gap, and pruning players long gone. */
   #trackArrivals(names: readonly string[], now: number): void {
@@ -315,5 +361,7 @@ export class ClearTracker {
     this.#roster = new Set();
     this.#peak = 0;
     this.#belowSince = null;
+    this.#confirmed = false;
+    this.#stableSince = null;
   }
 }

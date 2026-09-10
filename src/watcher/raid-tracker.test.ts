@@ -164,3 +164,14 @@ describe("RaidTracker — Chronicle early-confirm + persistence", () => {
     expect(events[0]).toMatchObject({ durationMs: 3 * M }); // 0 → 3M, spanning the restart
   });
 });
+
+describe("RaidTracker — formation confirm window wiring", () => {
+  it("holds the 'formed' event until the roster has stayed for formConfirmMs", () => {
+    const t = tracker({ formConfirmMs: 2 * M });
+    expect(t.observe(view(raid(20, "Nightfall"), 0)).events).toEqual([]); // at strength, forming
+    expect(t.observe(view(raid(20, "Nightfall"), 1 * M)).events).toEqual([]); // 1m < 2m
+    const events = t.observe(view(raid(20, "Nightfall"), 2 * M)).events; // 2m held → formed
+    expect(kinds(events)).toEqual(["formed"]);
+    expect(t.raidElapsedMs(2 * M)).toBe(2 * M); // now in progress, timed from strength
+  });
+});

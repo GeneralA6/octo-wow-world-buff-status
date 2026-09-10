@@ -987,6 +987,7 @@ async function main(): Promise<void> {
     strengthSize: config.raidStrengthSize,
     leftFloor: config.raidLeftFloor,
     clearSustainedMs: config.raidClearSustainedMs,
+    formConfirmMs: config.raidFormConfirmMs,
     fillWindowMs: config.raidFillWindowMs,
     rosterCap: config.raidRosterCap,
     nextRaidNumber,

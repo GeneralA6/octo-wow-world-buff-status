@@ -38,6 +38,9 @@ export interface RaidTrackerOptions {
   readonly leftFloor?: number;
   /** How long the roster must stay gone for a departure to count as a real clear (not a wipe). */
   readonly clearSustainedMs: number;
+  /** How long the roster must hold at strength (uninterrupted) before the "formed" event fires —
+   *  0 (default) fires the instant strength is reached. See ClearTracker.formConfirmMs. */
+  readonly formConfirmMs?: number;
   /** A newcomer joins the tracked raid only if they first appeared within this long of formation. */
   readonly fillWindowMs?: number;
   /** The tracked roster never grows past this — a backstop against absorbing a second raid. */
@@ -84,6 +87,7 @@ export class RaidTracker {
       formAt: options.strengthSize ?? options.minRaidSize,
       clearFloor: options.leftFloor ?? options.minRaidSize,
       sustainedMs: options.clearSustainedMs,
+      formConfirmMs: options.formConfirmMs,
       fillWindowMs: options.fillWindowMs,
       rosterCap: options.rosterCap,
       nextNumber: options.nextRaidNumber,

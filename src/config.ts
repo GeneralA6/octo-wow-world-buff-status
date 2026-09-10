@@ -104,6 +104,10 @@ export interface BotConfig {
   /** How long the raid's roster must stay gone to count a departure as a real clear rather
    *  than a wipe (they run back). ~4 min — enough time to corpse-run back to the instance. */
   readonly raidClearSustainedMs: number;
+  /** After reaching strength, the roster must hold continuously for this long before the "raid
+   *  forming" alert fires — filters a group that assembles and leaves without committing. A
+   *  disconnect or a drop below the floor and back resets the count. Default 0 = fire immediately. */
+  readonly raidFormConfirmMs: number;
   /** How often the buff-status board is yelled in each capital (default 10 min). */
   readonly statusYellMs: number;
   /** A time-sensitive whisper still queued past this is dropped unsent (default 5 min), so a
@@ -374,6 +378,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidDisbandMs = intWithDefault("WOW_RAID_DISBAND_MINUTES", 20, 1) * 60_000;
   const raidFreshWindowMs = intWithDefault("WOW_DROP_FRESH_WINDOW_MINUTES", 40, 1) * 60_000;
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
+  const raidFormConfirmMs = intWithDefault("WOW_RAID_FORM_CONFIRM_MINUTES", 0, 0) * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
   // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
@@ -501,6 +506,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidDisbandMs,
     raidFreshWindowMs,
     raidClearSustainedMs,
+    raidFormConfirmMs,
     statusYellMs,
     whisperMaxAgeMs,
     realmStableMs,
