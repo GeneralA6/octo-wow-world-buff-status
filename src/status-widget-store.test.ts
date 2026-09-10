@@ -13,6 +13,9 @@ const sample: ServerStatusWidgetState = {
   lastOutageEndedAt: 1_700_000_000_000,
   lastOutageDurationMs: 720_000,
   channelName: "🟢server-status",
+  baselineEmaMs: 182.5,
+  baselineSamples: 40,
+  baselineUpdatedAt: 1_700_000_500_000,
 };
 
 describe("InMemoryServerStatusWidgetStore", () => {
@@ -39,6 +42,9 @@ describe("state <-> document mapping", () => {
       lastOutageEndedAt: 1_700_000_000_000,
       lastOutageDurationMs: 720_000,
       channelName: "🟢server-status",
+      baselineEmaMs: 182.5,
+      baselineSamples: 40,
+      baselineUpdatedAt: 1_700_000_500_000,
     });
     expect("_id" in doc).toBe(false);
     expect(docToState({ _id: "status", ...doc })).toEqual(sample);
@@ -50,14 +56,22 @@ describe("state <-> document mapping", () => {
       lastOutageEndedAt: null,
       lastOutageDurationMs: null,
       channelName: null,
+      baselineEmaMs: null,
+      baselineSamples: 0,
+      baselineUpdatedAt: null,
     };
     expect(docToState({ _id: "status", ...stateToDoc(fresh) })).toEqual(fresh);
   });
 
-  it("reads a legacy document that predates channelName as null", () => {
-    // channelName is optional on the stored doc, so a pre-rename document is valid input.
+  it("reads a legacy document that predates channelName and the baseline, defaulting them", () => {
+    // channelName and the baseline fields are optional on the stored doc, so a pre-feature document
+    // is valid input and loads with those defaulted rather than throwing.
     const legacy = { _id: "status", messageId: "m", lastOutageEndedAt: null, lastOutageDurationMs: null };
-    expect(docToState(legacy).channelName).toBeNull();
+    const restored = docToState(legacy);
+    expect(restored.channelName).toBeNull();
+    expect(restored.baselineEmaMs).toBeNull();
+    expect(restored.baselineSamples).toBe(0);
+    expect(restored.baselineUpdatedAt).toBeNull();
   });
 });
 

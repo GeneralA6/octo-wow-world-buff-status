@@ -12,6 +12,7 @@ import {
   type LiveRealmStatus,
   type ServerStatusView,
   type StatusChannel,
+  type StatusWidgetState,
   type StatusWidgetStore,
 } from "./status-widget.js";
 
@@ -21,8 +22,7 @@ function view(overrides: Partial<ServerStatusView> = {}): ServerStatusView {
   return {
     realm: "N'Zoth",
     up: true,
-    pingMs: 74,
-    responsive: true,
+    response: "steady",
     stateSince: NOW - 3 * 60 * 60_000, // up 3h
     watchingSince: NOW - 2 * 24 * 60 * 60_000, // watching 2d
     now: NOW,
@@ -48,7 +48,7 @@ describe("humanSpan", () => {
 });
 
 describe("statusChannelName", () => {
-  it("prefixes 🟢 when up and 🔴 when down", () => {
+  it("prefixes 🟢 when up and 🔴 when down, with no separator of its own", () => {
     expect(statusChannelName(true, "server-status")).toBe("🟢server-status");
     expect(statusChannelName(false, "server-status")).toBe("🔴server-status");
     expect(statusChannelName(true, "realm-status")).toBe("🟢realm-status");
@@ -56,34 +56,44 @@ describe("statusChannelName", () => {
 });
 
 describe("buildServerStatusEmbed", () => {
-  it("renders an online, responsive realm green", () => {
-    const embed = buildServerStatusEmbed(view());
+  it("renders a steady realm green and never shows a millisecond number", () => {
+    const embed = buildServerStatusEmbed(view({ response: "steady" }));
     expect(embed.color).toBe(COLOR_UP);
     expect(embed.title).toBe("🟢 N'Zoth — Online");
-    expect(embed.description).toContain("online");
+    expect(embed.description).toContain("responding normally");
     expect(fieldValue(embed, "Status")).toBe("Online, up 3h");
-    expect(fieldValue(embed, "Realm response")).toBe("Responsive (~74 ms)");
+    expect(fieldValue(embed, "Realm response")).toBe("Stable");
     expect(fieldValue(embed, "Last outage")).toBe("None recorded");
     expect(embed.footer?.text).toBe("Watching for 2d");
     expect(embed.timestamp).toBe(new Date(NOW).toISOString());
+    expect(JSON.stringify(embed)).not.toMatch(/\d+\s*ms/i); // no "186 ms" anywhere
   });
 
-  it("renders an up-but-slow realm amber and labels it laggy", () => {
-    const embed = buildServerStatusEmbed(view({ responsive: false, pingMs: 260 }));
+  it("renders an elevated realm amber", () => {
+    const embed = buildServerStatusEmbed(view({ response: "elevated" }));
     expect(embed.color).toBe(COLOR_LAGGY);
-    expect(embed.title).toBe("🟡 N'Zoth — Online (laggy)");
-    expect(fieldValue(embed, "Realm response")).toBe("Laggy (~260 ms)");
+    expect(embed.title).toBe("🟡 N'Zoth — Online (elevated ping)");
+    expect(embed.description).toContain("higher than usual");
+    expect(fieldValue(embed, "Realm response")).toBe("Elevated — higher than usual");
   });
 
-  it("stays green while pings haven't landed yet (checking, not laggy)", () => {
-    const embed = buildServerStatusEmbed(view({ responsive: false, pingMs: null }));
+  it("renders an unstable realm amber", () => {
+    const embed = buildServerStatusEmbed(view({ response: "unstable" }));
+    expect(embed.color).toBe(COLOR_LAGGY);
+    expect(embed.title).toBe("🟡 N'Zoth — Online (unstable ping)");
+    expect(embed.description).toContain("fluctuating");
+    expect(fieldValue(embed, "Realm response")).toBe("Unstable — fluctuating");
+  });
+
+  it("stays green and says 'Checking…' before the baseline warms up", () => {
+    const embed = buildServerStatusEmbed(view({ response: "unknown" }));
     expect(embed.color).toBe(COLOR_UP);
     expect(embed.title).toBe("🟢 N'Zoth — Online");
     expect(fieldValue(embed, "Realm response")).toBe("Checking…");
   });
 
   it("renders a down realm red, with no realm-response field", () => {
-    const embed = buildServerStatusEmbed(view({ up: false, responsive: false, pingMs: null, stateSince: NOW - 12 * 60_000 }));
+    const embed = buildServerStatusEmbed(view({ up: false, response: "unknown", stateSince: NOW - 12 * 60_000 }));
     expect(embed.color).toBe(COLOR_DOWN);
     expect(embed.title).toBe("🔴 N'Zoth — Down");
     expect(embed.description).toContain("not responding");
@@ -108,8 +118,8 @@ function liveSnapshot(overrides: Partial<LiveRealmStatus> = {}): LiveRealmStatus
   return {
     realm: "N'Zoth",
     up: true,
-    pingMs: 74,
-    responsive: true,
+    pingMedianMs: 74,
+    pingSpreadMs: 12,
     stateSince: NOW - 3 * 60 * 60_000,
     watchingSince: NOW - 2 * 24 * 60 * 60_000,
     now: NOW,
@@ -117,18 +127,29 @@ function liveSnapshot(overrides: Partial<LiveRealmStatus> = {}): LiveRealmStatus
   };
 }
 
-function memoryStore(initial: Awaited<ReturnType<StatusWidgetStore["load"]>> = null): StatusWidgetStore & {
-  saved: Array<Awaited<ReturnType<StatusWidgetStore["load"]>>>;
-} {
-  let state = initial;
-  const saved: Array<Awaited<ReturnType<StatusWidgetStore["load"]>>> = [];
+function state(overrides: Partial<StatusWidgetState> = {}): StatusWidgetState {
+  return {
+    messageId: null,
+    lastOutageEndedAt: null,
+    lastOutageDurationMs: null,
+    channelName: null,
+    baselineEmaMs: null,
+    baselineSamples: 0,
+    baselineUpdatedAt: null,
+    ...overrides,
+  };
+}
+
+function memoryStore(initial: StatusWidgetState | null = null): StatusWidgetStore & { saved: StatusWidgetState[] } {
+  let current = initial;
+  const saved: StatusWidgetState[] = [];
   return {
     saved,
     async load() {
-      return state;
+      return current;
     },
     async save(next) {
-      state = next;
+      current = next;
       saved.push(next);
     },
   };
@@ -179,7 +200,7 @@ describe("ServerStatusWidget", () => {
     };
     const w1 = new ServerStatusWidget({
       channel: on404,
-      store: memoryStore({ messageId: "old", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: null }),
+      store: memoryStore(state({ messageId: "old" })),
       snapshot: () => liveSnapshot(),
       logger: silentLogger,
     });
@@ -194,7 +215,7 @@ describe("ServerStatusWidget", () => {
     };
     const w2 = new ServerStatusWidget({
       channel: on403,
-      store: memoryStore({ messageId: "old", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: null }),
+      store: memoryStore(state({ messageId: "old" })),
       snapshot: () => liveSnapshot(),
       logger: spyLogger(),
     });
@@ -213,18 +234,13 @@ describe("ServerStatusWidget", () => {
         return { ok: true };
       }),
     };
-    const store = memoryStore({ messageId: "m1", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: null });
+    const store = memoryStore(state({ messageId: "m1" }));
     const widget = new ServerStatusWidget({ channel, store, snapshot: () => liveSnapshot(), logger: silentLogger });
 
     await widget.load();
     await widget.recordOutageEnd(NOW, 12 * 60_000);
 
-    expect(store.saved.at(-1)).toEqual({
-      messageId: "m1",
-      lastOutageEndedAt: NOW,
-      lastOutageDurationMs: 12 * 60_000,
-      channelName: null,
-    });
+    expect(store.saved.at(-1)).toMatchObject({ messageId: "m1", lastOutageEndedAt: NOW, lastOutageDurationMs: 12 * 60_000 });
     const outageField = edited.at(-1)?.embeds?.[0]?.fields?.find((f) => f.name === "Last outage");
     expect(outageField?.value).toContain("lasted 12m");
   });
@@ -236,7 +252,7 @@ describe("ServerStatusWidget", () => {
     };
     const widget = new ServerStatusWidget({
       channel,
-      store: memoryStore({ messageId: "kept", lastOutageEndedAt: NOW - 60 * 60_000, lastOutageDurationMs: 5 * 60_000, channelName: null }),
+      store: memoryStore(state({ messageId: "kept", lastOutageEndedAt: NOW - 60 * 60_000, lastOutageDurationMs: 5 * 60_000 })),
       snapshot: () => liveSnapshot(),
       logger: silentLogger,
     });
@@ -249,8 +265,6 @@ describe("ServerStatusWidget", () => {
   });
 
   it("serialises concurrent refreshes into a single post", async () => {
-    // A single controlled promise the first create blocks on — its resolver is set synchronously
-    // during construction, so we can release it whenever, before or after create is invoked.
     let resolveCreate: (r: CreateResult) => void = () => {};
     const createPromise = new Promise<CreateResult>((resolve) => {
       resolveCreate = resolve;
@@ -267,8 +281,58 @@ describe("ServerStatusWidget", () => {
     resolveCreate({ ok: true, messageId: "m1" });
     await Promise.all([first, second]);
 
-    expect(channel.create).toHaveBeenCalledOnce(); // the second refresh edited m1 instead of creating
+    expect(channel.create).toHaveBeenCalledOnce();
     expect(channel.edit).toHaveBeenCalledWith("m1", expect.anything());
+  });
+
+  // --- ping baseline / verdict ---
+
+  it("classifies as unknown while the baseline is cold, then a verdict once warmed", async () => {
+    const seen: string[] = [];
+    const channel: StatusChannel = {
+      create: vi.fn<StatusChannel["create"]>().mockResolvedValue({ ok: true, messageId: "m1" }),
+      edit: vi.fn<StatusChannel["edit"]>().mockImplementation(async (_id, message) => {
+        const field = message.embeds?.[0]?.fields?.find((f) => f.name === "Realm response");
+        if (field) seen.push(field.value);
+        return { ok: true };
+      }),
+    };
+    // Each refresh is 1h apart so the baseline (~1 day tau) accumulates folds without racing.
+    let clock = NOW;
+    const widget = new ServerStatusWidget({
+      channel,
+      store: memoryStore(),
+      snapshot: () => liveSnapshot({ pingMedianMs: 80, pingSpreadMs: 15, now: clock }),
+      logger: silentLogger,
+    });
+
+    await widget.load();
+    await widget.refresh(); // create — verdict "unknown" (no folds yet)
+    for (let i = 0; i < 6; i += 1) {
+      clock += 60 * 60_000;
+      await widget.refresh();
+    }
+
+    // The default warm-up is 5 samples, so early renders say "Checking…" and later ones say "Stable".
+    expect(seen[0]).toBe("Checking…");
+    expect(seen.at(-1)).toBe("Stable");
+  });
+
+  it("persists the ping baseline so it survives a restart", async () => {
+    const channel: StatusChannel = {
+      create: vi.fn<StatusChannel["create"]>().mockResolvedValue({ ok: true, messageId: "m1" }),
+      edit: vi.fn<StatusChannel["edit"]>().mockResolvedValue({ ok: true }),
+    };
+    const store = memoryStore();
+    const widget = new ServerStatusWidget({ channel, store, snapshot: () => liveSnapshot({ pingMedianMs: 90 }), logger: silentLogger });
+
+    await widget.load();
+    await widget.refresh();
+
+    const saved = store.saved.at(-1);
+    expect(saved?.baselineEmaMs).toBe(90); // first fold seeds the baseline
+    expect(saved?.baselineSamples).toBe(1);
+    expect(saved?.baselineUpdatedAt).toBe(NOW);
   });
 
   // --- channel-name rename indicator ---
@@ -349,7 +413,7 @@ describe("ServerStatusWidget", () => {
     const rename = vi.fn<(name: string) => Promise<DmResult>>().mockResolvedValue({ ok: true });
     const widget = new ServerStatusWidget({
       channel: okChannel(),
-      store: memoryStore({ messageId: "m1", lastOutageEndedAt: null, lastOutageDurationMs: null, channelName: "🟢server-status" }),
+      store: memoryStore(state({ messageId: "m1", channelName: "🟢server-status" })),
       snapshot: () => liveSnapshot({ up: true }),
       renameChannel: rename,
       channelBaseName: "server-status",

@@ -94,7 +94,7 @@ import { jitter } from "./schedule.js";
 import { DownTracker } from "./down-tracker.js";
 import { ServerMonitor } from "./server-monitor.js";
 import { InMemoryServerMonitorStore, MongoServerMonitorStore, type ServerMonitorStore } from "./server-monitor-store.js";
-import { isRealmStable, medianLatency, type PingSample, type RealmHealthThresholds } from "./realm-health.js";
+import { isRealmStable, latencySpread, medianLatency, type PingSample, type RealmHealthThresholds } from "./realm-health.js";
 import { ServerStatusWidget, type LiveRealmStatus, type StatusChannel } from "./status-widget.js";
 import {
   InMemoryServerStatusWidgetStore,
@@ -1487,8 +1487,8 @@ async function main(): Promise<void> {
       return {
         realm: config.realm,
         up,
-        pingMs: medianLatency(watcherPings, now, health.windowMs),
-        responsive: up && isRealmStable(watcherPings, now, health),
+        pingMedianMs: medianLatency(watcherPings, now, health.windowMs),
+        pingSpreadMs: latencySpread(watcherPings, now, health.windowMs),
         stateSince: up ? realmUpSince : serverMonitor.snapshot().downSince,
         watchingSince,
         now,

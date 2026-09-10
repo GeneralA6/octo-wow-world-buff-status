@@ -21,6 +21,11 @@ export interface ServerStatusWidgetState {
   /** The channel name last applied by the rename indicator, or null if rename is off / never set.
    *  Persisted so a redeploy doesn't re-rename to a name the channel already has. */
   readonly channelName: string | null;
+  /** The realm-response baseline (flattened): the time-decayed average ping, how many samples have
+   *  been folded, and when it was last folded. Persisted so the ~day baseline survives redeploys. */
+  readonly baselineEmaMs: number | null;
+  readonly baselineSamples: number;
+  readonly baselineUpdatedAt: number | null;
 }
 
 export interface ServerStatusWidgetStore {
@@ -59,6 +64,10 @@ interface WidgetDoc {
   readonly lastOutageDurationMs: number | null;
   /** Optional: a document written before the rename indicator existed has no channelName. */
   readonly channelName?: string | null;
+  /** Optional: documents written before the response baseline existed have none. */
+  readonly baselineEmaMs?: number | null;
+  readonly baselineSamples?: number;
+  readonly baselineUpdatedAt?: number | null;
 }
 
 /** Narrow port over the Mongo collection, so the store's logic is unit-tested with a fake. */
@@ -79,17 +88,24 @@ export function stateToDoc(state: ServerStatusWidgetState): Omit<WidgetDoc, "_id
     lastOutageEndedAt: state.lastOutageEndedAt,
     lastOutageDurationMs: state.lastOutageDurationMs,
     channelName: state.channelName,
+    baselineEmaMs: state.baselineEmaMs,
+    baselineSamples: state.baselineSamples,
+    baselineUpdatedAt: state.baselineUpdatedAt,
   };
 }
 
-/** Read a stored document back into state, ignoring the `_id`. A document written before the
- *  channelName field existed reads back as null (rename simply re-applies on the next transition). */
+/** Read a stored document back into state, ignoring the `_id`. Fields added over time (channelName,
+ *  the baseline) default when absent, so a document from an older build loads without error — the
+ *  rename re-applies and the baseline re-warms on their own. */
 export function docToState(doc: WidgetDoc): ServerStatusWidgetState {
   return {
     messageId: doc.messageId,
     lastOutageEndedAt: doc.lastOutageEndedAt,
     lastOutageDurationMs: doc.lastOutageDurationMs,
     channelName: doc.channelName ?? null,
+    baselineEmaMs: doc.baselineEmaMs ?? null,
+    baselineSamples: doc.baselineSamples ?? 0,
+    baselineUpdatedAt: doc.baselineUpdatedAt ?? null,
   };
 }
 

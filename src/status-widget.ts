@@ -1,5 +1,12 @@
 import type { Logger } from "./logger.js";
 import type { ChannelMessage, CreateResult, DiscordEmbed, DmResult } from "./notify/discord-dm.js";
+import {
+  EMPTY_BASELINE,
+  classifyResponse,
+  foldBaseline,
+  type RealmResponse,
+  type ResponseBaseline,
+} from "./realm-response.js";
 
 /**
  * The live server-status "widget": ONE message in #server-status that the bot keeps edited in place,
@@ -21,14 +28,16 @@ export interface LastOutage {
   readonly durationMs: number;
 }
 
-/** The live realm facts the widget reads at refresh time (from the ServerMonitor + ping samples). */
+/** The live realm facts the widget reads at refresh time (from the ServerMonitor + ping samples).
+ *  It carries the RAW ping stats, not a verdict — the widget folds them into a baseline and classifies
+ *  (so the "steady / elevated / unstable" judgement is stateful and lives in one place). */
 export interface LiveRealmStatus {
   readonly realm: string;
   readonly up: boolean;
-  /** Median recent round-trip from the BOT's host, or null if no pongs have landed in the window. */
-  readonly pingMs: number | null;
-  /** Whether recent pings are stable + reasonable — only meaningful when `up` and `pingMs` is set. */
-  readonly responsive: boolean;
+  /** Median recent round-trip from the bot's host, or null if no pongs have landed in the window. */
+  readonly pingMedianMs: number | null;
+  /** Spread (max-min) of recent round-trips — the jitter measure — or null if no pongs. */
+  readonly pingSpreadMs: number | null;
   /** When the current up/down state began (epoch ms), or null if unknown. */
   readonly stateSince: number | null;
   /** When the bot started watching this realm (epoch ms) — for the "watching for" footer. */
@@ -37,12 +46,19 @@ export interface LiveRealmStatus {
   readonly now: number;
 }
 
-/** Everything the embed renders — the live facts plus the persisted last outage. */
-export interface ServerStatusView extends LiveRealmStatus {
+/** Everything the embed renders: the up/down state, the classified realm-response verdict (no raw
+ *  ms — see realm-response.ts for why), the persisted last outage, and the timing fields. */
+export interface ServerStatusView {
+  readonly realm: string;
+  readonly up: boolean;
+  readonly response: RealmResponse;
+  readonly stateSince: number | null;
+  readonly watchingSince: number;
+  readonly now: number;
   readonly lastOutage: LastOutage | null;
 }
 
-/** Embed sidebar colours (0xRRGGBB): green up, amber up-but-laggy, red down. */
+/** Embed sidebar colours (0xRRGGBB): green healthy, amber elevated/unstable, red down. */
 export const COLOR_UP = 0x2ecc71;
 export const COLOR_LAGGY = 0xf1c40f;
 export const COLOR_DOWN = 0xe74c3c;
@@ -60,9 +76,9 @@ export function humanSpan(ms: number): string {
   return remHr === 0 ? `${days}d` : `${days}d${remHr}h`;
 }
 
-/** Is the realm up but responding slowly? (Up, with pings that have landed but aren't stable.) */
-function isLaggy(view: LiveRealmStatus): boolean {
-  return view.up && view.pingMs !== null && !view.responsive;
+/** Amber when the realm is up but its ping is elevated or fluctuating; green when steady/unknown. */
+function isOffHealth(view: ServerStatusView): boolean {
+  return view.up && (view.response === "elevated" || view.response === "unstable");
 }
 
 function statusField(view: ServerStatusView): string {
@@ -72,11 +88,18 @@ function statusField(view: ServerStatusView): string {
   return view.up ? `${word}, up ${forHowLong}` : `${word}, ${forHowLong}`;
 }
 
-/** The realm-response field is only meaningful while the realm is up. */
-function responseField(view: ServerStatusView): string {
-  if (view.pingMs === null) return "Checking…";
-  const label = view.responsive ? "Responsive" : "Laggy";
-  return `${label} (~${view.pingMs} ms)`;
+/** The realm-response field — a qualitative verdict against the realm's own baseline, no ms. */
+function responseField(response: RealmResponse): string {
+  switch (response) {
+    case "steady":
+      return "Stable";
+    case "elevated":
+      return "Elevated — higher than usual";
+    case "unstable":
+      return "Unstable — fluctuating";
+    case "unknown":
+      return "Checking…";
+  }
 }
 
 function lastOutageField(view: ServerStatusView): string {
@@ -84,28 +107,37 @@ function lastOutageField(view: ServerStatusView): string {
   return `${humanSpan(view.now - view.lastOutage.endedAt)} ago · lasted ${humanSpan(view.lastOutage.durationMs)}`;
 }
 
+function titleSuffix(view: ServerStatusView): string {
+  if (!view.up) return "Down";
+  if (view.response === "elevated") return "Online (elevated ping)";
+  if (view.response === "unstable") return "Online (unstable ping)";
+  return "Online";
+}
+
+function describeState(view: ServerStatusView): string {
+  if (!view.up) return "The realm is not responding — it looks down.";
+  if (view.response === "elevated") return "The realm is online but latency is higher than usual.";
+  if (view.response === "unstable") return "The realm is online but latency is fluctuating.";
+  return "The realm is online and responding normally.";
+}
+
 /** Render the current realm state as the widget embed. Pure. */
 export function buildServerStatusEmbed(view: ServerStatusView): DiscordEmbed {
-  const laggy = isLaggy(view);
-  const color = !view.up ? COLOR_DOWN : laggy ? COLOR_LAGGY : COLOR_UP;
-  const dot = !view.up ? "🔴" : laggy ? "🟡" : "🟢"; // 🔴 🟡 🟢
-  const title = `${dot} ${view.realm} — ${view.up ? (laggy ? "Online (laggy)" : "Online") : "Down"}`;
-  const description = !view.up
-    ? `The realm is not responding — it looks down.`
-    : laggy
-      ? `The realm is online but responding slowly.`
-      : `The realm is online and responding normally.`;
+  const offHealth = isOffHealth(view);
+  const color = !view.up ? COLOR_DOWN : offHealth ? COLOR_LAGGY : COLOR_UP;
+  const dot = !view.up ? "🔴" : offHealth ? "🟡" : "🟢"; // 🔴 🟡 🟢
 
   const fields: DiscordEmbed["fields"] = [
     { name: "Status", value: statusField(view), inline: true },
-    // The realm-response reading is the bot's own host-to-realm ping, not the reader's — labelled so.
-    ...(view.up ? [{ name: "Realm response", value: responseField(view), inline: true } as const] : []),
+    // A qualitative reading against the realm's own baseline — the bot pings from the US, so an
+    // absolute ms would be meaningless to a reader elsewhere. See realm-response.ts.
+    ...(view.up ? [{ name: "Realm response", value: responseField(view.response), inline: true } as const] : []),
     { name: "Last outage", value: lastOutageField(view), inline: true },
   ];
 
   return {
-    title,
-    description,
+    title: `${dot} ${view.realm} — ${titleSuffix(view)}`,
+    description: describeState(view),
     color,
     fields,
     footer: { text: `Watching for ${humanSpan(view.now - view.watchingSince)}` },
@@ -119,12 +151,16 @@ export interface StatusChannel {
   edit(messageId: string, message: ChannelMessage): Promise<DmResult>;
 }
 
-/** The durable state the widget reads/writes (message id, last outage, applied channel name). */
+/** The durable state the widget reads/writes: message id, last outage, applied channel name, and the
+ *  flattened response baseline (persisted so the ~day-long ping baseline survives frequent redeploys). */
 export interface StatusWidgetState {
   readonly messageId: string | null;
   readonly lastOutageEndedAt: number | null;
   readonly lastOutageDurationMs: number | null;
   readonly channelName: string | null;
+  readonly baselineEmaMs: number | null;
+  readonly baselineSamples: number;
+  readonly baselineUpdatedAt: number | null;
 }
 
 export interface StatusWidgetStore {
@@ -163,6 +199,7 @@ export class ServerStatusWidget {
   #messageId: string | null = null;
   #lastOutage: LastOutage | null = null;
   #channelName: string | null = null; // the channel name last applied by the rename indicator
+  #baseline: ResponseBaseline = EMPTY_BASELINE; // the realm's rolling ping baseline
   /** Serialises refreshes so a startup transition can't race the periodic timer into two posts. */
   #queue: Promise<void> = Promise.resolve();
 
@@ -175,7 +212,7 @@ export class ServerStatusWidget {
     this.#logger = deps.logger;
   }
 
-  /** Load persisted state (message id + last outage). Call once on boot, before the first refresh. */
+  /** Load persisted state (message id, last outage, channel name, ping baseline). Call once on boot. */
   async load(): Promise<void> {
     const state = await this.#store.load();
     if (!state) return;
@@ -185,12 +222,16 @@ export class ServerStatusWidget {
       state.lastOutageEndedAt !== null && state.lastOutageDurationMs !== null
         ? { endedAt: state.lastOutageEndedAt, durationMs: state.lastOutageDurationMs }
         : null;
+    this.#baseline = {
+      emaMs: state.baselineEmaMs,
+      samples: state.baselineSamples,
+      updatedAt: state.baselineUpdatedAt,
+    };
   }
 
-  /** Record a finished outage — persisted, and shown on the next render. */
+  /** Record a finished outage — shown on the next render, which persists it. */
   async recordOutageEnd(endedAt: number, durationMs: number): Promise<void> {
     this.#lastOutage = { endedAt, durationMs };
-    await this.#persist();
     await this.refresh();
   }
 
@@ -203,11 +244,28 @@ export class ServerStatusWidget {
   }
 
   async #render(): Promise<void> {
-    const view: ServerStatusView = { ...this.#snapshot(), lastOutage: this.#lastOutage };
+    const live = this.#snapshot();
+    // Classify the ping against the CURRENT baseline, THEN fold this reading in — so the sample being
+    // judged doesn't first pull the baseline toward itself and mask its own elevation.
+    const response = classifyResponse(live.pingMedianMs, live.pingSpreadMs, this.#baseline);
+    this.#baseline = foldBaseline(this.#baseline, live.pingMedianMs, live.now);
+
+    const view: ServerStatusView = {
+      realm: live.realm,
+      up: live.up,
+      response,
+      stateSince: live.stateSince,
+      watchingSince: live.watchingSince,
+      now: live.now,
+      lastOutage: this.#lastOutage,
+    };
+
     // The embed and the channel-name indicator are independent surfaces — a failure of one must not
     // skip the other (e.g. Send-Messages missing but Manage-Channels granted, or vice versa).
     await this.#renderEmbed(view);
     await this.#renderChannelName(view);
+    // One write per render, carrying the message id, last outage, channel name, and the folded baseline.
+    await this.#persist();
   }
 
   async #renderEmbed(view: ServerStatusView): Promise<void> {
@@ -228,7 +286,6 @@ export class ServerStatusWidget {
     const created = await this.#channel.create(message);
     if (created.ok) {
       this.#messageId = created.messageId;
-      await this.#persist();
     } else {
       this.#logger.error(`server-status widget post failed (${describe(created)})`);
     }
@@ -243,7 +300,6 @@ export class ServerStatusWidget {
     const renamed = await this.#renameChannel(desired);
     if (renamed.ok) {
       this.#channelName = desired;
-      await this.#persist();
     } else {
       // Leave #channelName as-is so the next transition/refresh retries (e.g. a 429 backs off).
       this.#logger.error(`server-status channel rename failed (${describe(renamed)})`);
@@ -256,6 +312,9 @@ export class ServerStatusWidget {
       lastOutageEndedAt: this.#lastOutage?.endedAt ?? null,
       lastOutageDurationMs: this.#lastOutage?.durationMs ?? null,
       channelName: this.#channelName,
+      baselineEmaMs: this.#baseline.emaMs,
+      baselineSamples: this.#baseline.samples,
+      baselineUpdatedAt: this.#baseline.updatedAt,
     });
   }
 }
