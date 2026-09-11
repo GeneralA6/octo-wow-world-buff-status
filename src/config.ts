@@ -183,6 +183,11 @@ export interface BotConfig {
   /** How often the live server-status widget re-renders (to keep uptime/latency fresh), in ms. The
    *  realm up/down transitions refresh it immediately; this is the idle cadence between them. */
   readonly statusWidgetRefreshMs: number;
+  /** How long the transient "server up/down" notice stays in the status channel before the bot
+   *  deletes it, in ms. It fires the unread/push, then is removed so only the pinned status embed
+   *  remains when a reader opens the channel. A few seconds makes the notification register reliably
+   *  across clients; 0 deletes it immediately (at the risk of some clients never showing it). */
+  readonly statusNoticeLingerMs: number;
   /** Also reflect up/down in the #server-status channel's NAME (🟢/🔴 prefix), not just the embed —
    *  a glance in the sidebar. Needs the bot to have Manage Channels there; the embed alone doesn't.
    *  Off by default. Renamed only on a confirmed up/down transition, so it stays under Discord's
@@ -453,6 +458,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordTestsChannelId = env.DISCORD_TESTS_CHANNEL_ID?.trim() || null;
   const discordServerStatusChannelId = env.DISCORD_SERVER_STATUS_CHANNEL_ID?.trim() || null;
   const statusWidgetRefreshMs = intWithDefault("WOW_STATUS_REFRESH_SECONDS", 300, 30) * 1000;
+  const statusNoticeLingerMs = intWithDefault("WOW_STATUS_NOTICE_LINGER_SECONDS", 5, 0) * 1000;
   const statusRenameRaw = env.WOW_STATUS_CHANNEL_RENAME?.trim().toLowerCase();
   const statusChannelRenameEnabled = statusRenameRaw === "true" || statusRenameRaw === "1";
   const statusChannelName = env.WOW_STATUS_CHANNEL_NAME?.trim() || "server-status";
@@ -553,6 +559,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordTestsChannelId,
     discordServerStatusChannelId,
     statusWidgetRefreshMs,
+    statusNoticeLingerMs,
     statusChannelRenameEnabled,
     statusChannelName,
     discordAllianceRoleId,
