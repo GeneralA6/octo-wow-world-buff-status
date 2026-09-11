@@ -146,6 +146,23 @@ describe("DiscordDmSender", () => {
     });
   });
 
+  describe("deleteChannelMessage", () => {
+    it("DELETEs the message (204 = ok)", async () => {
+      const fetchImpl = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 204));
+      const result = await new DiscordDmSender("tok", fetchImpl).deleteChannelMessage("chan9", "msg7");
+      expect(result).toEqual({ ok: true });
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toContain("/channels/chan9/messages/msg7");
+      expect(init.method).toBe("DELETE");
+    });
+
+    it("classifies a failed delete and reports not-configured without a token", async () => {
+      const notFound = new DiscordDmSender("tok", () => Promise.resolve(res(false, 404)));
+      expect(await notFound.deleteChannelMessage("chan9", "gone")).toEqual({ ok: false, kind: "unreachable", status: 404 });
+      expect(await new DiscordDmSender(null).deleteChannelMessage("chan9", "m")).toEqual({ ok: false, kind: "not-configured" });
+    });
+  });
+
   describe("renameChannel", () => {
     it("PATCHes the channel name", async () => {
       const fetchImpl = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200));

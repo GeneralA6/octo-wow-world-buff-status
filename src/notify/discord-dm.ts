@@ -145,6 +145,23 @@ export class DiscordDmSender {
     }
   }
 
+  /** Delete a message (DELETE /channels/{id}/messages/{id}). A bot may delete its OWN messages with
+   *  no special permission — used for the transient "server up/down" notice that pings the channel
+   *  and is then removed, so only the pinned status embed remains. */
+  async deleteChannelMessage(channelId: string, messageId: string): Promise<DmResult> {
+    if (!this.#botToken) return { ok: false, kind: "not-configured" };
+    try {
+      const response = await this.#fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+        method: "DELETE",
+        headers: this.#headers(this.#botToken),
+        body: "",
+      });
+      return response.ok ? { ok: true } : classify(response.status);
+    } catch {
+      return { ok: false, kind: "error" };
+    }
+  }
+
   /** Rename a channel (PATCH /channels/{id}). Needs the Manage Channels permission. Discord limits
    *  channel renames to ~2 per 10 minutes; a 429 comes back as `error` with its status so the caller
    *  can back off (the status widget renames only on a confirmed up/down transition, so it rarely does). */
