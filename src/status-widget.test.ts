@@ -59,9 +59,9 @@ describe("statusChannelName", () => {
 
 describe("serverDownNotice / serverUpNotice", () => {
   it("are short one-liners; the up notice includes downtime only when known", () => {
-    expect(serverDownNotice("N'Zoth")).toBe("🔴 N'Zoth looks down.");
-    expect(serverUpNotice("N'Zoth", 12 * 60_000)).toBe("🟢 N'Zoth is back up after 12m down.");
-    expect(serverUpNotice("N'Zoth", 0)).toBe("🟢 N'Zoth is back up.");
+    expect(serverDownNotice("N'Zoth")).toBe("🔴 N'Zoth is down.");
+    expect(serverUpNotice("N'Zoth", 12 * 60_000)).toBe("🟢 N'Zoth is up — was down for 12m.");
+    expect(serverUpNotice("N'Zoth", 0)).toBe("🟢 N'Zoth is up.");
   });
 });
 
@@ -106,7 +106,7 @@ describe("buildServerStatusEmbed", () => {
     const embed = buildServerStatusEmbed(view({ up: false, response: "unknown", stateSince: NOW - 12 * 60_000 }));
     expect(embed.color).toBe(COLOR_DOWN);
     expect(embed.title).toBe("🔴 N'Zoth — Down");
-    expect(embed.description).toContain("not responding");
+    expect(embed.description).toBe("The realm is down.");
     expect(fieldValue(embed, "Status")).toBe("Down, 12m");
     expect(fieldValue(embed, "Realm response")).toBeUndefined();
   });

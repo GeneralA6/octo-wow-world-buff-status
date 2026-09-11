@@ -44,7 +44,7 @@ export function formatBuffAlert(
     return {
       kind: "entered",
       title: "🐲 Onyxia raid starting",
-      body: `${id} formed${clear}. Park in ${where} for the Rallying Cry buff.`,
+      body: `${id} formed${clear}. Wait in ${where} for the Rallying Cry buff.`,
     };
   }
   // A confirmed clear (Chronicle Onyxia kill) vs an inferred one (roster departure). Both merge the
@@ -54,8 +54,8 @@ export function formatBuffAlert(
   const after = event.durationMs != null ? ` after ~${humanClock(event.durationMs)}` : "";
   const body =
     event.killConfirmed === true
-      ? `${id} cleared${after} - Onyxia down, kill confirmed. Buff should drop in ${where} - park now.`
-      : `${id} cleared${after}. Buff may drop in ${where} - park now.`;
+      ? `${id} cleared${after} - Onyxia down, kill confirmed. Buff should drop in ${where} - wait there now.`
+      : `${id} cleared${after}. Buff may drop in ${where} - wait there now.`;
   return { kind: "left", title: "🏁 Onyxia raid has ended", body };
 }
 
@@ -64,12 +64,12 @@ export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], 
   const where = cityList(cities);
   if (event.kind === "raid-left") {
     return event.killConfirmed === true
-      ? `Onyxia raid cleared - Onyxia down, kill confirmed. Buff should drop in ${where} - park now.`
-      : `Onyxia raid cleared. Buff may drop in ${where} - park now.`;
+      ? `Onyxia raid cleared - Onyxia down, kill confirmed. Buff should drop in ${where} - wait there now.`
+      : `Onyxia raid cleared. Buff may drop in ${where} - wait there now.`;
   }
   const id = event.number != null ? `Raid #${event.number}` : "a raid";
   const clear = typicalClear ? `, usually ${typicalClear} to clear` : "";
-  return `Onyxia raid starting (${id}${clear}). Park in ${where} for the Rallying Cry buff.`;
+  return `Onyxia raid starting (${id}${clear}). Wait in ${where} for the Rallying Cry buff.`;
 }
 
 /**
@@ -89,7 +89,7 @@ export function formatRaidEnding(
   return {
     kind: "entered",
     title: "⏰ Onyxia raid might end soon",
-    body: `${id} has been in ~${humanClock(elapsedMs)}${typical}. Buff may drop soon - park in ${cityList(cities)} now.`,
+    body: `${id} has been in ~${humanClock(elapsedMs)}${typical}. Buff may drop soon - wait in ${cityList(cities)} now.`,
   };
 }
 
@@ -102,7 +102,7 @@ export function formatRaidEndingWhisper(
 ): string {
   const num = raidNumber !== null ? `#${raidNumber} ` : "";
   const typical = typicalClear ? `, typical ${typicalClear}` : "";
-  return `Onyxia raid ${num}might end soon (~${humanClock(elapsedMs)} in${typical}). Park in ${cityList(cities)} now for the buff.`;
+  return `Onyxia raid ${num}might end soon (~${humanClock(elapsedMs)} in${typical}). Wait in ${cityList(cities)} now for the buff.`;
 }
 
 /**
@@ -120,7 +120,7 @@ export function formatRaidDisbanded(
   return {
     kind: "info",
     title: "🚫 Onyxia raid disbanded",
-    body: `${id} left${after} without clearing. No buff coming. Stop parking in ${cityList(cities)}.`,
+    body: `${id} left${after} without clearing. No buff coming. No need to wait in ${cityList(cities)}.`,
   };
 }
 
@@ -132,7 +132,7 @@ export function formatRaidDisbandedWhisper(
 ): string {
   const num = raidNumber !== null ? `#${raidNumber} ` : "";
   const after = durationMs != null ? ` (left after ~${humanClock(durationMs)})` : "";
-  return `Onyxia raid ${num}disbanded${after}. No buff coming. Stop parking in ${cityList(cities)}.`;
+  return `Onyxia raid ${num}disbanded${after}. No buff coming. No need to wait in ${cityList(cities)}.`;
 }
 
 /**
@@ -189,7 +189,7 @@ export function formatHeadIncoming(faction: Faction, witness: string): NotifyMes
   return {
     kind: "info",
     title: `⚡ Onyxia buff incoming in ${city}`,
-    body: `A head is being turned in now (${witness}) - the Rallying Cry should drop in ${city} within moments. Hearthstone or park in ${city} now to catch it.`,
+    body: `A head is being turned in now (${witness}) - the Rallying Cry should drop in ${city} within moments. Hearthstone or get to ${city} now to catch it.`,
   };
 }
 
@@ -227,7 +227,7 @@ export function formatCapitalStatusYell(
     const id = raid.number !== null ? `#${raid.number}, ` : "";
     const typical = typicalClear ? `, typical clear ${typicalClear}` : "";
     parts.push(
-      `Onyxia raid in progress (${id}~${humanClock(raid.elapsedMs)} in${typical}). The Rallying Cry buff may drop soon - park here.`,
+      `Onyxia raid in progress (${id}~${humanClock(raid.elapsedMs)} in${typical}). The Rallying Cry buff may drop soon - wait here.`,
     );
   } else {
     parts.push(`No Onyxia raid right now. The Rallying Cry buff drops when a raid clears.`);

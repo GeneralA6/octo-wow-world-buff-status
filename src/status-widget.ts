@@ -115,10 +115,10 @@ function titleSuffix(view: ServerStatusView): string {
 }
 
 function describeState(view: ServerStatusView): string {
-  if (!view.up) return "The realm is not responding — it looks down.";
-  if (view.response === "elevated") return "The realm is online but latency is higher than usual.";
-  if (view.response === "unstable") return "The realm is online but latency is fluctuating.";
-  return "The realm is online and responding normally.";
+  if (!view.up) return "The realm is down.";
+  if (view.response === "elevated") return "The realm is up but latency is higher than usual.";
+  if (view.response === "unstable") return "The realm is up but latency is fluctuating.";
+  return "The realm is up and responding normally.";
 }
 
 /** Render the current realm state as the widget embed. Pure. */
@@ -179,12 +179,12 @@ export function statusChannelName(up: boolean, base: string): string {
 
 /** The short one-line notice posted (then deleted) to fire an unread/push on a realm down transition. */
 export function serverDownNotice(realm: string): string {
-  return `🔴 ${realm} looks down.`;
+  return `🔴 ${realm} is down.`;
 }
 
 /** The notice on recovery; `outageMs` 0 = unknown duration, so it's omitted. */
 export function serverUpNotice(realm: string, outageMs: number): string {
-  return outageMs > 0 ? `🟢 ${realm} is back up after ${humanSpan(outageMs)} down.` : `🟢 ${realm} is back up.`;
+  return outageMs > 0 ? `🟢 ${realm} is up — was down for ${humanSpan(outageMs)}.` : `🟢 ${realm} is up.`;
 }
 
 export interface ServerStatusWidgetDeps {
