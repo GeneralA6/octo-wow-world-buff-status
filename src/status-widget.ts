@@ -177,6 +177,16 @@ export function statusChannelName(up: boolean, base: string): string {
   return `${up ? "🟢" : "🔴"}${base}`;
 }
 
+/** The short one-line notice posted (then deleted) to fire an unread/push on a realm down transition. */
+export function serverDownNotice(realm: string): string {
+  return `🔴 ${realm} looks down.`;
+}
+
+/** The notice on recovery; `outageMs` 0 = unknown duration, so it's omitted. */
+export function serverUpNotice(realm: string, outageMs: number): string {
+  return outageMs > 0 ? `🟢 ${realm} is back up after ${humanSpan(outageMs)} down.` : `🟢 ${realm} is back up.`;
+}
+
 export interface ServerStatusWidgetDeps {
   readonly channel: StatusChannel;
   readonly store: StatusWidgetStore;
@@ -186,8 +196,16 @@ export interface ServerStatusWidgetDeps {
   readonly renameChannel?: (name: string) => Promise<DmResult>;
   /** Base name the rename prefixes the status emoji onto (e.g. "server-status"). */
   readonly channelBaseName?: string;
+  /** Optional: delete a message by id — used to remove the transient up/down notice after it fires. */
+  readonly deleteMessage?: (messageId: string) => Promise<DmResult>;
+  /** How long the transient notice lingers before deletion (ms). 0 = delete immediately. */
+  readonly noticeLingerMs?: number;
+  /** Injectable sleep (for the linger), so tests don't wait on a real timer. */
+  readonly sleep?: (ms: number) => Promise<void>;
   readonly logger: Logger;
 }
+
+const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class ServerStatusWidget {
   readonly #channel: StatusChannel;
@@ -195,6 +213,9 @@ export class ServerStatusWidget {
   readonly #snapshot: () => LiveRealmStatus;
   readonly #renameChannel: ((name: string) => Promise<DmResult>) | null;
   readonly #channelBaseName: string;
+  readonly #deleteMessage: ((messageId: string) => Promise<DmResult>) | null;
+  readonly #noticeLingerMs: number;
+  readonly #sleep: (ms: number) => Promise<void>;
   readonly #logger: Logger;
   #messageId: string | null = null;
   #lastOutage: LastOutage | null = null;
@@ -209,7 +230,31 @@ export class ServerStatusWidget {
     this.#snapshot = deps.snapshot;
     this.#renameChannel = deps.renameChannel ?? null;
     this.#channelBaseName = deps.channelBaseName ?? "server-status";
+    this.#deleteMessage = deps.deleteMessage ?? null;
+    this.#noticeLingerMs = deps.noticeLingerMs ?? 0;
+    this.#sleep = deps.sleep ?? realSleep;
     this.#logger = deps.logger;
+  }
+
+  /**
+   * Post a short transient notice to the status channel to fire an unread/push on a realm up/down
+   * change, then delete it (after `noticeLingerMs`) so only the pinned status embed remains when a
+   * reader opens the channel. Independent of the pinned message — it posts and removes its OWN message.
+   * The mobile push is sent on message-create and is not recalled by the delete; the linger gives the
+   * unread indicator time to register on other clients before cleanup.
+   */
+  async announce(text: string): Promise<void> {
+    const created = await this.#channel.create({ content: text });
+    if (!created.ok) {
+      this.#logger.error(`server-status notice post failed (${describe(created)})`);
+      return;
+    }
+    if (!this.#deleteMessage) return; // posted (notified) but nothing wired to clean it up
+    if (this.#noticeLingerMs > 0) await this.#sleep(this.#noticeLingerMs);
+    const deleted = await this.#deleteMessage(created.messageId);
+    if (!deleted.ok) {
+      this.#logger.error(`server-status notice cleanup failed (${describe(deleted)}) — it will linger`);
+    }
   }
 
   /** Load persisted state (message id, last outage, channel name, ping baseline). Call once on boot. */

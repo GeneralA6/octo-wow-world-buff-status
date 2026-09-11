@@ -236,29 +236,6 @@ export function formatCapitalStatusYell(
   return `[Onyxia] ${parts.join(" ")}`;
 }
 
-/**
- * Community post when the realm looks down: EVERY bot connection has been sustained-down at once
- * (see `ServerMonitor`). Worded as an OBSERVATION, not a verdict — the bot can prove the realm is
- * unreachable from here, not that the world server itself crashed vs. its login gateway being down.
- * No role ping: an outage hits everyone, and a ping on every realm hiccup is spam.
- */
-export function formatServerDown(realm: string): NotifyMessage {
-  return {
-    kind: "info",
-    title: `🔌 ${realm} looks down`,
-    body: `Lost connection to ${realm} - the realm looks down. Onyxia buff tracking is paused until it's back.`,
-  };
-}
-
-/**
- * Community post when the realm answers again — the first bot connection re-established after an
- * outage we announced. `outageMs` is how long it was down (0 = unknown, so the duration is omitted).
- */
-export function formatServerUp(realm: string, outageMs: number): NotifyMessage {
-  const forHowLong = outageMs > 0 ? ` after ~${humanClock(outageMs)} down` : "";
-  return {
-    kind: "info",
-    title: `✅ ${realm} is back up`,
-    body: `Reconnected to ${realm}${forHowLong}. Onyxia buff tracking is live again.`,
-  };
-}
+// The realm down/up notification moved OUT of this (buff) channel: it is now a transient,
+// self-deleting notice in the dedicated #server-status channel — see serverDownNotice /
+// serverUpNotice and ServerStatusWidget.announce in status-widget.ts.

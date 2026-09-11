@@ -8,6 +8,8 @@ import {
   ServerStatusWidget,
   buildServerStatusEmbed,
   humanSpan,
+  serverDownNotice,
+  serverUpNotice,
   statusChannelName,
   type LiveRealmStatus,
   type ServerStatusView,
@@ -52,6 +54,14 @@ describe("statusChannelName", () => {
     expect(statusChannelName(true, "server-status")).toBe("🟢server-status");
     expect(statusChannelName(false, "server-status")).toBe("🔴server-status");
     expect(statusChannelName(true, "realm-status")).toBe("🟢realm-status");
+  });
+});
+
+describe("serverDownNotice / serverUpNotice", () => {
+  it("are short one-liners; the up notice includes downtime only when known", () => {
+    expect(serverDownNotice("N'Zoth")).toBe("🔴 N'Zoth looks down.");
+    expect(serverUpNotice("N'Zoth", 12 * 60_000)).toBe("🟢 N'Zoth is back up after 12m down.");
+    expect(serverUpNotice("N'Zoth", 0)).toBe("🟢 N'Zoth is back up.");
   });
 });
 
@@ -333,6 +343,72 @@ describe("ServerStatusWidget", () => {
     expect(saved?.baselineEmaMs).toBe(90); // first fold seeds the baseline
     expect(saved?.baselineSamples).toBe(1);
     expect(saved?.baselineUpdatedAt).toBe(NOW);
+  });
+
+  // --- transient up/down notice ---
+
+  it("announce posts a transient notice and deletes its OWN message after the linger", async () => {
+    const create = vi.fn<StatusChannel["create"]>().mockResolvedValue({ ok: true, messageId: "notice1" });
+    const channel: StatusChannel = { create, edit: vi.fn<StatusChannel["edit"]>().mockResolvedValue({ ok: true }) };
+    const del = vi.fn<(id: string) => Promise<DmResult>>().mockResolvedValue({ ok: true });
+    const sleeps: number[] = [];
+    const widget = new ServerStatusWidget({
+      channel,
+      store: memoryStore(),
+      snapshot: () => liveSnapshot(),
+      deleteMessage: del,
+      noticeLingerMs: 5_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      logger: silentLogger,
+    });
+
+    await widget.announce("🔴 N'Zoth looks down.");
+
+    expect(create).toHaveBeenCalledWith({ content: "🔴 N'Zoth looks down." });
+    expect(sleeps).toEqual([5_000]);
+    expect(del).toHaveBeenCalledWith("notice1"); // the notice it posted, never the pinned message
+  });
+
+  it("announce does not delete when the notice post fails", async () => {
+    const channel: StatusChannel = {
+      create: vi.fn<StatusChannel["create"]>().mockResolvedValue({ ok: false, kind: "unreachable", status: 403 }),
+      edit: vi.fn<StatusChannel["edit"]>().mockResolvedValue({ ok: true }),
+    };
+    const del = vi.fn<(id: string) => Promise<DmResult>>().mockResolvedValue({ ok: true });
+    const widget = new ServerStatusWidget({
+      channel,
+      store: memoryStore(),
+      snapshot: () => liveSnapshot(),
+      deleteMessage: del,
+      logger: spyLogger(),
+    });
+
+    await widget.announce("x");
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("announce skips the linger when noticeLingerMs is 0 but still deletes", async () => {
+    const create = vi.fn<StatusChannel["create"]>().mockResolvedValue({ ok: true, messageId: "n" });
+    const channel: StatusChannel = { create, edit: vi.fn<StatusChannel["edit"]>().mockResolvedValue({ ok: true }) };
+    const del = vi.fn<(id: string) => Promise<DmResult>>().mockResolvedValue({ ok: true });
+    let slept = false;
+    const widget = new ServerStatusWidget({
+      channel,
+      store: memoryStore(),
+      snapshot: () => liveSnapshot(),
+      deleteMessage: del,
+      noticeLingerMs: 0,
+      sleep: async () => {
+        slept = true;
+      },
+      logger: silentLogger,
+    });
+
+    await widget.announce("x");
+    expect(slept).toBe(false);
+    expect(del).toHaveBeenCalledWith("n");
   });
 
   // --- channel-name rename indicator ---

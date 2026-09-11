@@ -20,8 +20,6 @@ import {
   formatFeedbackPost,
   formatGuildWelcome,
   formatHeadIncoming,
-  formatServerDown,
-  formatServerUp,
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
 import { AlertDelivery } from "./notify/alert-delivery.js";
@@ -95,7 +93,13 @@ import { DownTracker } from "./down-tracker.js";
 import { ServerMonitor } from "./server-monitor.js";
 import { InMemoryServerMonitorStore, MongoServerMonitorStore, type ServerMonitorStore } from "./server-monitor-store.js";
 import { isRealmStable, latencySpread, medianLatency, type PingSample, type RealmHealthThresholds } from "./realm-health.js";
-import { ServerStatusWidget, type LiveRealmStatus, type StatusChannel } from "./status-widget.js";
+import {
+  ServerStatusWidget,
+  serverDownNotice,
+  serverUpNotice,
+  type LiveRealmStatus,
+  type StatusChannel,
+} from "./status-widget.js";
 import {
   InMemoryServerStatusWidgetStore,
   MongoServerStatusWidgetStore,
@@ -1424,10 +1428,10 @@ async function main(): Promise<void> {
     if (serverMonitor.isFullyDown()) cancelRealmRecovery(); // flapped fully down again — drop the pending "back up"
     if (announce) {
       saveMonitor(); // persist the open outage so a restart mid-outage doesn't re-announce it
-      // WOW_REALM_STATUS=false silences the community posts (the flapping-realm kill-switch) while
-      // the state is still tracked, so toggling it back on stays consistent.
-      if (config.realmStatusEnabled) await push(formatServerDown(config.realm));
       void statusWidget?.refresh(); // flip the always-there widget to "down" (independent of the kill-switch)
+      // The loud notification now fires in the STATUS channel (a transient notice that pings then
+      // self-deletes), not the buff channel. WOW_REALM_STATUS=false silences it for a flapping realm.
+      if (config.realmStatusEnabled) void statusWidget?.announce(serverDownNotice(config.realm));
     }
   };
   // Has the realm stayed connected AND settled to a healthy ping? If so post "back up" once; else
@@ -1450,15 +1454,12 @@ async function main(): Promise<void> {
     if (serverMonitor.confirmRecovery()) {
       saveMonitor(); // outage closed — persist so a restart doesn't think it's still open
       realmUpSince = now; // the realm is up as of this confirmed recovery
-      if (config.realmStatusEnabled) {
-        void push(formatServerUp(config.realm, outageMs)).catch((error) =>
-          logger.error(`realm-up notify: ${describeError(error)}`),
-        );
-      }
       // Record the finished outage on the widget (persists "last outage" + flips it back to up).
       void statusWidget?.recordOutageEnd(now, outageMs).catch((error) =>
         logger.error(`status widget outage-end: ${describeError(error)}`),
       );
+      // The "back up" notification fires in the STATUS channel now (transient, self-deleting).
+      if (config.realmStatusEnabled) void statusWidget?.announce(serverUpNotice(config.realm, outageMs));
     }
   };
   const announceRealmUp = (id: string): void => {
@@ -1504,6 +1505,8 @@ async function main(): Promise<void> {
       snapshot,
       renameChannel,
       channelBaseName: config.statusChannelName,
+      deleteMessage: (messageId) => dm.deleteChannelMessage(statusChannelId, messageId),
+      noticeLingerMs: config.statusNoticeLingerMs,
       logger: prefixed(logger, "status"),
     });
     await statusWidget.load();
