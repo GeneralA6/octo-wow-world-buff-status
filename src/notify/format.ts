@@ -44,7 +44,7 @@ export function formatBuffAlert(
     return {
       kind: "entered",
       title: "🐲 Onyxia raid starting",
-      body: `${id} formed${clear}. Wait in ${where} for the Rallying Cry buff.`,
+      body: `${id} formed${clear}. Rallying Cry buff drops in ${where} on a clear.`,
     };
   }
   // A confirmed clear (Chronicle Onyxia kill) vs an inferred one (roster departure). Both merge the
@@ -54,8 +54,8 @@ export function formatBuffAlert(
   const after = event.durationMs != null ? ` after ~${humanClock(event.durationMs)}` : "";
   const body =
     event.killConfirmed === true
-      ? `${id} cleared${after} - Onyxia down, kill confirmed. Buff should drop in ${where} - wait there now.`
-      : `${id} cleared${after}. Buff may drop in ${where} - wait there now.`;
+      ? `${id} cleared${after} - Onyxia down, kill confirmed. Buff should drop in ${where}.`
+      : `${id} cleared${after}. Buff may drop in ${where}.`;
   return { kind: "left", title: "🏁 Onyxia raid has ended", body };
 }
 
@@ -64,12 +64,12 @@ export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], 
   const where = cityList(cities);
   if (event.kind === "raid-left") {
     return event.killConfirmed === true
-      ? `Onyxia raid cleared - Onyxia down, kill confirmed. Buff should drop in ${where} - wait there now.`
-      : `Onyxia raid cleared. Buff may drop in ${where} - wait there now.`;
+      ? `Onyxia raid cleared - Onyxia down, kill confirmed. Buff should drop in ${where}.`
+      : `Onyxia raid cleared. Buff may drop in ${where}.`;
   }
   const id = event.number != null ? `Raid #${event.number}` : "a raid";
   const clear = typicalClear ? `, usually ${typicalClear} to clear` : "";
-  return `Onyxia raid starting (${id}${clear}). Wait in ${where} for the Rallying Cry buff.`;
+  return `Onyxia raid starting (${id}${clear}). Rallying Cry buff drops in ${where} on a clear.`;
 }
 
 /**
@@ -89,7 +89,7 @@ export function formatRaidEnding(
   return {
     kind: "entered",
     title: "⏰ Onyxia raid might end soon",
-    body: `${id} has been in ~${humanClock(elapsedMs)}${typical}. Buff may drop soon - wait in ${cityList(cities)} now.`,
+    body: `${id} has been in ~${humanClock(elapsedMs)}${typical}. Buff may drop soon in ${cityList(cities)}.`,
   };
 }
 
@@ -102,37 +102,29 @@ export function formatRaidEndingWhisper(
 ): string {
   const num = raidNumber !== null ? `#${raidNumber} ` : "";
   const typical = typicalClear ? `, typical ${typicalClear}` : "";
-  return `Onyxia raid ${num}might end soon (~${humanClock(elapsedMs)} in${typical}). Wait in ${cityList(cities)} now for the buff.`;
+  return `Onyxia raid ${num}might end soon (~${humanClock(elapsedMs)} in${typical}). Buff may drop soon in ${cityList(cities)}.`;
 }
 
 /**
- * A raid that formed and got a "get ready to park" alert, but left too soon to have cleared
- * Onyxia — a disband, not a kill. Retracts the park heads-up so nobody waits for a buff that
- * isn't coming; `durationMs` shows how short it was. Only sent for the cities told to park.
+ * A raid that formed and got a heads-up, but left too soon to have cleared Onyxia — a disband, not a
+ * kill. Reports that no buff is coming so a reader who saw the "formed" alert isn't left expecting one;
+ * `durationMs` shows how short it was.
  */
-export function formatRaidDisbanded(
-  raidNumber: number | null,
-  cities: readonly Faction[],
-  durationMs?: number,
-): NotifyMessage {
+export function formatRaidDisbanded(raidNumber: number | null, durationMs?: number): NotifyMessage {
   const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
   const after = durationMs != null ? ` after ~${humanClock(durationMs)}` : "";
   return {
     kind: "info",
     title: "🚫 Onyxia raid disbanded",
-    body: `${id} left${after} without clearing. No buff coming. No need to wait in ${cityList(cities)}.`,
+    body: `${id} left${after} without clearing. No buff coming.`,
   };
 }
 
-/** The terse in-game whisper twin of the disband stand-down. */
-export function formatRaidDisbandedWhisper(
-  raidNumber: number | null,
-  cities: readonly Faction[],
-  durationMs?: number,
-): string {
+/** The terse in-game whisper twin of the disband notice. */
+export function formatRaidDisbandedWhisper(raidNumber: number | null, durationMs?: number): string {
   const num = raidNumber !== null ? `#${raidNumber} ` : "";
   const after = durationMs != null ? ` (left after ~${humanClock(durationMs)})` : "";
-  return `Onyxia raid ${num}disbanded${after}. No buff coming. No need to wait in ${cityList(cities)}.`;
+  return `Onyxia raid ${num}disbanded${after}. No buff coming.`;
 }
 
 /**
@@ -189,7 +181,7 @@ export function formatHeadIncoming(faction: Faction, witness: string): NotifyMes
   return {
     kind: "info",
     title: `⚡ Onyxia buff incoming in ${city}`,
-    body: `A head is being turned in now (${witness}) - the Rallying Cry should drop in ${city} within moments. Hearthstone or get to ${city} now to catch it.`,
+    body: `A head is being turned in now (${witness}) - the Rallying Cry should drop in ${city} within moments.`,
   };
 }
 
@@ -227,7 +219,7 @@ export function formatCapitalStatusYell(
     const id = raid.number !== null ? `#${raid.number}, ` : "";
     const typical = typicalClear ? `, typical clear ${typicalClear}` : "";
     parts.push(
-      `Onyxia raid in progress (${id}~${humanClock(raid.elapsedMs)} in${typical}). The Rallying Cry buff may drop soon - wait here.`,
+      `Onyxia raid in progress (${id}~${humanClock(raid.elapsedMs)} in${typical}). The Rallying Cry buff may drop soon.`,
     );
   } else {
     parts.push(`No Onyxia raid right now. The Rallying Cry buff drops when a raid clears.`);

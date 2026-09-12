@@ -305,13 +305,13 @@ export function createRaidService(
           if (!shouldBroadcast(forming, buffDropAt, now, config.broadcastDedupMs)) notified.push(city);
         }
         if (notified.length === 0) return; // forming never alerted this cycle — nobody was told to park
-        const line = formatRaidDisbandedWhisper(clear.number, notified, clear.durationMs);
+        const line = formatRaidDisbandedWhisper(clear.number, clear.durationMs);
         for (const city of notified) {
           whisperPool.dropForFaction(city);
           getWhisperQueue()?.dropForFaction(city);
           yellSink[city]?.(line);
         }
-        void push(formatRaidDisbanded(clear.number, notified, clear.durationMs), notified);
+        void push(formatRaidDisbanded(clear.number, clear.durationMs), notified);
         if (config.whispersEnabled) {
           try {
             const subs = (await store.all()).filter((s) => notified.some((c) => s.factions.includes(c)));
