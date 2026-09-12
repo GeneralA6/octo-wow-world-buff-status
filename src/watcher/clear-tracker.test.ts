@@ -462,4 +462,17 @@ describe("ClearTracker — lockout rule", () => {
     expect(t.observe(R(30), 80 * MIN, false).formed).toBeNull(); // 80-30 = 50 < 60 → still locked
     expect(t.observe(R(30), 95 * MIN, false).formed).not.toBeNull(); // 95-30 = 65 >= 60 → released
   });
+
+  it("persists and restores the ledger across a restart — the rule survives a redeploy", () => {
+    const t = tracker();
+    formThenClear(t);
+    const saved = t.lockoutSnapshot(); // what the store would persist
+    expect(Object.keys(saved).length).toBe(30); // the cleared raid's roster is locked
+
+    // A fresh tracker (a restarted process) restores the ledger, and the phantom is STILL blocked.
+    const restarted = tracker();
+    restarted.restoreLockout(saved);
+    expect(restarted.observe(R(30), 48 * MIN, false).formed).toBeNull(); // same members → still locked
+    expect(restarted.observe(C(30), 49 * MIN, false).formed).not.toBeNull(); // a new crowd still forms
+  });
 });

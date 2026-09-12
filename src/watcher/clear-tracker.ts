@@ -57,7 +57,7 @@ export interface ClearTrackerOptions {
    *  the gap between raids. Default max(8 min, 2× sustained). */
   readonly stintGapMs?: number;
   /** A player in one raid's roster cannot found or join a DIFFERENT raid for this long — the Onyxia
-   *  lockout rule. Stops a cleared raid's lingering members from re-forming a phantom raid. Default 6h. */
+   *  lockout rule. Stops a cleared raid's lingering members from re-forming a phantom raid. Default 2h. */
   readonly lockoutMs?: number;
   /** Assigns the next monotonic raid number when a raid forms. Omit to leave raids unnumbered. */
   readonly nextNumber?: () => number;
@@ -114,7 +114,7 @@ export interface ClearTrackerState {
 
 const DEFAULT_FILL_WINDOW_MS = 5 * 60_000;
 const DEFAULT_ROSTER_CAP = 30;
-const DEFAULT_LOCKOUT_MS = 6 * 60 * 60_000;
+const DEFAULT_LOCKOUT_MS = 2 * 60 * 60_000;
 
 export class ClearTracker {
   readonly #formAt: number;
@@ -188,6 +188,18 @@ export class ClearTracker {
     this.#peak = state.peak;
     this.#belowSince = state.belowSince;
     this.#confirmed = true; // only confirmed raids are ever snapshotted
+  }
+
+  /** The lockout ledger (name -> locked-at ms) as a plain object, to persist across a restart — so a
+   *  redeploy doesn't clear the locks and let a just-cleared raid's members re-form a phantom. */
+  lockoutSnapshot(): Record<string, number> {
+    return Object.fromEntries(this.#locked);
+  }
+
+  /** Restore a persisted lockout ledger on boot, merging into whatever is held (empty on a fresh
+   *  process). Expired entries are dropped on the next `observe`. */
+  restoreLockout(entries: Record<string, number>): void {
+    for (const [name, at] of Object.entries(entries)) this.#locked.set(name, at);
   }
 
   /** How long the tracked raid has been in (form → now, spanning wipes), or null if none — or if the

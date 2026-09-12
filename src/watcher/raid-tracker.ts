@@ -164,4 +164,14 @@ export class RaidTracker {
   restoreRaidState(state: ClearTrackerState): void {
     this.#clears.restore(state);
   }
+
+  /** The lockout ledger as a plain object, to persist so the Onyxia lockout survives a restart. */
+  lockoutSnapshot(): Record<string, number> {
+    return this.#clears.lockoutSnapshot();
+  }
+
+  /** Restore the persisted lockout ledger on startup, so a redeploy doesn't clear the locks. */
+  restoreLockout(entries: Record<string, number>): void {
+    this.#clears.restoreLockout(entries);
+  }
 }

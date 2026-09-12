@@ -69,6 +69,7 @@ import {
   MongoRaidStateStore,
   type RaidStateStore,
 } from "./watcher/raid-state-store.js";
+import { InMemoryLockoutStore, MongoLockoutStore, type LockoutStore } from "./watcher/lockout-store.js";
 import { factionOfRace, splitByFaction, type FactionSplit } from "./watcher/faction.js";
 import { raidEndingDue } from "./watcher/raid-ending.js";
 import {
@@ -243,6 +244,7 @@ interface ConnectionServices {
   readonly buffTracker: BuffTracker;
   readonly broadcasts: BroadcastLedger;
   readonly raidStateStore: RaidStateStore;
+  readonly lockoutStore: LockoutStore;
   readonly durationStore: DurationStore;
   readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
@@ -980,6 +982,17 @@ async function main(): Promise<void> {
     }
   }
 
+  // The per-lane raid lockout ledger — persisted so a redeploy (which restarts the bot) doesn't clear
+  // the locks and let a just-cleared raid's lingering members re-form a phantom duplicate.
+  let lockoutStore: LockoutStore = new InMemoryLockoutStore();
+  if (config.mongodbUri) {
+    try {
+      lockoutStore = await MongoLockoutStore.connect(config.mongodbUri, config.mongodbDb);
+    } catch (error) {
+      logger.error(`raid lockout: MongoDB connect failed (${describeError(error)}); locks won't survive restarts`);
+    }
+  }
+
   // The realm-outage state — persisted so a restart mid-outage doesn't re-announce "server down".
   let serverMonitorStore: ServerMonitorStore = new InMemoryServerMonitorStore();
   if (config.mongodbUri) {
@@ -1032,12 +1045,18 @@ async function main(): Promise<void> {
           },
         ];
 
-  // Resume any raid that was in progress when we last stopped, so its exit is still caught.
+  // Resume any raid that was in progress when we last stopped, so its exit is still caught, and
+  // reload the lockout ledger so the "a player can't be in two raids" rule survives the restart.
   for (const lane of lanes) {
     const state = await raidStateStore.load(lane.label);
     if (state) {
       lane.watch.restoreRaidState(state);
       logger.info(`resumed raid #${state.number ?? "?"} on lane ${lane.label} (${state.roster.length} members, from before restart)`);
+    }
+    const locks = await lockoutStore.load(lane.label);
+    if (locks) {
+      lane.watch.restoreLockout(locks);
+      logger.info(`restored ${Object.keys(locks).length} raid lock(s) on lane ${lane.label}`);
     }
   }
 
@@ -1313,6 +1332,7 @@ async function main(): Promise<void> {
     buffTracker,
     broadcasts,
     raidStateStore,
+    lockoutStore,
     durationStore,
     snapshots,
     store,
@@ -1368,6 +1388,7 @@ async function main(): Promise<void> {
       guildieStore.close(),
       raidCounterStore.close(),
       raidStateStore.close(),
+      lockoutStore.close(),
       serverMonitorStore.close(),
       statusWidgetStore.close(),
       chronicleStore ? chronicleStore.close() : Promise.resolve(),

@@ -402,7 +402,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidDisbandMs = intWithDefault("WOW_RAID_DISBAND_MINUTES", 20, 1) * 60_000;
   const raidFreshWindowMs = intWithDefault("WOW_DROP_FRESH_WINDOW_MINUTES", 40, 1) * 60_000;
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
-  const raidLockoutMs = intWithDefault("WOW_RAID_LOCKOUT_HOURS", 6, 1) * 60 * 60_000;
+  const raidLockoutMs = intWithDefault("WOW_RAID_LOCKOUT_HOURS", 2, 1) * 60 * 60_000;
   const raidFormConfirmMs = intWithDefault("WOW_RAID_FORM_CONFIRM_MINUTES", 0, 0) * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a

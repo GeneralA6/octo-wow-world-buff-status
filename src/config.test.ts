@@ -196,8 +196,8 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_CLEAR_SUSTAINED_MINUTES: "7" }).raidClearSustainedMs).toBe(7 * 60_000);
   });
 
-  it("defaults the raid lockout to 6 hours and accepts an override", () => {
-    expect(loadConfig({ ...minimalEnv }).raidLockoutMs).toBe(6 * 60 * 60_000);
+  it("defaults the raid lockout to 2 hours and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidLockoutMs).toBe(2 * 60 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_RAID_LOCKOUT_HOURS: "12" }).raidLockoutMs).toBe(12 * 60 * 60_000);
   });
 

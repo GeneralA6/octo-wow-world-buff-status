@@ -32,6 +32,7 @@ import type { ConfirmedClear, PendingDeparture } from "./watcher/clear-tracker.j
 import type { DetectionLane, LaneChronicle, YellSink } from "./lanes.js";
 import type { BuffTracker } from "./watcher/buff-tracker.js";
 import type { RaidStateStore } from "./watcher/raid-state-store.js";
+import type { LockoutStore } from "./watcher/lockout-store.js";
 import type { SnapshotStore } from "./watcher/snapshot-store.js";
 import type { SubscriberStore } from "./subscribers/store.js";
 import type { UserLedger } from "./subscribers/user-ledger.js";
@@ -50,6 +51,7 @@ export interface RaidServiceDeps {
   readonly buffTracker: BuffTracker;
   readonly broadcasts: BroadcastLedger;
   readonly raidStateStore: RaidStateStore;
+  readonly lockoutStore: LockoutStore;
   readonly durationStore: DurationStore;
   readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
@@ -87,7 +89,7 @@ export function createRaidService(
   broadcastWhisper: (names: readonly string[], message: string, faction: Faction | null, cities?: readonly Faction[], maxAgeMs?: number) => void,
   getWhisperQueue: () => WhisperQueue | null,
 ) {
-  const { lanes, chronicle, buffTracker, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, push, whisperPool, yellSink } = services;
+  const { lanes, chronicle, buffTracker, broadcasts, raidStateStore, lockoutStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, push, whisperPool, yellSink } = services;
   const lastChronicleCheck = new Map<string, number>();
   let lastHeartbeatAt = 0;
 
@@ -200,6 +202,11 @@ export function createRaidService(
       void raidStateStore
         .save(lane.label, lane.watch.raidStateSnapshot())
         .catch((error) => logger.debug(`raid state save: ${describeError(error)}`));
+      // Persist the lockout ledger too — so a redeploy doesn't clear the locks and let a just-cleared
+      // raid's lingering members re-form a phantom. Saved even when no raid is tracked (it outlives one).
+      void lockoutStore
+        .save(lane.label, lane.watch.lockoutSnapshot())
+        .catch((error) => logger.debug(`lockout save: ${describeError(error)}`));
 
       // Followed a blind gap: the tracker already resumed-or-discarded its raid; skip this read so a
       // crash-and-refill isn't read as a raid starting or ending.
