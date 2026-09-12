@@ -120,59 +120,45 @@ describe("formatRaidDisbanded", () => {
 });
 
 describe("formatBuffDropped", () => {
-  it("titles 'Onyxia buff dropped in <city>' and does NOT repeat it in the body (the title says it)", () => {
-    const msg = formatBuffDropped("alliance", "Gibom");
+  it("titles 'Onyxia buff dropped in <city>', a factual body, and NO tip ask", () => {
+    const msg = formatBuffDropped("alliance");
     expect(msg.title).toBe("🎉 Onyxia buff dropped in Stormwind");
-    expect(msg.body).not.toMatch(/is up in Stormwind/); // no redundant restatement of the title
+    expect(msg.body).toBe("The Rallying Cry of the Dragonslayer is up.");
+    expect(msg.body).not.toMatch(/tip|appreciated|Did you get it/i); // the tip ask is gone
     expect(msg.body).not.toMatch(/<t:/); // Discord's own post-time is the drop time; no "N hours ago"
   });
 
   it("makes NO cooldown / duration claim", () => {
-    const msg = formatBuffDropped("horde", "Gibom");
+    const msg = formatBuffDropped("horde");
     expect(msg.title).toContain("Orgrimmar");
     expect(msg.body).not.toMatch(/cooldown|2h|wears off|until/i);
   });
 
-  it("carries the same tips line on the channel post and the whisper", () => {
-    const tip = "Did you get it? A tip to Gibom is appreciated.";
-    expect(formatBuffDropped("alliance", "Gibom").body).toContain(tip);
-    expect(formatBuffDroppedWhisper("alliance", "Gibom")).toContain(tip);
-  });
-
-  it("saved head explains the origin and drops the tip ask (no credit); fresh keeps the tip", () => {
-    const fresh = formatBuffDropped("alliance", "Gibom");
+  it("a saved head explains the origin (still no tip); a fresh drop just reports the buff", () => {
+    const fresh = formatBuffDropped("alliance");
     expect(fresh.body).not.toMatch(/saved|earlier kill|heads-up/i);
-    expect(fresh.body).toContain("A tip to Gibom is appreciated"); // fresh still asks
-    const saved = formatBuffDropped("alliance", "Gibom", true);
+    const saved = formatBuffDropped("alliance", true);
     expect(saved.body).toContain("saved Onyxia head from an earlier kill");
     expect(saved.body).toMatch(/no raid was in the lair/);
-    expect(saved.body).not.toMatch(/tip to Gibom|Did you get it/i); // no credit ask on a saved head
+    expect(saved.body).not.toMatch(/tip|appreciated/i);
     expect(saved.title).toBe(fresh.title); // same headline; only the body differs
   });
 });
 
 describe("formatBuffDroppedWhisper", () => {
-  it("names the buff and city, with no Discord timestamp (WoW can't render it) and no cooldown claim", () => {
-    const line = formatBuffDroppedWhisper("alliance", "Gibom");
+  it("names the buff and city, with no timestamp, no cooldown claim, and NO tip ask", () => {
+    const line = formatBuffDroppedWhisper("alliance");
     expect(line).toContain("The Rallying Cry of the Dragonslayer just dropped in Stormwind");
     expect(line).not.toMatch(/<t:/);
     expect(line).not.toMatch(/cooldown|2h|at least/i);
+    expect(line).not.toMatch(/tip|appreciated|Did you get it/i);
   });
 
   it("appends a short Discord CTA when an invite is given, and omits it otherwise", () => {
-    const withCta = formatBuffDroppedWhisper("alliance", "Gibom", "discord.gg/xyz");
+    const withCta = formatBuffDroppedWhisper("alliance", "discord.gg/xyz");
     expect(withCta).toContain("Discord is instant: discord.gg/xyz");
     expect(withCta).toMatch(/lag/i); // explains why (server throttle)
-    expect(formatBuffDroppedWhisper("alliance", "Gibom")).not.toMatch(/discord/i);
-  });
-
-  it("drops the tip ask on a saved head, keeping the buff line and the Discord CTA", () => {
-    const saved = formatBuffDroppedWhisper("alliance", "Gibom", "discord.gg/xyz", true);
-    expect(saved).toContain("The Rallying Cry of the Dragonslayer just dropped in Stormwind");
-    expect(saved).toContain("Discord is instant: discord.gg/xyz");
-    expect(saved).not.toMatch(/tip to Gibom|Did you get it/i); // no credit ask on a saved head
-    // Fresh keeps the tip.
-    expect(formatBuffDroppedWhisper("alliance", "Gibom", "discord.gg/xyz", false)).toContain("A tip to Gibom is appreciated");
+    expect(formatBuffDroppedWhisper("alliance")).not.toMatch(/discord/i);
   });
 });
 

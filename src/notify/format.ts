@@ -21,11 +21,6 @@ function cityList(cities: readonly Faction[]): string {
   return names[0] ?? "a capital";
 }
 
-/** The tips line — identical on the channel post and the in-game whisper, so a reader sees
- *  the same words wherever the drop reaches them. Gold is mailed in-game to `author`. */
-function tipsLine(author: string): string {
-  return `Did you get it? A tip to ${author} is appreciated.`;
-}
 
 /**
  * A raid reached strength — the buff is ~a clear-time away. `typicalClear` is the reader-facing
@@ -135,18 +130,14 @@ export function formatRaidDisbandedWhisper(raidNumber: number | null, durationMs
  */
 /**
  * The buff-drop channel post. When `savedHead` is set (no raid was in the lair when it dropped — see
- * `drop-origin.ts`), it appends one humble line explaining the drop came from a head turned in from
- * an earlier kill, so a reader understands why there was no heads-up. It takes no credit: a fresh
- * kill adds nothing here, because the park-now alert already served as the warning.
+ * `drop-origin.ts`), it appends one line explaining the drop came from a head turned in from an
+ * earlier kill, so a reader understands why there was no heads-up. A fresh drop just reports the buff.
  */
-export function formatBuffDropped(faction: Faction, author: string, savedHead = false): NotifyMessage {
+export function formatBuffDropped(faction: Faction, savedHead = false): NotifyMessage {
   const city = CITY_FOR[faction];
-  // The title already says the buff dropped and where. A fresh kill asks for a tip; a saved head
-  // takes NO credit — the bot warned about nothing — so it drops the tip line and just explains why
-  // there was no heads-up.
   const body = savedHead
     ? "This one's a saved Onyxia head from an earlier kill - no raid was in the lair, so there was no heads-up."
-    : tipsLine(author);
+    : "The Rallying Cry of the Dragonslayer is up.";
   return {
     kind: "info",
     title: `🎉 Onyxia buff dropped in ${city}`,
@@ -157,17 +148,11 @@ export function formatBuffDropped(faction: Faction, author: string, savedHead = 
 /** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell fires.
  *  A "light" (non-urgent) broadcast, so it carries the Discord nudge — in-game pings are throttled
  *  and can lag, Discord does not. `discordInvite` omitted leaves it off. */
-export function formatBuffDroppedWhisper(
-  faction: Faction,
-  author: string,
-  discordInvite?: string,
-  savedHead = false,
-): string {
+export function formatBuffDroppedWhisper(faction: Faction, discordInvite?: string): string {
+  // No title here (it's an in-game whisper), so state the buff and city; append the Discord nudge if
+  // set (in-game pings can lag). No tip ask.
   const cta = discordInvite ? ` In-game pings can lag - Discord is instant: ${discordInvite}` : "";
-  // A saved head takes no credit — drop the tip ask, keep the buff line (the whisper has no title)
-  // and the Discord CTA. A fresh kill keeps the tip.
-  const tip = savedHead ? "" : ` ${tipsLine(author)}`;
-  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}!${tip}${cta}`;
+  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}!${cta}`;
 }
 
 /**

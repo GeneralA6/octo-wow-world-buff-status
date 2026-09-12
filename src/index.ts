@@ -541,8 +541,8 @@ async function runConnection(
             outreach.setChannel((nameTo, msg) => whisperQueue?.enqueue(nameTo, msg), guildInvite);
             router.setGuildInvite(guildInvite);
             // The watcher can now whisper, so route listener-heard buff drops through it.
-            buffDropSink.notify = (faction, _appliedAt, savedHead) =>
-              void raidService.announceBuffDrop(faction, savedHead).catch((error) =>
+            buffDropSink.notify = (faction) =>
+              void raidService.announceBuffDrop(faction).catch((error) =>
                 logger.error(`buff-drop announce: ${describeError(error)}`),
               );
           }
@@ -1262,7 +1262,7 @@ async function main(): Promise<void> {
     const drop = buffTracker.record(faction, { sourceName, text, detectedBy }, Date.now());
     if (drop === null) return; // a duplicate a second same-city listener heard
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
-    void push(formatBuffDropped(faction, config.author, drop.origin === "saved"), [faction]); // channel, pinging that side's role
+    void push(formatBuffDropped(faction, drop.origin === "saved"), [faction]); // channel, pinging that side's role
     buffDropSink.notify?.(faction, drop.appliedAt, drop.origin === "saved");
   };
 

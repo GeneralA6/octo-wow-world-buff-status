@@ -133,7 +133,7 @@ export function createRaidService(
     };
 
     // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
-    const announceBuffDrop = (faction: Faction, savedHead: boolean): Promise<void> => {
+    const announceBuffDrop = (faction: Faction): Promise<void> => {
       // The buff is UP now, so any still-queued "park now to catch it" whispers for this side are
       // stale — purge them before sending the "it's up" message, or a subscriber would be told to
       // park after being told it already dropped.
@@ -142,7 +142,7 @@ export function createRaidService(
       // A drop whisper delivered minutes late (throttle backlog) is the Owlofelune case — expire it.
       return delivery.sendFactionWhisper(
         faction,
-        formatBuffDroppedWhisper(faction, config.author, config.discordServerInvite ?? undefined, savedHead),
+        formatBuffDroppedWhisper(faction, config.discordServerInvite ?? undefined),
         config.whisperMaxAgeMs,
       );
     };
