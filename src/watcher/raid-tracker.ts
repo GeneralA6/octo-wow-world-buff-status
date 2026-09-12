@@ -41,6 +41,8 @@ export interface RaidTrackerOptions {
   /** How long the roster must hold at strength (uninterrupted) before the "formed" event fires —
    *  0 (default) fires the instant strength is reached. See ClearTracker.formConfirmMs. */
   readonly formConfirmMs?: number;
+  /** A player in one raid can't found/join a different raid for this long — the Onyxia lockout rule. */
+  readonly lockoutMs?: number;
   /** A newcomer joins the tracked raid only if they first appeared within this long of formation. */
   readonly fillWindowMs?: number;
   /** The tracked roster never grows past this — a backstop against absorbing a second raid. */
@@ -90,6 +92,7 @@ export class RaidTracker {
       formConfirmMs: options.formConfirmMs,
       fillWindowMs: options.fillWindowMs,
       rosterCap: options.rosterCap,
+      lockoutMs: options.lockoutMs,
       nextNumber: options.nextRaidNumber,
     });
   }

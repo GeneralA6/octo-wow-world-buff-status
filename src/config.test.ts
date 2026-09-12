@@ -196,6 +196,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_CLEAR_SUSTAINED_MINUTES: "7" }).raidClearSustainedMs).toBe(7 * 60_000);
   });
 
+  it("defaults the raid lockout to 6 hours and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).raidLockoutMs).toBe(6 * 60 * 60_000);
+    expect(loadConfig({ ...minimalEnv, WOW_RAID_LOCKOUT_HOURS: "12" }).raidLockoutMs).toBe(12 * 60 * 60_000);
+  });
+
   it("defaults the capital status-yell cadence to 10 minutes and accepts an override", () => {
     expect(loadConfig({ ...minimalEnv }).statusYellMs).toBe(10 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_STATUS_YELL_MINUTES: "15" }).statusYellMs).toBe(15 * 60_000);

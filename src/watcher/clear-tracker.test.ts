@@ -410,3 +410,56 @@ describe("ClearTracker formation confirm window (formConfirmMs)", () => {
     expect(t.observe(R(20), 5 * MIN, false).formed).not.toBeNull(); // still a 5m continuous hold
   });
 });
+
+// The Onyxia lockout rule: a player in one raid can't found/join a DIFFERENT raid. A cleared raid's
+// members, lingering in the lair, must NOT re-trip "formed" as a phantom duplicate (the #96/#97 case).
+describe("ClearTracker — lockout rule", () => {
+  /** Form + confirm a raid of r0..r29, then clear it (roster leaves and stays gone). */
+  function formThenClear(t: ClearTracker): void {
+    t.observe(R(30), 0, false); // forms + confirms (confirmMs 0), locks r0..r29
+    t.observe(R(30), 30 * MIN, false); // still up — refreshes the lock
+    t.observe(R(0), 41 * MIN, false); // departure begins
+    const clear = t.observe(R(0), 46 * MIN, false).clear; // 5 min sustained → cleared
+    expect(clear).not.toBeNull();
+    expect(t.tracking).toBe(false);
+  }
+
+  it("a cleared raid's lingering members cannot re-form a phantom raid", () => {
+    const t = tracker();
+    formThenClear(t);
+    // The SAME members are still/again at strength — locked, so NO new raid forms.
+    expect(t.observe(R(30), 48 * MIN, false).formed).toBeNull();
+    expect(t.tracking).toBe(false);
+    expect(t.observe(R(30), 90 * MIN, false).formed).toBeNull(); // still within the lockout
+    expect(t.tracking).toBe(false);
+  });
+
+  it("a genuinely different crowd forms a new raid after a clear", () => {
+    const t = tracker();
+    formThenClear(t);
+    expect(t.observe(C(30), 48 * MIN, false).formed).not.toBeNull(); // c0..c29 are unlocked
+    expect(t.tracking).toBe(true);
+  });
+
+  it("forms from the FRESH players when locked stragglers are mixed in", () => {
+    const t = tracker();
+    formThenClear(t);
+    // 10 locked stragglers (r) + 20 fresh (c): fresh 20 >= formAt 15 → forms.
+    expect(t.observe([...R(10), ...C(20)], 48 * MIN, false).formed).not.toBeNull();
+  });
+
+  it("does NOT form when the fresh players alone are below strength", () => {
+    const t = tracker();
+    formThenClear(t);
+    // 25 locked stragglers (r) + 10 fresh (c): only 10 fresh < 15 → no raid.
+    expect(t.observe([...R(25), ...C(10)], 48 * MIN, false).formed).toBeNull();
+    expect(t.tracking).toBe(false);
+  });
+
+  it("releases a player once the lockout elapses (a genuinely new, later raid)", () => {
+    const t = tracker({ lockoutMs: 60 * MIN });
+    formThenClear(t); // r's last locked at 30 min
+    expect(t.observe(R(30), 80 * MIN, false).formed).toBeNull(); // 80-30 = 50 < 60 → still locked
+    expect(t.observe(R(30), 95 * MIN, false).formed).not.toBeNull(); // 95-30 = 65 >= 60 → released
+  });
+});

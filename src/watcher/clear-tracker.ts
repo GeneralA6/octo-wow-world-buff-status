@@ -25,6 +25,12 @@
  * A departure is a clear only once cohort-present stays below strength for `sustainedMs` (a wipe
  * recovers well inside that). A blackout (our DC or a server outage) discards the in-progress
  * measurement rather than reading the mass drop as an instant clear.
+ *
+ * LOCKOUT RULE: Onyxia is a lockout boss, so a character cannot be in two distinct raids. While a
+ * raid is tracked, every roster member is "locked" to it (for `lockoutMs`). A NEW raid forms only
+ * from players who are NOT locked — so a cleared raid's members, lingering in the lair after the
+ * kill, cannot re-trip "raid formed" as a phantom duplicate (the #96/#97 case). The lock outlives
+ * the clear (it persists `lockoutMs`, not just while present) and survives a blind gap.
  */
 export interface ClearTrackerOptions {
   /** A raid is present once this many players are in the zone. */
@@ -50,6 +56,9 @@ export interface ClearTrackerOptions {
    *  later raid is a fresh arrival, not a stale early one). Longer than a corpse run, shorter than
    *  the gap between raids. Default max(8 min, 2× sustained). */
   readonly stintGapMs?: number;
+  /** A player in one raid's roster cannot found or join a DIFFERENT raid for this long — the Onyxia
+   *  lockout rule. Stops a cleared raid's lingering members from re-forming a phantom raid. Default 6h. */
+  readonly lockoutMs?: number;
   /** Assigns the next monotonic raid number when a raid forms. Omit to leave raids unnumbered. */
   readonly nextNumber?: () => number;
 }
@@ -105,6 +114,7 @@ export interface ClearTrackerState {
 
 const DEFAULT_FILL_WINDOW_MS = 5 * 60_000;
 const DEFAULT_ROSTER_CAP = 30;
+const DEFAULT_LOCKOUT_MS = 6 * 60 * 60_000;
 
 export class ClearTracker {
   readonly #formAt: number;
@@ -114,6 +124,7 @@ export class ClearTracker {
   readonly #rosterCap: number;
   readonly #stintGapMs: number;
   readonly #confirmMs: number;
+  readonly #lockoutMs: number;
   readonly #nextNumber?: () => number;
 
   #formedAt: number | null = null;
@@ -127,6 +138,10 @@ export class ClearTracker {
   // raids (a clear resets the raid, not this); only a blackout clears it.
   #firstSeen = new Map<string, number>();
   #lastSeen = new Map<string, number>();
+  // The lockout ledger: name -> when it was last locked to a raid. A locked player cannot found or
+  // join a DIFFERENT raid until `lockoutMs` after their raid last held them. Outlives the clear and a
+  // blind gap (a DC doesn't un-lock anyone); pruned on expiry.
+  #locked = new Map<string, number>();
 
   constructor(options: ClearTrackerOptions) {
     this.#formAt = options.formAt;
@@ -136,6 +151,7 @@ export class ClearTracker {
     this.#rosterCap = options.rosterCap ?? DEFAULT_ROSTER_CAP;
     this.#stintGapMs = options.stintGapMs ?? Math.max(8 * 60_000, options.sustainedMs * 2);
     this.#confirmMs = options.formConfirmMs ?? 0;
+    this.#lockoutMs = options.lockoutMs ?? DEFAULT_LOCKOUT_MS;
     this.#nextNumber = options.nextNumber;
   }
 
@@ -247,11 +263,15 @@ export class ClearTracker {
     }
 
     this.#trackArrivals(names, now);
+    this.#pruneLocks(now);
 
     if (this.#formedAt === null) {
-      if (names.length >= this.#formAt) {
+      // A new raid forms only from players NOT locked to a recent raid (the Onyxia lockout rule) —
+      // so a just-cleared raid's members, lingering in the lair, can't re-form a phantom duplicate.
+      const fresh = names.filter((name) => !this.#isLocked(name, now));
+      if (fresh.length >= this.#formAt) {
         this.#formedAt = now;
-        this.#roster = new Set(names.slice(0, this.#rosterCap));
+        this.#roster = new Set(fresh.slice(0, this.#rosterCap));
         this.#peak = this.#roster.size;
         this.#belowSince = null;
         this.#stableSince = now;
@@ -268,6 +288,7 @@ export class ClearTracker {
     const fillDeadline = this.#formedAt + this.#fillWindowMs;
     for (const name of names) {
       if (this.#roster.has(name) || this.#roster.size >= this.#rosterCap) continue;
+      if (this.#isLocked(name, now)) continue; // locked to another raid — can't join this one
       if ((this.#firstSeen.get(name) ?? now) <= fillDeadline) this.#roster.add(name);
     }
 
@@ -298,6 +319,7 @@ export class ClearTracker {
       // view: the real count is >= this, so it's over the floor either way.
       if (cohort > this.#peak) this.#peak = cohort;
       this.#belowSince = null;
+      this.#lockRoster(now); // keep this raid's members locked while it holds (outlives the clear)
       return { clear: null, formed: null };
     }
 
@@ -334,7 +356,26 @@ export class ClearTracker {
     this.#confirmed = true;
     this.#number = this.#nextNumber?.() ?? null;
     this.#belowSince = null;
+    this.#lockRoster(now); // lock the founding roster to this raid
     return { clear: null, formed: { number: this.#number, peak: this.#peak } };
+  }
+
+  /** Lock every current roster member to this raid as of `now`. A locked player can't found or join
+   *  a DIFFERENT raid until `lockoutMs` later — so lingering members never seed a phantom re-form. */
+  #lockRoster(now: number): void {
+    for (const name of this.#roster) this.#locked.set(name, now);
+  }
+
+  /** Is this player still locked to a recent raid (and so barred from a new one)? */
+  #isLocked(name: string, now: number): boolean {
+    const at = this.#locked.get(name);
+    return at !== undefined && now - at < this.#lockoutMs;
+  }
+
+  /** Drop locks past their window, so the ledger stays bounded and a genuinely new (post-reset) raid
+   *  is eventually allowed to re-use a name. */
+  #pruneLocks(now: number): void {
+    for (const [name, at] of this.#locked) if (now - at >= this.#lockoutMs) this.#locked.delete(name);
   }
 
   /** Record when each present player was first seen (their arrival), resetting anyone who

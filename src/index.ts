@@ -1014,6 +1014,7 @@ async function main(): Promise<void> {
     formConfirmMs: config.raidFormConfirmMs,
     fillWindowMs: config.raidFillWindowMs,
     rosterCap: config.raidRosterCap,
+    lockoutMs: config.raidLockoutMs,
     nextRaidNumber,
   };
   const lanes: DetectionLane[] =
