@@ -94,6 +94,7 @@ import { DownTracker } from "./down-tracker.js";
 import { ServerMonitor } from "./server-monitor.js";
 import { InMemoryServerMonitorStore, MongoServerMonitorStore, type ServerMonitorStore } from "./server-monitor-store.js";
 import { isRealmStable, latencySpread, medianLatency, type PingSample, type RealmHealthThresholds } from "./realm-health.js";
+import { RealmPopulation, observePopulation } from "./realm-population.js";
 import {
   ServerStatusWidget,
   serverDownNotice,
@@ -261,6 +262,9 @@ interface ConnectionServices {
   /** Shared lair-poll signal: the watcher stamps it each /who, the listener's recordBuff reads it to
    *  tell a fresh-kill drop from a saved-head turn-in (empty lair). */
   readonly lairActivity: LairActivity;
+  /** Shared realm-population signal: every watcher /who reply carries the realm-wide online count,
+   *  and the status widget reads the latest off this. See realm-population.ts. */
+  readonly realmPopulation: RealmPopulation;
   readonly yellSink: YellSink;
   readonly push: (message: NotifyMessage, factions?: readonly Faction[]) => Promise<void>;
   /** Post an operational/error notice to the errors Discord channel (or log-only if unset). */
@@ -283,7 +287,7 @@ async function runConnection(
   // on a stable, reasonable ping (a raid can't run on a laggy server).
   onLatency: (rttMs: number) => void,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, yellSink, push, notifyAdmin, notifyTests, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const { sessionKey, realms } = await new AuthClient(logger).login({
@@ -416,7 +420,7 @@ async function runConnection(
     // One /who at a time on this socket: the poll (sliced into several) and the subscribe
     // faction lookups all queue here so they never collide (world.whoOnce allows one).
     let whoChain: Promise<unknown> = Promise.resolve();
-    const queuedWho = (query: WhoQuery): Promise<WhoResult> => {
+    const runQueuedWho = (query: WhoQuery): Promise<WhoResult> => {
       const run = (): Promise<WhoResult> => world.whoOnce(query, config.whoTimeoutMs);
       const result = whoChain.then(run, run);
       whoChain = result.then(
@@ -425,6 +429,10 @@ async function runConnection(
       );
       return result;
     };
+    // Every /who reply carries the realm-wide online count, whatever the query filtered on, so the
+    // status widget's population is read HERE rather than from a census query of its own — the
+    // server's per-IP /who throttle is tight enough that the raid poll already has to pace itself.
+    const queuedWho = observePopulation(runQueuedWho, realmPopulation);
 
     // Where the lair roster comes from. The poll consumes this interface, never /who directly, so a
     // friends-list source can replace it later without touching detection (see RAID_ARCHITECTURE.md).
@@ -1238,6 +1246,9 @@ async function main(): Promise<void> {
   const buffDropSink: BuffDropSink = { notify: null };
   // The watcher stamps this each /who poll; recordBuff (on a listener) reads it to classify a drop.
   const lairActivity = newLairActivity();
+  // Filled from every watcher /who (they all carry the realm-wide online count) and read by the
+  // status widget. A reading expires, so an outage shows "unknown" rather than a pre-outage count.
+  const realmPopulation = new RealmPopulation();
   // Each city listener registers its /yell here on login (and clears it on disconnect), so
   // an alert can be shouted to everyone standing in that capital, not only to subscribers.
   const yellSink: YellSink = {};
@@ -1344,6 +1355,7 @@ async function main(): Promise<void> {
     outreach,
     buffDropSink,
     lairActivity,
+    realmPopulation,
     yellSink,
     push,
     notifyAdmin,
@@ -1512,6 +1524,7 @@ async function main(): Promise<void> {
         up,
         pingMedianMs: medianLatency(watcherPings, now, health.windowMs),
         pingSpreadMs: latencySpread(watcherPings, now, health.windowMs),
+        playersOnline: realmPopulation.current(now),
         stateSince: up ? realmUpSince : serverMonitor.snapshot().downSince,
         watchingSince,
         now,

@@ -240,8 +240,9 @@ export class AuthClient {
       const realms = parseRealmList(realmResponse.subarray(3));
       this.#logger.debug(`auth: ${realms.length} realm(s) returned`);
       // Log the population float + character count the realm list carries (parseRealmList used to
-      // discard both). Their meaning is core-specific, so this is a measurement to read off the logs
-      // before deciding whether population is worth showing in the status widget — not yet a feature.
+      // discard both). Kept as a diagnostic only: the status widget's player count comes from the
+      // /who online count instead (see realm-population.ts), which is a live head count rather than
+      // this core-specific float, and is refreshed every poll instead of once per logon.
       for (const realm of realms) {
         this.#logger.info(`auth: realm "${realm.name}" population=${realm.population} characters=${realm.characters}`);
       }

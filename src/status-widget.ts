@@ -38,6 +38,9 @@ export interface LiveRealmStatus {
   readonly pingMedianMs: number | null;
   /** Spread (max-min) of recent round-trips — the jitter measure — or null if no pongs. */
   readonly pingSpreadMs: number | null;
+  /** Realm-wide players online from the latest `/who`, or null if no fresh reading (see
+   *  realm-population.ts — the count expires, so an outage never freezes a pre-outage number here). */
+  readonly playersOnline: number | null;
   /** When the current up/down state began (epoch ms), or null if unknown. */
   readonly stateSince: number | null;
   /** When the bot started watching this realm (epoch ms) — for the "watching for" footer. */
@@ -52,6 +55,8 @@ export interface ServerStatusView {
   readonly realm: string;
   readonly up: boolean;
   readonly response: RealmResponse;
+  /** Realm-wide players online, or null when there is no fresh reading. */
+  readonly playersOnline: number | null;
   readonly stateSince: number | null;
   readonly watchingSince: number;
   readonly now: number;
@@ -86,6 +91,19 @@ function statusField(view: ServerStatusView): string {
   if (view.stateSince === null) return word;
   const forHowLong = humanSpan(view.now - view.stateSince);
   return view.up ? `${word}, up ${forHowLong}` : `${word}, ${forHowLong}`;
+}
+
+/** Group thousands so a four-figure population reads at a glance: 1204 -> "1,204". The locale is
+ *  pinned so the rendering is identical whatever the host's is. */
+function formatCount(count: number): string {
+  return count.toLocaleString("en-US");
+}
+
+/** The population field — the realm-wide online count off the latest `/who`. "Checking…" until one
+ *  lands (the same wording the response field uses for "no reading yet"), so the field keeps its slot
+ *  rather than appearing and vanishing between refreshes. */
+function playersOnlineField(playersOnline: number | null): string {
+  return playersOnline === null ? "Checking…" : formatCount(playersOnline);
 }
 
 /** The realm-response field — a qualitative verdict against the realm's own baseline, no ms. */
@@ -127,11 +145,19 @@ export function buildServerStatusEmbed(view: ServerStatusView): DiscordEmbed {
   const color = !view.up ? COLOR_DOWN : offHealth ? COLOR_LAGGY : COLOR_UP;
   const dot = !view.up ? "🔴" : offHealth ? "🟡" : "🟢"; // 🔴 🟡 🟢
 
+  // Population and response are omitted while the realm is down: there is no live `/who` to count
+  // from and no ping to judge, so both would read "Checking…" and say nothing.
+  const liveFields: DiscordEmbed["fields"] = view.up
+    ? [
+        { name: "Players online", value: playersOnlineField(view.playersOnline), inline: true },
+        // A qualitative reading against the realm's own baseline — the bot pings from the US, so an
+        // absolute ms would be meaningless to a reader elsewhere. See realm-response.ts.
+        { name: "Realm response", value: responseField(view.response), inline: true },
+      ]
+    : [];
   const fields: DiscordEmbed["fields"] = [
     { name: "Status", value: statusField(view), inline: true },
-    // A qualitative reading against the realm's own baseline — the bot pings from the US, so an
-    // absolute ms would be meaningless to a reader elsewhere. See realm-response.ts.
-    ...(view.up ? [{ name: "Realm response", value: responseField(view.response), inline: true } as const] : []),
+    ...liveFields,
     { name: "Last outage", value: lastOutageField(view), inline: true },
   ];
 
@@ -299,6 +325,7 @@ export class ServerStatusWidget {
       realm: live.realm,
       up: live.up,
       response,
+      playersOnline: live.playersOnline,
       stateSince: live.stateSince,
       watchingSince: live.watchingSince,
       now: live.now,

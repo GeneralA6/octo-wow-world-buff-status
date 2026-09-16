@@ -25,6 +25,7 @@ function view(overrides: Partial<ServerStatusView> = {}): ServerStatusView {
     realm: "N'Zoth",
     up: true,
     response: "steady",
+    playersOnline: 661,
     stateSince: NOW - 3 * 60 * 60_000, // up 3h
     watchingSince: NOW - 2 * 24 * 60 * 60_000, // watching 2d
     now: NOW,
@@ -116,6 +117,23 @@ describe("buildServerStatusEmbed", () => {
     expect(fieldValue(embed, "Last outage")).toBe("2h ago · lasted 12m");
   });
 
+  it("shows the realm's online player count, grouped for four figures", () => {
+    expect(fieldValue(buildServerStatusEmbed(view()), "Players online")).toBe("661");
+    expect(fieldValue(buildServerStatusEmbed(view({ playersOnline: 1204 })), "Players online")).toBe("1,204");
+    expect(fieldValue(buildServerStatusEmbed(view({ playersOnline: 0 })), "Players online")).toBe("0");
+  });
+
+  it("says it is still checking when no /who count has landed yet", () => {
+    expect(fieldValue(buildServerStatusEmbed(view({ playersOnline: null })), "Players online")).toBe("Checking…");
+  });
+
+  it("drops the player count while the realm is down — there is no live /who to count from", () => {
+    const embed = buildServerStatusEmbed(view({ up: false, playersOnline: 661 }));
+    expect(fieldValue(embed, "Players online")).toBeUndefined();
+    expect(fieldValue(embed, "Realm response")).toBeUndefined();
+    expect(fieldValue(embed, "Status")).toBe("Down, 3h");
+  });
+
   it("omits the duration when the state's start is unknown", () => {
     expect(fieldValue(buildServerStatusEmbed(view({ stateSince: null })), "Status")).toBe("Online");
     expect(fieldValue(buildServerStatusEmbed(view({ up: false, stateSince: null })), "Status")).toBe("Down");
@@ -130,6 +148,7 @@ function liveSnapshot(overrides: Partial<LiveRealmStatus> = {}): LiveRealmStatus
     up: true,
     pingMedianMs: 74,
     pingSpreadMs: 12,
+    playersOnline: 661,
     stateSince: NOW - 3 * 60 * 60_000,
     watchingSince: NOW - 2 * 24 * 60 * 60_000,
     now: NOW,
@@ -169,6 +188,11 @@ function spyLogger(): Logger {
   return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 }
 
+/** A field's value in the embed of a message the widget sent to the channel. */
+function embedField(message: ChannelMessage | undefined, name: string): string | undefined {
+  return message?.embeds?.[0]?.fields?.find((field) => field.name === name)?.value;
+}
+
 describe("ServerStatusWidget", () => {
   it("creates the message the first time and persists its id", async () => {
     const channel: StatusChannel = {
@@ -184,6 +208,26 @@ describe("ServerStatusWidget", () => {
     expect(channel.create).toHaveBeenCalledOnce();
     expect(channel.edit).not.toHaveBeenCalled();
     expect(store.saved.at(-1)?.messageId).toBe("m1");
+  });
+
+  it("carries the snapshot's live player count into the rendered embed", async () => {
+    const create = vi.fn<StatusChannel["create"]>().mockResolvedValue({ ok: true, messageId: "m1" });
+    const edit = vi.fn<StatusChannel["edit"]>().mockResolvedValue({ ok: true });
+    let playersOnline: number | null = 661;
+    const widget = new ServerStatusWidget({
+      channel: { create, edit },
+      store: memoryStore(),
+      snapshot: () => liveSnapshot({ playersOnline }),
+      logger: silentLogger,
+    });
+
+    await widget.load();
+    await widget.refresh();
+    expect(embedField(create.mock.calls.at(-1)?.[0], "Players online")).toBe("661");
+
+    playersOnline = 1204; // the realm filled up between refreshes
+    await widget.refresh();
+    expect(embedField(edit.mock.calls.at(-1)?.[1], "Players online")).toBe("1,204");
   });
 
   it("edits the same message on the next refresh, never reposting", async () => {
