@@ -58,6 +58,15 @@ export type ObserveOutcome =
   /** A faire broadcast with no usable sender — it cannot vote, and a silent feed would follow. */
   | "unidentified";
 
+/** The faire was seen when the schedule says it is away. Carries the ZONE too: the rule being
+ *  wrong is only half the story, and which zone it was actually in is what a human needs to fix it. */
+export interface ScheduleConflict {
+  readonly seenAt: number;
+  readonly location: FaireLocation;
+  readonly source: "onsite" | "sighting";
+  readonly witness: string;
+}
+
 export interface FaireServiceDeps {
   readonly schedule: FaireSchedule;
   readonly store: KnowledgeStore;
@@ -67,7 +76,7 @@ export interface FaireServiceDeps {
   readonly corroboration?: CorroborationPolicy;
   /** Fired when the faire is seen at a moment the schedule says it is away — the rule is wrong
    *  and only a human can fix it. Carries the instant it was seen. */
-  readonly onScheduleConflict?: (sightedAt: number) => void;
+  readonly onScheduleConflict?: (conflict: ScheduleConflict) => void;
 }
 
 export class FaireService {
@@ -127,7 +136,14 @@ export class FaireService {
       // The faire was seen when the calendar says it is nowhere. Nothing can be anchored to a
       // window the schedule does not believe exists, so this teaches us only that the rule needs
       // a human. Only reported once corroborated, so one troll line cannot raise the alarm.
-      if (contradictsSchedule(this.#deps.schedule, seenAt)) this.#deps.onScheduleConflict?.(seenAt);
+      if (contradictsSchedule(this.#deps.schedule, seenAt)) {
+        this.#deps.onScheduleConflict?.({
+          seenAt,
+          location: broadcast.location,
+          source: "sighting",
+          witness: broadcast.witness,
+        });
+      }
       return "counted";
     }
     this.#settled = { location: observation.location, acceptedAt: receivedAt };
@@ -154,7 +170,9 @@ export class FaireService {
     if (observation === null) {
       // We are looking straight at the faire on a day the rule says it is away. Coming from our
       // own client this is as close to proof as the bot gets that the schedule config is wrong.
-      if (contradictsSchedule(this.#deps.schedule, seenAt)) this.#deps.onScheduleConflict?.(seenAt);
+      if (contradictsSchedule(this.#deps.schedule, seenAt)) {
+        this.#deps.onScheduleConflict?.({ seenAt, location, source: "onsite", witness: npc });
+      }
       return false;
     }
     const current = this.#knowledge.onsite;

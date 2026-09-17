@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FaireService, type ObserveOutcome } from "./service.js";
+import { FaireService, type ObserveOutcome, type ScheduleConflict } from "./service.js";
 import { VANILLA_SCHEDULE } from "./schedule.js";
 import { InMemoryKnowledgeStore, type KnowledgeStore } from "./knowledge-store.js";
 import { DEFAULT_CORROBORATION, type CorroborationPolicy } from "./corroboration.js";
@@ -16,7 +16,7 @@ function makeService(
   store: KnowledgeStore = new InMemoryKnowledgeStore(),
   hooks: {
     onObservation?: (observation: FaireObservation) => void;
-    onScheduleConflict?: (sightedAt: number) => void;
+    onScheduleConflict?: (conflict: ScheduleConflict) => void;
     corroboration?: CorroborationPolicy;
   } = {},
 ): FaireService {
@@ -95,7 +95,12 @@ describe("FaireService.observeChannel", () => {
     const service = makeService(new InMemoryKnowledgeStore(), { onScheduleConflict });
     // Seen on a day the vanilla rule says the faire has already left.
     expect(await flood(service, "PWB_DMF:10401:M-60-Someplayer", AFTER)).toBe("counted");
-    expect(onScheduleConflict).toHaveBeenCalledWith(AFTER - 60_000);
+    expect(onScheduleConflict).toHaveBeenCalledWith({
+      seenAt: AFTER - 60_000,
+      location: "mulgore",
+      source: "sighting",
+      witness: "Someplayer",
+    });
     expect(service.knowledge.sighting).toBeNull();
   });
 
@@ -336,7 +341,12 @@ describe("FaireService.observeNearbyNpc", () => {
     const onScheduleConflict = vi.fn();
     const service = makeService(new InMemoryKnowledgeStore(), { onScheduleConflict });
     expect(await service.observeNearbyNpc("Silas Darkmoon", "elwynn", AFTER)).toBe(false);
-    expect(onScheduleConflict).toHaveBeenCalledWith(AFTER);
+    expect(onScheduleConflict).toHaveBeenCalledWith({
+      seenAt: AFTER,
+      location: "elwynn",
+      source: "onsite",
+      witness: "Silas Darkmoon",
+    });
     expect(service.knowledge.onsite).toBeNull();
   });
 

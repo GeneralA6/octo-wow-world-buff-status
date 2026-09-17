@@ -1254,6 +1254,11 @@ async function main(): Promise<void> {
       logger.error(`darkmoon: MongoDB connect failed (${describeError(error)}); remembering in memory`);
     }
   }
+  // A schedule mismatch cannot be fixed by the bot, so it is logged sparingly rather than on every
+  // rebroadcast the realm makes.
+  const SCHEDULE_CONFLICT_LOG_MS = 3_600_000;
+  let lastScheduleConflictLoggedAt = 0;
+
   // Which message the Darkmoon board owns. Its own tiny document: losing it would orphan the board
   // and post a second one on every redeploy.
   let darkmoonWidgetStore: DarkmoonWidgetStore = new InMemoryDarkmoonWidgetStore();
@@ -1280,12 +1285,19 @@ async function main(): Promise<void> {
     // A wrong zone heals itself — it flips the alternation for good. A sighting outside every
     // calendar week cannot: it means this realm runs the faire on a different cadence, and only
     // the DARKMOON_* schedule config fixes that.
-    onScheduleConflict: (seenAt) =>
+    // Throttled: the realm rebroadcasts sightings every few seconds, so an unfixable mismatch would
+    // otherwise fill the log with the same line forever. Once an hour is enough to notice it, and
+    // the zone is included because knowing the rule is wrong is only half of what a human needs.
+    onScheduleConflict: (conflict) => {
+      const now = Date.now();
+      if (now - lastScheduleConflictLoggedAt < SCHEDULE_CONFLICT_LOG_MS) return;
+      lastScheduleConflictLoggedAt = now;
       logger.warn(
-        `darkmoon: faire seen ${new Date(seenAt).toISOString()}, when the schedule says it is away — ` +
-          `the DARKMOON_SETUP_WEEKDAY/_OCCURRENCE/_SETUP_DAYS/_DURATION_DAYS rule does not match ` +
-          `this realm and needs correcting`,
-      ),
+        `darkmoon: faire seen in ${conflict.location} (${conflict.source}, ${conflict.witness}) at ` +
+          `${new Date(conflict.seenAt).toISOString()}, when the schedule says it is away — the ` +
+          `DARKMOON_SETUP_WEEKDAY/_OCCURRENCE/_SETUP_DAYS/_DURATION_DAYS rule does not match this realm`,
+      );
+    },
   });
   await faire.load().catch((error) => logger.error(`darkmoon: load failed (${describeError(error)})`));
   const known = faire.knowledge.herald ?? faire.knowledge.sighting;
