@@ -422,7 +422,13 @@ async function runConnection(
       })().catch((error) => logger.error(`broadcast whisper: ${describeError(error)}`));
     };
 
-    const raidService = createRaidService(services, config, logger, broadcastWhisper, () => whisperQueue);
+    const raidService = createRaidService(
+      { ...services, faireAnswer: (now) => faire.answer(now) },
+      config,
+      logger,
+      broadcastWhisper,
+      () => whisperQueue,
+    );
 
     const onWhisper = (sender: string, text: string): void => {
       logger.info(`whisper from ${sender}: ${JSON.stringify(text)}`);

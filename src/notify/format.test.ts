@@ -265,3 +265,24 @@ describe("humanSpan", () => {
     expect(humanSpan(-5_000)).toBe("0m");
   });
 });
+
+describe("formatCapitalStatusYell darkmoon line", () => {
+  it("promotes the faire when it has been seen recently", () => {
+    const yell = formatCapitalStatusYell("horde", null, undefined, "Mulgore");
+    expect(yell).toContain("Darkmoon Faire is in Mulgore.");
+    // Slotted before the call to action, so the yell still ends on what to whisper.
+    expect(yell.indexOf("Darkmoon Faire")).toBeLessThan(yell.indexOf("Whisper"));
+  });
+
+  it("says nothing about the faire when it has not been seen recently", () => {
+    // A yell reaches strangers who cannot ask a follow-up, so a stale look is left out entirely
+    // rather than shouted with a hedge nobody will read.
+    expect(formatCapitalStatusYell("horde", null, undefined, null)).not.toContain("Darkmoon");
+    expect(formatCapitalStatusYell("horde", null)).not.toContain("Darkmoon");
+  });
+
+  it("keeps the raid status first — that is what the yell is for", () => {
+    const yell = formatCapitalStatusYell("alliance", { number: 7, elapsedMs: 1_800_000 }, "30-50m", "Elwynn Forest");
+    expect(yell.indexOf("Onyxia raid in progress")).toBeLessThan(yell.indexOf("Darkmoon"));
+  });
+});

@@ -211,6 +211,10 @@ export function formatCapitalStatusYell(
   faction: Faction,
   raid: CapitalStatusRaid | null,
   typicalClear?: string,
+  /** The zone the Darkmoon Faire is in, when it has been seen RECENTLY. Null/undefined omits the
+   *  line entirely — a yell is broadcast to strangers, so it carries only what we would state as
+   *  fact, never a stale look or an "I do not know". */
+  faireZone?: string | null,
 ): string {
   const parts: string[] = [];
   if (raid) {
@@ -222,6 +226,7 @@ export function formatCapitalStatusYell(
   } else {
     parts.push(`No Onyxia raid right now. The Rallying Cry buff drops when a raid clears.`);
   }
+  if (faireZone) parts.push(`Darkmoon Faire is in ${faireZone}.`);
   parts.push(`Whisper "subscribe" for pings, "discord" for discord notifications.`);
   return `[Onyxia] ${parts.join(" ")}`;
 }

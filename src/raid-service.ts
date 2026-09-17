@@ -1,6 +1,7 @@
 import type { BotConfig } from "./config.js";
 import { describeError } from "./errors.js";
 import type { Logger } from "./logger.js";
+import type { FaireAnswer } from "./darkmoon/observation.js";
 import { AlertDelivery } from "./notify/alert-delivery.js";
 import {
   formatBuffAlert,
@@ -61,6 +62,9 @@ export interface RaidServiceDeps {
   readonly whisperPool: WhisperPool;
   readonly yellSink: YellSink;
   readonly lairActivity: LairActivity;
+  /** Where the Darkmoon Faire was last seen, for the capital yell. Undefined = not tracked, and
+   *  the yell simply omits the line. */
+  readonly faireAnswer?: (now: number) => FaireAnswer;
   readonly push: (message: NotifyMessage, factions?: readonly Faction[]) => Promise<void>;
 }
 
@@ -89,7 +93,7 @@ export function createRaidService(
   broadcastWhisper: (names: readonly string[], message: string, faction: Faction | null, cities?: readonly Faction[], maxAgeMs?: number) => void,
   getWhisperQueue: () => WhisperQueue | null,
 ) {
-  const { lanes, chronicle, buffTracker, broadcasts, raidStateStore, lockoutStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, push, whisperPool, yellSink } = services;
+  const { lanes, chronicle, buffTracker, broadcasts, raidStateStore, lockoutStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, push, whisperPool, yellSink, faireAnswer } = services;
   const lastChronicleCheck = new Map<string, number>();
   let lastHeartbeatAt = 0;
 
@@ -180,11 +184,15 @@ export function createRaidService(
       if (!config.whispersEnabled) return;
       const now = Date.now();
       const typical = await typicalClear();
+      // Only a RECENT look gets shouted. A yell reaches strangers who cannot ask a follow-up, so
+      // it states the faire as fact or says nothing — never a stale look dressed up as one.
+      const faire = faireAnswer?.(now);
+      const faireZone = faire?.known === true && faire.fresh ? faire.site.zone : null;
       for (const faction of FACTIONS) {
         const yell = yellSink[faction];
         if (!yell) continue; // no listener parked in this capital right now
         const raid = raidStateFor(faction, now);
-        yell(formatCapitalStatusYell(faction, raid, raid ? typical : undefined));
+        yell(formatCapitalStatusYell(faction, raid, raid ? typical : undefined, faireZone));
       }
     };
 
