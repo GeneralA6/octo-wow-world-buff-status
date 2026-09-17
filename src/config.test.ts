@@ -440,3 +440,56 @@ describe("parseAddress", () => {
     expect(parseAddress("host:abc").port).toBe(8085);
   });
 });
+
+describe("loadConfig darkmoon", () => {
+  it("defaults to the vanilla faire rule", () => {
+    const config = loadConfig({ ...minimalEnv });
+    expect(config.darkmoon).toEqual({
+      opensOnWeekday: 1,
+      occurrence: 1,
+      durationDays: 7,
+      utcOffsetMinutes: 0,
+      anchor: { year: 2026, month: 9, location: "elwynn" },
+    });
+  });
+
+  it("takes a whole non-vanilla rule from the environment", () => {
+    const config = loadConfig({
+      ...minimalEnv,
+      DARKMOON_OPENS_WEEKDAY: "5",
+      DARKMOON_OCCURRENCE: "2",
+      DARKMOON_DURATION_DAYS: "4",
+      DARKMOON_UTC_OFFSET_MINUTES: "-300",
+      DARKMOON_ANCHOR: "2027-03:mulgore",
+    });
+    expect(config.darkmoon).toEqual({
+      opensOnWeekday: 5,
+      occurrence: 2,
+      durationDays: 4,
+      utcOffsetMinutes: -300,
+      anchor: { year: 2027, month: 3, location: "mulgore" },
+    });
+  });
+
+  it("rejects a schedule that could not describe a real faire", () => {
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_OPENS_WEEKDAY: "7" })).toThrow(
+      /DARKMOON_OPENS_WEEKDAY must be 0 \(Sunday\) to 6 \(Saturday\)/,
+    );
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_OCCURRENCE: "5" })).toThrow(/DARKMOON_OCCURRENCE must be 1-4/);
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_DURATION_DAYS: "40" })).toThrow(
+      /DARKMOON_DURATION_DAYS must be 1-28/,
+    );
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_UTC_OFFSET_MINUTES: "900" })).toThrow(
+      /DARKMOON_UTC_OFFSET_MINUTES must be between -840 and 840/,
+    );
+  });
+
+  it("rejects a malformed anchor rather than quietly moving every month", () => {
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_ANCHOR: "september:elwynn" })).toThrow(
+      /DARKMOON_ANCHOR must look like "2026-09:elwynn"/,
+    );
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_ANCHOR: "2026-09:booty bay" })).toThrow(
+      /DARKMOON_ANCHOR/,
+    );
+  });
+});

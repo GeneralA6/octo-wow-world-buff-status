@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   faireStateAt,
   locationForMonth,
+  parseFaireAnchor,
   otherLocation,
   referenceWindow,
   VANILLA_SCHEDULE,
@@ -126,5 +127,21 @@ describe("referenceWindow", () => {
   it("is the coming faire while travelling", () => {
     const state = faireStateAt(schedule, utc("2026-09-20T09:00:00Z"));
     expect(referenceWindow(state).opensAt).toBe(utc("2026-10-05T00:00:00Z"));
+  });
+});
+
+describe("parseFaireAnchor", () => {
+  it("reads a well-formed anchor", () => {
+    expect(parseFaireAnchor("2026-09:elwynn")).toEqual({ year: 2026, month: 9, location: "elwynn" });
+    expect(parseFaireAnchor(" 2026-9:MULGORE ")).toEqual({ year: 2026, month: 9, location: "mulgore" });
+  });
+
+  it("rejects a malformed anchor rather than half-reading it", () => {
+    expect(parseFaireAnchor("2026-13:elwynn")).toBeNull();
+    expect(parseFaireAnchor("2026-00:elwynn")).toBeNull();
+    expect(parseFaireAnchor("2026-09:booty bay")).toBeNull();
+    expect(parseFaireAnchor("2026-09")).toBeNull();
+    expect(parseFaireAnchor("elwynn")).toBeNull();
+    expect(parseFaireAnchor("")).toBeNull();
   });
 });

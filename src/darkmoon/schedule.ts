@@ -145,3 +145,19 @@ export function faireStateAt(schedule: FaireSchedule, now: number): FaireState {
 export function referenceWindow(state: FaireState): FaireWindow {
   return state.phase === "up" ? state.current : state.next;
 }
+
+/**
+ * Parse a `YYYY-MM:location` anchor as configuration carries it, e.g. "2026-09:elwynn".
+ * Null on anything malformed, so a typo falls back to the shipped anchor loudly rather than
+ * silently moving the faire to the wrong zone for every month in both directions.
+ */
+export function parseFaireAnchor(raw: string): FaireAnchor | null {
+  const match = /^(\d{4})-(\d{1,2}):([a-z]+)$/.exec(raw.trim().toLowerCase());
+  if (match === null) return null;
+  const [, yearRaw, monthRaw, location] = match;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  if (month < 1 || month > 12) return null;
+  if (!isFaireLocation(location)) return null;
+  return { year, month, location };
+}

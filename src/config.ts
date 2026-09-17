@@ -4,6 +4,7 @@ import { CLIENT_BUILD } from "./protocol/opcodes.js";
 import { OCTOWOW_CDN } from "./net/client-resolver.js";
 import type { GroupingMode } from "./watcher/raid-events.js";
 import type { Faction } from "./watcher/buff-store.js";
+import { parseFaireAnchor, VANILLA_SCHEDULE, type FaireSchedule } from "./darkmoon/schedule.js";
 
 const GROUPING_MODES: readonly GroupingMode[] = ["auto", "guild", "lair"];
 
@@ -60,6 +61,8 @@ export interface BotConfig {
   readonly autoResolve: boolean;
   /** OctoWoW client CDN base used for auto-resolve. */
   readonly clientCdn: string;
+  /** The Darkmoon Faire schedule the `darkmoon` command computes from. */
+  readonly darkmoon: FaireSchedule;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   /** Members a cohort must reach for a raid to count as forming ("about to start") — when the
@@ -475,6 +478,35 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   ] as const) {
     if (value && !/^\d+$/.test(value)) errors.push(`${name} must be a numeric Discord role id`);
   }
+  // Darkmoon Faire schedule. Every field of the vanilla rule is exposed, so a Turtle deviation is
+  // a config change rather than a patch — and the WEEK is the part config has to cover, because it
+  // is the one thing a sighting cannot teach us (see darkmoon/resolve.ts). The anchor LOCATION is
+  // only a starting guess: one real sighting corrects the alternation for good.
+  const darkmoonUtcOffsetMinutes = intWithDefault(
+    "DARKMOON_UTC_OFFSET_MINUTES",
+    VANILLA_SCHEDULE.utcOffsetMinutes,
+    -840,
+  );
+  if (darkmoonUtcOffsetMinutes > 840) {
+    errors.push("DARKMOON_UTC_OFFSET_MINUTES must be between -840 and 840");
+  }
+  const darkmoonOpensOnWeekday = intWithDefault("DARKMOON_OPENS_WEEKDAY", VANILLA_SCHEDULE.opensOnWeekday, 0);
+  if (darkmoonOpensOnWeekday > 6) errors.push("DARKMOON_OPENS_WEEKDAY must be 0 (Sunday) to 6 (Saturday)");
+  const darkmoonOccurrence = intWithDefault("DARKMOON_OCCURRENCE", VANILLA_SCHEDULE.occurrence, 1);
+  if (darkmoonOccurrence > 4) errors.push("DARKMOON_OCCURRENCE must be 1-4");
+  const darkmoonDurationDays = intWithDefault("DARKMOON_DURATION_DAYS", VANILLA_SCHEDULE.durationDays, 1);
+  if (darkmoonDurationDays > 28) errors.push("DARKMOON_DURATION_DAYS must be 1-28");
+  const darkmoonAnchorRaw = env.DARKMOON_ANCHOR?.trim();
+  const darkmoonAnchor = darkmoonAnchorRaw ? parseFaireAnchor(darkmoonAnchorRaw) : VANILLA_SCHEDULE.anchor;
+  if (darkmoonAnchor === null) errors.push(`DARKMOON_ANCHOR must look like "2026-09:elwynn"`);
+  const darkmoon: FaireSchedule = {
+    opensOnWeekday: darkmoonOpensOnWeekday,
+    occurrence: darkmoonOccurrence,
+    durationDays: darkmoonDurationDays,
+    utcOffsetMinutes: darkmoonUtcOffsetMinutes,
+    anchor: darkmoonAnchor ?? VANILLA_SCHEDULE.anchor,
+  };
+
   const mongodbUri = env.MONGODB_URI?.trim() || null;
   const mongodbDb = env.MONGODB_DB?.trim() || "onyxiabot";
 
@@ -522,6 +554,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     worldBuild,
     autoResolve,
     clientCdn,
+    darkmoon,
     watchAreaId,
     watchAreaName,
     minRaidSize,
