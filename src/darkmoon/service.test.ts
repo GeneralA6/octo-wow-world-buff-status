@@ -252,6 +252,7 @@ describe("FaireService.observeMonsterChat", () => {
 describe("FaireService.load", () => {
   it("restores observations from a previous run, so the anchor survives a redeploy", async () => {
     const stored: FaireKnowledge = {
+      onsite: null,
       herald: null,
       sighting: {
         location: "mulgore",
@@ -277,5 +278,75 @@ describe("FaireService.load", () => {
     expect(report.location).toBe("elwynn");
     expect(report.source).toBe("calendar");
     expect(report.confirmedBy).toBeNull();
+  });
+});
+
+describe("FaireService.observeNearbyNpc", () => {
+  it("records the faire as here when its staff is standing next to us", async () => {
+    const service = makeService();
+    expect(await service.observeNearbyNpc("Silas Darkmoon", "elwynn", NOW)).toBe(true);
+    expect(service.knowledge.onsite).toMatchObject({
+      location: "elwynn",
+      source: "onsite",
+      witness: "Silas Darkmoon",
+      windowSetupAt: utc("2026-09-04T00:00:00Z"),
+    });
+    const report = service.report(NOW);
+    expect(report.source).toBe("onsite");
+    expect(report.confirmedBy).toBe("onsite");
+  });
+
+  it("needs no corroboration — it is our own client's object stream", async () => {
+    const service = makeService();
+    expect(await service.observeNearbyNpc("Sayge", "elwynn", NOW)).toBe(true);
+  });
+
+  it("ignores NPCs that are not the faire, including the ever-present Carnie", async () => {
+    const service = makeService();
+    expect(await service.observeNearbyNpc("Innkeeper Farley", "elwynn", NOW)).toBe(false);
+    expect(await service.observeNearbyNpc("Darkmoon Faire Carnie", "elwynn", NOW)).toBe(false);
+    expect(service.knowledge.onsite).toBeNull();
+  });
+
+  it("does not rewrite itself every time the staff re-enters visibility", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const save = vi.spyOn(store, "save");
+    const service = makeService(store);
+    expect(await service.observeNearbyNpc("Sayge", "elwynn", NOW)).toBe(true);
+    expect(await service.observeNearbyNpc("Sayge", "elwynn", NOW + 60_000)).toBe(false);
+    expect(await service.observeNearbyNpc("Flik", "elwynn", NOW + 120_000)).toBe(false);
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // Well into the visit, a fresh look is worth recording so the answer still reads as live.
+    expect(await service.observeNearbyNpc("Sayge", "elwynn", NOW + 40 * 60_000)).toBe(true);
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("outranks a troll's channel line outright", async () => {
+    const service = makeService();
+    await service.observeNearbyNpc("Silas Darkmoon", "elwynn", NOW);
+    for (let i = 0; i < 10; i += 1) {
+      await service.observeChannel("PWB_DMF:10401:M-0-Liar", `sock-${i}`, NOW);
+    }
+    expect(service.report(NOW).location).toBe("elwynn");
+    expect(service.report(NOW).confirmedBy).toBe("onsite");
+  });
+
+  it("raises the schedule conflict loudly — we are looking straight at it", async () => {
+    const onScheduleConflict = vi.fn();
+    const service = makeService(new InMemoryKnowledgeStore(), { onScheduleConflict });
+    expect(await service.observeNearbyNpc("Silas Darkmoon", "elwynn", AFTER)).toBe(false);
+    expect(onScheduleConflict).toHaveBeenCalledWith(AFTER);
+    expect(service.knowledge.onsite).toBeNull();
+  });
+
+  it("pins the alternation for every other month, including the zone it never sees", async () => {
+    // Parked in Elwynn and the faire is here in September — so October is Mulgore, forever, even
+    // though this character will never lay eyes on Mulgore.
+    const service = makeService();
+    await service.observeNearbyNpc("Silas Darkmoon", "elwynn", NOW);
+    const october = service.report(utc("2026-10-06T12:00:00Z"));
+    expect(october.location).toBe("mulgore");
+    expect(october.confirmedBy).toBe("onsite");
   });
 });

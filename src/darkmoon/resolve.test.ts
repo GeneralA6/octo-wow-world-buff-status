@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   anchorHerald,
+  anchorOnsite,
   anchorSighting,
   contradictsSchedule,
   LIVE_SIGHTING_MS,
@@ -127,7 +128,7 @@ describe("resolveFaire", () => {
       expect(report.source).toBe("sighting");
       expect(report.closesAt).toBe(utc("2026-09-14T00:00:00Z"));
       expect(report.confirmedBy).toBe("sighting");
-      expect(report.sighting).toBe(seen);
+      expect(report.observation).toBe(seen);
     });
 
     it("lets the calendar say it is still only setting up", () => {
@@ -183,5 +184,45 @@ describe("resolveFaire", () => {
       const knowledge = knows({ sighting: sighting("elwynn", DURING_SEPT) });
       expect(resolveFaire(schedule, knowledge, utc("2026-10-06T12:00:00Z")).location).toBe("mulgore");
     });
+  });
+});
+
+describe("resolveFaire with an on-site observation", () => {
+  const onsite = (location: "elwynn" | "mulgore", at: number): FaireObservation => {
+    const observation = anchorOnsite(schedule, location, at, "Silas Darkmoon");
+    if (observation === null) throw new Error("fixture onsite observation could not be anchored");
+    return observation;
+  };
+
+  it("beats a live channel sighting on where the faire is", () => {
+    const knowledge = knows({
+      onsite: onsite("elwynn", DURING_SEPT - 60_000),
+      sighting: sighting("mulgore", DURING_SEPT - 30_000),
+    });
+    const report = resolveFaire(schedule, knowledge, DURING_SEPT);
+    expect(report.location).toBe("elwynn");
+    expect(report.source).toBe("onsite");
+  });
+
+  it("beats a herald on the alternation, being about the faire that is here now", () => {
+    const knowledge = knows({
+      onsite: onsite("mulgore", DURING_SEPT),
+      herald: herald("elwynn", utc("2026-09-01T12:00:00Z")),
+    });
+    // Both describe September; we are standing in it, so the herald does not get to overrule us.
+    expect(parityFlip(schedule, knowledge)).toBe(true);
+    expect(resolveFaire(schedule, knowledge, DURING_SEPT).confirmedBy).toBe("onsite");
+  });
+
+  it("goes stale like any other observation once the faire has left", () => {
+    const knowledge = knows({ onsite: onsite("elwynn", DURING_SEPT) });
+    const later = DURING_SEPT + LIVE_SIGHTING_MS + 1;
+    expect(resolveFaire(schedule, knowledge, later).source).toBe("calendar");
+    // ...but what it taught us about the alternation is still good.
+    expect(resolveFaire(schedule, knowledge, later).confirmedBy).toBe("onsite");
+  });
+
+  it("cannot be anchored when the calendar says the faire is nowhere", () => {
+    expect(anchorOnsite(schedule, "elwynn", AFTER_SEPT, "Silas Darkmoon")).toBeNull();
   });
 });

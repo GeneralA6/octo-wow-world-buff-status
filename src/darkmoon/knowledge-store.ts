@@ -52,6 +52,7 @@ interface ObservationDoc {
 
 interface KnowledgeDoc {
   readonly _id: string;
+  readonly onsite?: ObservationDoc | null;
   readonly herald: ObservationDoc | null;
   readonly sighting: ObservationDoc | null;
 }
@@ -78,7 +79,7 @@ export function observationToDoc(observation: FaireObservation): ObservationDoc 
 }
 
 function isObservationSource(value: string): value is ObservationSource {
-  return value === "herald" || value === "sighting";
+  return value === "onsite" || value === "herald" || value === "sighting";
 }
 
 /**
@@ -102,7 +103,11 @@ export function docToObservation(doc: ObservationDoc | null | undefined): FaireO
 }
 
 export function docToKnowledge(doc: KnowledgeDoc): FaireKnowledge {
-  return { herald: docToObservation(doc.herald), sighting: docToObservation(doc.sighting) };
+  return {
+    onsite: docToObservation(doc.onsite),
+    herald: docToObservation(doc.herald),
+    sighting: docToObservation(doc.sighting),
+  };
 }
 
 export class MongoKnowledgeStore implements KnowledgeStore {
@@ -125,6 +130,7 @@ export class MongoKnowledgeStore implements KnowledgeStore {
             { _id: DOC_ID },
             {
               $set: {
+                onsite: knowledge.onsite ? observationToDoc(knowledge.onsite) : null,
                 herald: knowledge.herald ? observationToDoc(knowledge.herald) : null,
                 sighting: knowledge.sighting ? observationToDoc(knowledge.sighting) : null,
               },

@@ -7,10 +7,12 @@ import {
   type SettledSighting,
 } from "./corroboration.js";
 import { matchHerald } from "./herald.js";
+import { isFaireNpc } from "./npcs.js";
 import type { KnowledgeStore } from "./knowledge-store.js";
 import { isTrustedBroadcast, parseDmfBroadcast, sightedAt } from "./pwb.js";
 import {
   anchorHerald,
+  anchorOnsite,
   anchorSighting,
   contradictsSchedule,
   NO_KNOWLEDGE,
@@ -19,10 +21,15 @@ import {
   type FaireObservation,
   type FaireReport,
 } from "./resolve.js";
-import type { FaireSchedule } from "./schedule.js";
+import type { FaireLocation, FaireSchedule } from "./schedule.js";
+
+/** How often standing in the faire is worth re-recording. The staff re-enters visibility all day;
+ *  the observation only needs to stay fresh enough to read as live, not to log every refresh. */
+const ONSITE_REFRESH_MS = 30 * 60_000;
 
 /**
- * Holds what the bot knows about the Darkmoon Faire, fed by the two things it already overhears:
+ * Holds what the bot knows about the Darkmoon Faire, fed by three things: what our own parked
+ * character can see standing next to it, and the two it overhears —
  * NPC chat in the capitals (a herald announcing the faire is coming) and the LFT channel (a
  * PizzaWorldBuffs sighting). Kept in memory for the answer path and in Mongo so a redeploy does
  * not forget it.
@@ -126,6 +133,37 @@ export class FaireService {
     this.#settled = { location: observation.location, acceptedAt: receivedAt };
     await this.#accept({ ...this.#knowledge, sighting: observation }, observation);
     return "accepted";
+  }
+
+  /**
+   * Offer the name of an NPC standing next to our own parked character.
+   *
+   * This is the strongest signal the bot can get and it needs no corroboration: it is our own
+   * client's object stream, not something a player typed. `location` is where the character is
+   * parked — configuration, not a guess, because a unit update says what is nearby and never which
+   * zone we are in. Returns true when it became the on-site observation.
+   */
+  async observeNearbyNpc(
+    npc: string,
+    location: FaireLocation,
+    seenAt: number,
+  ): Promise<boolean> {
+    if (!isFaireNpc(npc)) return false;
+
+    const observation = anchorOnsite(this.#deps.schedule, location, seenAt, npc);
+    if (observation === null) {
+      // We are looking straight at the faire on a day the rule says it is away. Coming from our
+      // own client this is as close to proof as the bot gets that the schedule config is wrong.
+      if (contradictsSchedule(this.#deps.schedule, seenAt)) this.#deps.onScheduleConflict?.(seenAt);
+      return false;
+    }
+    const current = this.#knowledge.onsite;
+    // The faire's staff is re-seen every time the character's visibility refreshes; only a new
+    // window, or a fresher look at the one we are already in, is worth a write.
+    if (current !== null && observation.windowSetupAt === current.windowSetupAt) {
+      if (seenAt - current.observedAt < ONSITE_REFRESH_MS) return false;
+    }
+    return this.#accept({ ...this.#knowledge, onsite: observation }, observation);
   }
 
   /**

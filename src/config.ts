@@ -4,7 +4,13 @@ import { CLIENT_BUILD } from "./protocol/opcodes.js";
 import { OCTOWOW_CDN } from "./net/client-resolver.js";
 import type { GroupingMode } from "./watcher/raid-events.js";
 import type { Faction } from "./watcher/buff-store.js";
-import { parseFaireAnchor, VANILLA_SCHEDULE, type FaireSchedule } from "./darkmoon/schedule.js";
+import {
+  isFaireLocation,
+  parseFaireAnchor,
+  VANILLA_SCHEDULE,
+  type FaireLocation,
+  type FaireSchedule,
+} from "./darkmoon/schedule.js";
 import { DEFAULT_CORROBORATION, type CorroborationPolicy } from "./darkmoon/corroboration.js";
 
 const GROUPING_MODES: readonly GroupingMode[] = ["auto", "guild", "lair"];
@@ -66,6 +72,9 @@ export interface BotConfig {
   readonly darkmoon: FaireSchedule;
   /** How much agreement a player-broadcast faire sighting needs before the bot believes it. */
   readonly darkmoonCorroboration: CorroborationPolicy;
+  /** Which faire site the watcher character is parked at, enabling first-hand detection of the
+   *  faire from the NPCs beside it. Null = not parked at one, and the feature is off. */
+  readonly darkmoonWatchLocation: FaireLocation | null;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   /** Members a cohort must reach for a raid to count as forming ("about to start") — when the
@@ -504,6 +513,17 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const darkmoonAnchorRaw = env.DARKMOON_ANCHOR?.trim();
   const darkmoonAnchor = darkmoonAnchorRaw ? parseFaireAnchor(darkmoonAnchorRaw) : VANILLA_SCHEDULE.anchor;
   if (darkmoonAnchor === null) errors.push(`DARKMOON_ANCHOR must look like "2020-02:mulgore"`);
+  // Where the watcher's character is parked, when it is parked at a faire site. Set it and the bot
+  // detects the faire first-hand from the NPCs standing next to it — the strongest signal there is,
+  // and the only one that can confirm the SETUP DAY. Unset (the default) = the character is not at
+  // a faire site and on-site detection is off. It is configuration rather than something detected
+  // because a unit update says what is nearby, never which zone we are standing in.
+  const darkmoonWatchRaw = env.DARKMOON_WATCH_LOCATION?.trim().toLowerCase();
+  const darkmoonWatchLocation = darkmoonWatchRaw ? (isFaireLocation(darkmoonWatchRaw) ? darkmoonWatchRaw : null) : null;
+  if (darkmoonWatchRaw && darkmoonWatchLocation === null) {
+    errors.push(`DARKMOON_WATCH_LOCATION must be "elwynn" or "mulgore"`);
+  }
+
   // Tamper resistance for the LFT sighting feed, which is player-typed text anyone can forge.
   // Quorum counts DISTINCT SENDERS, so lowering it to 1 restores "believe whoever spoke last" —
   // which is what PizzaWorldBuffs itself does, and is only safe in a client trusting its own user.
@@ -581,6 +601,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     clientCdn,
     darkmoon,
     darkmoonCorroboration,
+    darkmoonWatchLocation,
     watchAreaId,
     watchAreaName,
     minRaidSize,

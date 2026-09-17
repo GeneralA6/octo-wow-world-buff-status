@@ -24,6 +24,7 @@ import {
   type FriendStatus,
 } from "../protocol/chat.js";
 import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.js";
+import { buildCreatureQuery, parseCreatureQueryResponse } from "../protocol/creature-query.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
 import {
@@ -59,6 +60,9 @@ export interface WorldClientHandlers {
    *  Darkmoon heralds' chat type is unconfirmed on this realm and would be missed by a yell-only
    *  hook. The wiring layer decides what each line means. */
   onMonsterChat?: (chat: MonsterChat) => void;
+  /** Reply to a creature query: what an NPC entry is called. `name` is null when the server does
+   *  not know the entry. Fires once per entry asked about. */
+  onCreatureName?: (entry: number, name: string | null) => void;
   /** A message on a global chat CHANNEL we joined (e.g. Turtle's "LFT" addon-comms channel). The
    *  raw body is passed too, since the channel layout is unconfirmed — the wiring logs it. */
   onChannelMessage?: (channelName: string, senderGuid: bigint, text: string, raw: Buffer) => void;
@@ -371,6 +375,9 @@ export class WorldClient {
         case WorldOpcode.SMSG_COMPRESSED_UPDATE_OBJECT:
           this.#handleWorldObjects(body, true);
           break;
+        case WorldOpcode.SMSG_CREATURE_QUERY_RESPONSE:
+          this.#handleCreatureQueryResponse(body);
+          break;
         case WorldOpcode.SMSG_NAME_QUERY_RESPONSE:
           this.#handleNameQueryResponse(body);
           break;
@@ -540,6 +547,21 @@ export class WorldClient {
       this.#handlers.onWorldObjects?.(raw);
     } catch (error) {
       this.#logger.debug(`world: could not read object update: ${(error as Error).message}`);
+    }
+  }
+
+  /** Ask what an NPC entry is called. `guid` is any live instance of it. */
+  queryCreature(entry: number, guid: bigint): void {
+    if (!this.#ready) return;
+    this.#send(WorldOpcode.CMSG_CREATURE_QUERY, buildCreatureQuery(entry, guid));
+  }
+
+  #handleCreatureQueryResponse(body: Buffer): void {
+    try {
+      const { entry, name } = parseCreatureQueryResponse(body);
+      this.#handlers.onCreatureName?.(entry, name);
+    } catch (error) {
+      this.#logger.debug(`world: could not read creature-query response: ${(error as Error).message}`);
     }
   }
 

@@ -28,12 +28,22 @@ export interface WorldGameObject {
   readonly pos: WorldPoint;
 }
 
+/** A creature seen nearby. Positionless when the block carried no movement — an update can name
+ *  a unit without moving it, and for "is it standing here" the entry is the part that matters. */
+export interface WorldUnit {
+  readonly guid: bigint;
+  readonly entry: number;
+}
+
 export interface WorldObjects {
   readonly gameObjects: WorldGameObject[];
+  /** Creatures in the block — entry + guid only, which is all a creature query needs. */
+  readonly units: WorldUnit[];
   /** Our own player's position, when this block created it. */
   readonly self: WorldPoint | null;
 }
 
+const OBJTYPE_UNIT = 3;
 const OBJTYPE_PLAYER = 4;
 const OBJTYPE_GAMEOBJECT = 5;
 
@@ -72,6 +82,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   const count = reader.u32LE();
   reader.u8(); // hasTransport
   const gameObjects: WorldGameObject[] = [];
+  const units: WorldUnit[] = [];
   let self: WorldPoint | null = null;
 
   // If a block turns out to be a shape we don't decode (or the packet is truncated),
@@ -91,6 +102,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         const pos = readMovement(reader, flags);
         const entry = readValuesEntry(reader);
         if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
+        if (objType === OBJTYPE_UNIT && entry > 0) units.push({ guid, entry });
         if (objType === OBJTYPE_PLAYER && pos && (selfGuid === undefined || guid === selfGuid)) self = pos;
       } else if (updateType === UPDATETYPE_VALUES) {
         readValuesEntry(reader);
@@ -103,7 +115,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   } catch {
     // reader ran off the end of a block we mis-sized — keep the objects read so far.
   }
-  return { gameObjects, self };
+  return { gameObjects, units, self };
 }
 
 function readPackedGuid(reader: PacketReader): bigint {

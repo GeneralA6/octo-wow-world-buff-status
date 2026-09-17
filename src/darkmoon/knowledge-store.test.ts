@@ -25,7 +25,7 @@ const herald: FaireObservation = {
   witness: "Melnan Darkstone",
 };
 
-const knowledge: FaireKnowledge = { herald, sighting };
+const knowledge: FaireKnowledge = { onsite: null, herald, sighting };
 
 describe("InMemoryKnowledgeStore", () => {
   it("starts empty and returns what was saved", async () => {
@@ -52,6 +52,7 @@ describe("document round-trip", () => {
 
   it("reads a document with only one half recorded", () => {
     expect(docToKnowledge({ _id: "knowledge", herald: null, sighting: observationToDoc(sighting) })).toEqual({
+      onsite: null,
       herald: null,
       sighting,
     });

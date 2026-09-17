@@ -23,7 +23,7 @@ const report = (over: Partial<FaireReport> = {}): FaireReport => ({
   closesAt: utc("2026-09-14T00:00:00Z"),
   source: "calendar",
   confirmedBy: "sighting",
-  sighting: null,
+  observation: null,
   ...over,
 });
 
@@ -66,7 +66,7 @@ describe("formatFaire", () => {
   });
 
   it("does not hedge once a player has actually seen it", () => {
-    const live = report({ source: "sighting", confirmedBy: null, sighting: seen(NOW - 3_600_000) });
+    const live = report({ source: "sighting", confirmedBy: null, observation: seen(NOW - 3_600_000) });
     expect(formatFaire(live, NOW)).toContain("Darkmoon Faire is up in");
   });
 
@@ -76,7 +76,7 @@ describe("formatFaire", () => {
       setupAt: null,
       opensAt: null,
       closesAt: null,
-      sighting: seen(NOW - 7_200_000),
+      observation: seen(NOW - 7_200_000),
     });
     expect(formatFaire(live, NOW)).toBe(
       "Darkmoon Faire is up in Elwynn Forest (south of Goldshire) - last seen ~2h ago.",

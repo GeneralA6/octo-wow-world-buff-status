@@ -42,6 +42,7 @@ import {
 } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
 import { FaireService } from "./darkmoon/service.js";
+import { NpcWatch } from "./darkmoon/npc-watch.js";
 
 import {
   InMemoryKnowledgeStore,
@@ -298,6 +299,9 @@ async function runConnection(
 ): Promise<void> {
   const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, faire, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
+  // One creature query per NPC entry for the life of this connection; a reconnect starts fresh,
+  // which is also when a name we failed to resolve gets another chance.
+  const npcWatch = new NpcWatch();
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
@@ -544,6 +548,35 @@ async function runConnection(
       logger,
       handlers: {
         onLatency,
+        // Parked at a faire site: every object update names the units that just came into view, so
+        // ask the server what the ones we have never met are called. One query per entry for the
+        // whole session — a creature's name never changes, and the parked character sees the same
+        // handful of entries all day. Off entirely unless the character is actually parked there.
+        onWorldObjects:
+          config.darkmoonWatchLocation === null
+            ? undefined
+            : (raw) => {
+                const parsed = parseUpdateObject(raw, world.selfGuid ?? undefined);
+                if (parsed.units.length === 0) return;
+                const byEntry = new Map(parsed.units.map((unit) => [unit.entry, unit.guid]));
+                for (const entry of npcWatch.take(byEntry.keys())) {
+                  const guid = byEntry.get(entry);
+                  if (guid !== undefined) world.queryCreature(entry, guid);
+                }
+              },
+        onCreatureName: (entry, name) => {
+          const site = config.darkmoonWatchLocation;
+          if (site === null || name === null) return;
+          // Logged at debug either way: standing in the faire and seeing nothing matched is the
+          // one failure that looks exactly like an absent faire, and this is what tells them apart.
+          logger.debug(`darkmoon: nearby npc ${entry} = ${JSON.stringify(name)}`);
+          void faire
+            .observeNearbyNpc(name, site, Date.now())
+            .then((accepted) => {
+              if (accepted) logger.info(`darkmoon: the faire is HERE — ${name} is standing next to us`);
+            })
+            .catch((error) => logger.error(`darkmoon: onsite observe failed (${describeError(error)})`));
+        },
         onReady: () => {
           if (readyTimer) clearTimeout(readyTimer);
           readyTimer = null;

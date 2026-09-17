@@ -16,7 +16,7 @@ import type { FaireReport } from "./resolve.js";
  */
 export function formatFaire(report: FaireReport, now: number): string {
   const where = `${report.site.zone} (${report.site.landmark})`;
-  const sure = report.source === "sighting" || report.confirmedBy !== null;
+  const sure = report.source !== "calendar" || report.confirmedBy !== null;
   const hedge = sure ? "" : " probably";
 
   if (report.phase === "setting-up") {
@@ -30,8 +30,8 @@ export function formatFaire(report: FaireReport, now: number): string {
     const when =
       report.closesAt !== null
         ? `closes in ~${humanSpan(report.closesAt - now)}`
-        : report.sighting !== null
-          ? `last seen ~${humanSpan(now - report.sighting.observedAt)} ago`
+        : report.observation !== null
+          ? `last seen ~${humanSpan(now - report.observation.observedAt)} ago`
           : null;
     return `Darkmoon Faire is${hedge} up in ${where}${when === null ? "" : ` - ${when}`}.`;
   }

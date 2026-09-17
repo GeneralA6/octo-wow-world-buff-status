@@ -415,7 +415,7 @@ describe("CommandRouter darkmoon", () => {
     closesAt: Date.parse("2026-09-14T00:00:00Z"),
     source: "sighting",
     confirmedBy: "sighting",
-    sighting: {
+    observation: {
       location: "mulgore",
       windowSetupAt: Date.parse("2026-09-04T00:00:00Z"),
       observedAt: NOW - 60_000,

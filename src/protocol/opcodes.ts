@@ -29,6 +29,11 @@ export enum WorldOpcode {
   CMSG_LOGOUT_REQUEST = 0x4b,
   CMSG_NAME_QUERY = 0x50,
   SMSG_NAME_QUERY_RESPONSE = 0x51,
+  /** Ask what a CREATURE entry is called (u32 entry + u64 guid). The client's own way of
+   *  labelling an NPC it has never seen, and the only way to put a name to a unit that arrives in
+   *  an object update — which carries entries and guids, never names. */
+  CMSG_CREATURE_QUERY = 0x60,
+  SMSG_CREATURE_QUERY_RESPONSE = 0x61,
   CMSG_WHO = 0x62,
   SMSG_WHO = 0x63,
   /** Invite a player to the guild by name (cstring body). Needs the sender guilded. */

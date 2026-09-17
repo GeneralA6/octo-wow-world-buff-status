@@ -521,3 +521,24 @@ describe("loadConfig darkmoon corroboration", () => {
     expect(() => loadConfig({ ...minimalEnv, DARKMOON_QUORUM: "99" })).toThrow(/DARKMOON_QUORUM must be 1-50/);
   });
 });
+
+describe("loadConfig darkmoon on-site watch", () => {
+  it("is off unless the character is actually parked at a faire site", () => {
+    expect(loadConfig({ ...minimalEnv }).darkmoonWatchLocation).toBeNull();
+  });
+
+  it("takes the site the character is parked at", () => {
+    expect(loadConfig({ ...minimalEnv, DARKMOON_WATCH_LOCATION: "elwynn" }).darkmoonWatchLocation).toBe(
+      "elwynn",
+    );
+    expect(loadConfig({ ...minimalEnv, DARKMOON_WATCH_LOCATION: " MULGORE " }).darkmoonWatchLocation).toBe(
+      "mulgore",
+    );
+  });
+
+  it("rejects a zone the faire never visits, rather than silently watching nowhere", () => {
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_WATCH_LOCATION: "goldshire" })).toThrow(
+      /DARKMOON_WATCH_LOCATION must be "elwynn" or "mulgore"/,
+    );
+  });
+});
