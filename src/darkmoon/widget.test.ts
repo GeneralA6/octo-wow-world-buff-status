@@ -39,9 +39,11 @@ describe("buildFaireEmbed", () => {
     expect(embed.description).not.toMatch(/Elwynn|Mulgore/);
   });
 
-  it("carries no footer — who saw it is not the readers business", () => {
-    expect(buildFaireEmbed(known(), NOW).footer).toBeUndefined();
-    expect(buildFaireEmbed({ known: false }, NOW).footer).toBeUndefined();
+  it("labels Discord own timestamp so it reads as a redraw, not a sighting time", () => {
+    expect(buildFaireEmbed(known(), NOW).footer?.text).toBe("Updated");
+    expect(buildFaireEmbed({ known: false }, NOW).footer?.text).toBe("Updated");
+    // The time itself is Discord rendering the embed timestamp, localised per viewer.
+    expect(buildFaireEmbed(known(), NOW).timestamp).toBe(new Date(NOW).toISOString());
   });
 });
 

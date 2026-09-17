@@ -27,6 +27,11 @@ const COLOUR_FRESH = 0x57f287;
 const COLOUR_STALE = 0xfee75c;
 const COLOUR_UNKNOWN = 0x4f545c;
 
+/** Discord renders the embed timestamp itself, localised to each viewer ("Today at 12:13 PM"), and
+ *  joins the footer to it with a bullet. So this is the only way to label what that time MEANS —
+ *  it is when the board was last redrawn, not when the faire was seen. */
+const UPDATED_LABEL = "Updated";
+
 export function buildFaireEmbed(answer: FaireAnswer, now: number): DiscordEmbed {
   if (!answer.known) {
     return {
@@ -34,6 +39,7 @@ export function buildFaireEmbed(answer: FaireAnswer, now: number): DiscordEmbed 
       description:
         "**Location unknown**\nNobody has spotted it recently. It'll show up here as soon as anyone does.",
       color: COLOUR_UNKNOWN,
+      footer: { text: UPDATED_LABEL },
       timestamp: new Date(now).toISOString(),
     };
   }
@@ -50,6 +56,7 @@ export function buildFaireEmbed(answer: FaireAnswer, now: number): DiscordEmbed 
     title: "🎪 Darkmoon Faire",
     description,
     color: answer.fresh ? COLOUR_FRESH : COLOUR_STALE,
+    footer: { text: UPDATED_LABEL },
     timestamp: new Date(now).toISOString(),
   };
 }
