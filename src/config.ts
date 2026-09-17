@@ -510,9 +510,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     DEFAULT_CORROBORATION.changeCooldownMs / 3_600_000,
     0,
   );
-  // Shorter than the gap between visits, or the faire's real weekly move would be what it blocks.
-  if (darkmoonChangeCooldownHours > 72) {
-    errors.push("DARKMOON_CHANGE_COOLDOWN_HOURS must be 0-72 (well under the weekly move)");
+  // Well under the weekly gap between moves, or the faire's real move is what it would block.
+  if (darkmoonChangeCooldownHours > 24) {
+    errors.push("DARKMOON_CHANGE_COOLDOWN_HOURS must be 0-24 (well under the weekly move)");
   }
   const darkmoonCorroboration: CorroborationPolicy = {
     quorum: darkmoonQuorum,

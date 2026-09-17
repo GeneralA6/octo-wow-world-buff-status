@@ -456,8 +456,8 @@ describe("loadConfig darkmoon corroboration", () => {
   });
 
   it("rejects a cooldown that would block the faire real weekly move", () => {
-    expect(() => loadConfig({ ...minimalEnv, DARKMOON_CHANGE_COOLDOWN_HOURS: "100" })).toThrow(
-      /DARKMOON_CHANGE_COOLDOWN_HOURS must be 0-72/,
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_CHANGE_COOLDOWN_HOURS: "48" })).toThrow(
+      /DARKMOON_CHANGE_COOLDOWN_HOURS must be 0-24/,
     );
     expect(() => loadConfig({ ...minimalEnv, DARKMOON_QUORUM: "99" })).toThrow(/DARKMOON_QUORUM must be 1-50/);
   });
