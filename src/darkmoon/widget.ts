@@ -27,13 +27,6 @@ const COLOUR_FRESH = 0x57f287;
 const COLOUR_STALE = 0xfee75c;
 const COLOUR_UNKNOWN = 0x4f545c;
 
-/** Who saw it. Just the name — how the bot heard about it is not the reader's problem, and for an
- *  on-site look the witness field is the NPC we saw, not someone who could be credited. */
-function provenance(answer: FaireAnswer): string {
-  if (!answer.known) return "no recent sightings";
-  return answer.source === "onsite" ? "spotted by the bot" : `spotted by ${answer.witness}`;
-}
-
 export function buildFaireEmbed(answer: FaireAnswer, now: number): DiscordEmbed {
   if (!answer.known) {
     return {
@@ -41,7 +34,6 @@ export function buildFaireEmbed(answer: FaireAnswer, now: number): DiscordEmbed 
       description:
         "**Location unknown**\nNobody has spotted it recently. It'll show up here as soon as anyone does.",
       color: COLOUR_UNKNOWN,
-      footer: { text: provenance(answer) },
       timestamp: new Date(now).toISOString(),
     };
   }
@@ -58,7 +50,6 @@ export function buildFaireEmbed(answer: FaireAnswer, now: number): DiscordEmbed 
     title: "🎪 Darkmoon Faire",
     description,
     color: answer.fresh ? COLOUR_FRESH : COLOUR_STALE,
-    footer: { text: provenance(answer) },
     timestamp: new Date(now).toISOString(),
   };
 }
