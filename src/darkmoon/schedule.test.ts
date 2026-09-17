@@ -1,71 +1,85 @@
 import { describe, expect, it } from "vitest";
 import {
   faireStateAt,
+  isPresent,
   locationForMonth,
-  parseFaireAnchor,
   otherLocation,
+  parseFaireAnchor,
   referenceWindow,
   VANILLA_SCHEDULE,
+  windowContaining,
   windowForMonth,
   type FaireSchedule,
 } from "./schedule.js";
 
-/** UTC realm clock, anchored on September 2026 = Elwynn, so every case reads off one fixed point. */
 const schedule: FaireSchedule = VANILLA_SCHEDULE;
-
 const utc = (iso: string): number => Date.parse(iso);
 
 describe("windowForMonth", () => {
-  it("opens at realm midnight on the first Monday and runs seven days", () => {
-    // 1 Sep 2026 is a Tuesday, so the first Monday is the 7th.
-    const window = windowForMonth(schedule, 2026, 9);
-    expect(window.opensAt).toBe(utc("2026-09-07T00:00:00Z"));
-    expect(window.closesAt).toBe(utc("2026-09-14T00:00:00Z"));
+  it("matches Blizzard's published Classic dates, which the first-Monday rule gets wrong", () => {
+    // February 2020 began on a Saturday: the first Monday was the 3rd, but the faire ran the
+    // 10th-16th — the Monday AFTER the first Friday (the 7th), which is when setup began.
+    const february = windowForMonth(schedule, 2020, 2);
+    expect(february.setupAt).toBe(utc("2020-02-07T00:00:00Z"));
+    expect(february.opensAt).toBe(utc("2020-02-10T00:00:00Z"));
+    expect(february.closesAt).toBe(utc("2020-02-17T00:00:00Z"));
+    expect(february.location).toBe("mulgore");
+
+    // March 2020 began on a Sunday: first Monday the 2nd, faire ran the 9th-15th, in Elwynn.
+    const march = windowForMonth(schedule, 2020, 3);
+    expect(march.opensAt).toBe(utc("2020-03-09T00:00:00Z"));
+    expect(march.location).toBe("elwynn");
   });
 
-  it("opens on the 1st when the month itself starts on the opening weekday", () => {
-    // 1 Mar 2027 is a Monday — the zero-offset edge of the Nth-weekday math.
-    expect(windowForMonth(schedule, 2027, 3).opensAt).toBe(utc("2027-03-01T00:00:00Z"));
+  it("puts setup and opening a week apart when the month starts on a Monday", () => {
+    // 1 March 2027 is a Monday. The first-Monday rule would open the faire on the 1st; the real
+    // rule sets up on Friday the 5th and opens on the 8th.
+    const window = windowForMonth(schedule, 2027, 3);
+    expect(window.setupAt).toBe(utc("2027-03-05T00:00:00Z"));
+    expect(window.opensAt).toBe(utc("2027-03-08T00:00:00Z"));
+  });
+
+  it("agrees with the first-Monday rule when the month starts Tue-Fri", () => {
+    // 1 Sep 2026 is a Tuesday: first Friday the 4th, so it opens Monday the 7th — which is also
+    // the first Monday. This is the case that makes the wrong rule look right.
+    expect(windowForMonth(schedule, 2026, 9).opensAt).toBe(utc("2026-09-07T00:00:00Z"));
   });
 
   it("reads day boundaries on the realm clock, not UTC", () => {
     const ahead: FaireSchedule = { ...schedule, utcOffsetMinutes: 120 };
-    // Realm midnight at UTC+2 is 22:00 UTC the evening before.
-    expect(windowForMonth(ahead, 2026, 9).opensAt).toBe(utc("2026-09-06T22:00:00Z"));
+    expect(windowForMonth(ahead, 2026, 9).setupAt).toBe(utc("2026-09-03T22:00:00Z"));
   });
 
   it("honours a non-vanilla rule without code changes", () => {
-    const custom: FaireSchedule = { ...schedule, opensOnWeekday: 5, occurrence: 2, durationDays: 3 };
-    // Second Friday of Sep 2026 is the 11th.
+    const custom: FaireSchedule = { ...schedule, setupWeekday: 1, occurrence: 2, setupToOpenDays: 0, durationDays: 3 };
+    // Second Monday of Sep 2026 is the 14th, opening the same day.
     const window = windowForMonth(custom, 2026, 9);
-    expect(window.opensAt).toBe(utc("2026-09-11T00:00:00Z"));
-    expect(window.closesAt).toBe(utc("2026-09-14T00:00:00Z"));
+    expect(window.setupAt).toBe(utc("2026-09-14T00:00:00Z"));
+    expect(window.opensAt).toBe(utc("2026-09-14T00:00:00Z"));
+    expect(window.closesAt).toBe(utc("2026-09-17T00:00:00Z"));
   });
 });
 
 describe("locationForMonth", () => {
   it("returns the anchor's location for the anchor month", () => {
-    expect(locationForMonth(schedule, 2026, 9)).toBe("elwynn");
+    expect(locationForMonth(schedule, 2020, 2)).toBe("mulgore");
   });
 
   it("alternates every month after the anchor, across a year boundary", () => {
-    expect(locationForMonth(schedule, 2026, 10)).toBe("mulgore");
-    expect(locationForMonth(schedule, 2026, 11)).toBe("elwynn");
-    expect(locationForMonth(schedule, 2026, 12)).toBe("mulgore");
-    expect(locationForMonth(schedule, 2027, 1)).toBe("elwynn");
+    expect(locationForMonth(schedule, 2020, 3)).toBe("elwynn");
+    expect(locationForMonth(schedule, 2020, 12)).toBe("mulgore");
+    expect(locationForMonth(schedule, 2021, 1)).toBe("elwynn");
   });
 
   it("alternates backwards from the anchor too", () => {
-    expect(locationForMonth(schedule, 2026, 8)).toBe("mulgore");
-    // Nine months back from the anchor is an odd distance, ten is even.
-    expect(locationForMonth(schedule, 2025, 12)).toBe("mulgore");
-    expect(locationForMonth(schedule, 2025, 11)).toBe("elwynn");
+    expect(locationForMonth(schedule, 2020, 1)).toBe("elwynn");
+    expect(locationForMonth(schedule, 2019, 12)).toBe("mulgore");
   });
 
   it("follows the anchor when it is flipped", () => {
-    const flipped: FaireSchedule = { ...schedule, anchor: { ...schedule.anchor, location: "mulgore" } };
-    expect(locationForMonth(flipped, 2026, 9)).toBe("mulgore");
-    expect(locationForMonth(flipped, 2026, 10)).toBe("elwynn");
+    const flipped: FaireSchedule = { ...schedule, anchor: { ...schedule.anchor, location: "elwynn" } };
+    expect(locationForMonth(flipped, 2020, 2)).toBe("elwynn");
+    expect(locationForMonth(flipped, 2020, 3)).toBe("mulgore");
   });
 });
 
@@ -77,36 +91,40 @@ describe("otherLocation", () => {
 });
 
 describe("faireStateAt", () => {
-  it("is travelling before the month's opening, pointing at this month's faire", () => {
+  it("is travelling before setup begins", () => {
     const state = faireStateAt(schedule, utc("2026-09-01T12:00:00Z"));
     expect(state.phase).toBe("travelling");
-    expect(state.next.opensAt).toBe(utc("2026-09-07T00:00:00Z"));
-    expect(state.next.location).toBe("elwynn");
+    expect(state.next.setupAt).toBe(utc("2026-09-04T00:00:00Z"));
   });
 
-  it("is up from the opening instant", () => {
-    const state = faireStateAt(schedule, utc("2026-09-07T00:00:00Z"));
-    expect(state.phase).toBe("up");
+  it("is setting up between the carnies arriving and the faire opening", () => {
+    const state = faireStateAt(schedule, utc("2026-09-05T12:00:00Z"));
+    expect(state.phase).toBe("setting-up");
+    expect(isPresent(state)).toBe(true);
+    if (!isPresent(state)) throw new Error("expected the faire to be present");
+    expect(state.current.opensAt).toBe(utc("2026-09-07T00:00:00Z"));
   });
 
-  it("is up mid-week and points at next month as the one after", () => {
-    const state = faireStateAt(schedule, utc("2026-09-10T09:00:00Z"));
-    if (state.phase !== "up") throw new Error("expected the faire to be up");
-    expect(state.current.location).toBe("elwynn");
-    expect(state.next.location).toBe("mulgore");
-    expect(state.next.opensAt).toBe(utc("2026-10-05T00:00:00Z"));
+  it("is present, but not yet up, from the setup instant", () => {
+    expect(faireStateAt(schedule, utc("2026-09-04T00:00:00Z")).phase).toBe("setting-up");
   });
 
-  it("closes exclusively — the closing instant is already travelling", () => {
-    const state = faireStateAt(schedule, utc("2026-09-14T00:00:00Z"));
-    expect(state.phase).toBe("travelling");
-    expect(state.next.opensAt).toBe(utc("2026-10-05T00:00:00Z"));
+  it("is up from the opening instant to the closing instant, exclusive", () => {
+    expect(faireStateAt(schedule, utc("2026-09-07T00:00:00Z")).phase).toBe("up");
+    expect(faireStateAt(schedule, utc("2026-09-13T23:59:59Z")).phase).toBe("up");
+    expect(faireStateAt(schedule, utc("2026-09-14T00:00:00Z")).phase).toBe("travelling");
   });
 
-  it("rolls into next month's faire once this month's has ended", () => {
+  it("points at next month once this month's faire has closed", () => {
     const state = faireStateAt(schedule, utc("2026-09-30T23:00:00Z"));
     expect(state.phase).toBe("travelling");
-    expect(state.next.location).toBe("mulgore");
+    expect(state.next.opensAt).toBe(utc("2026-10-05T00:00:00Z"));
+  });
+
+  it("names the month after as `next` while one is up", () => {
+    const state = faireStateAt(schedule, utc("2026-09-10T09:00:00Z"));
+    if (!isPresent(state)) throw new Error("expected the faire to be present");
+    expect(state.current.location).toBe(otherLocation(state.next.location));
     expect(state.next.opensAt).toBe(utc("2026-10-05T00:00:00Z"));
   });
 
@@ -114,14 +132,15 @@ describe("faireStateAt", () => {
     const state = faireStateAt(schedule, utc("2026-12-28T00:00:00Z"));
     expect(state.phase).toBe("travelling");
     expect(state.next.opensAt).toBe(utc("2027-01-04T00:00:00Z"));
-    expect(state.next.location).toBe("elwynn");
   });
 });
 
 describe("referenceWindow", () => {
-  it("is the live faire while one is up", () => {
-    const state = faireStateAt(schedule, utc("2026-09-10T09:00:00Z"));
-    expect(referenceWindow(state).opensAt).toBe(utc("2026-09-07T00:00:00Z"));
+  it("is the faire in the zone while one is there, setup included", () => {
+    const setup = faireStateAt(schedule, utc("2026-09-05T09:00:00Z"));
+    expect(referenceWindow(setup).opensAt).toBe(utc("2026-09-07T00:00:00Z"));
+    const open = faireStateAt(schedule, utc("2026-09-10T09:00:00Z"));
+    expect(referenceWindow(open).opensAt).toBe(utc("2026-09-07T00:00:00Z"));
   });
 
   it("is the coming faire while travelling", () => {
@@ -130,10 +149,17 @@ describe("referenceWindow", () => {
   });
 });
 
+describe("windowContaining", () => {
+  it("returns the window of the month an instant falls in, open or not", () => {
+    expect(windowContaining(schedule, utc("2026-09-25T00:00:00Z")).opensAt).toBe(utc("2026-09-07T00:00:00Z"));
+    expect(windowContaining(schedule, utc("2026-09-04T00:00:00Z")).setupAt).toBe(utc("2026-09-04T00:00:00Z"));
+  });
+});
+
 describe("parseFaireAnchor", () => {
   it("reads a well-formed anchor", () => {
-    expect(parseFaireAnchor("2026-09:elwynn")).toEqual({ year: 2026, month: 9, location: "elwynn" });
-    expect(parseFaireAnchor(" 2026-9:MULGORE ")).toEqual({ year: 2026, month: 9, location: "mulgore" });
+    expect(parseFaireAnchor("2020-02:mulgore")).toEqual({ year: 2020, month: 2, location: "mulgore" });
+    expect(parseFaireAnchor(" 2026-9:ELWYNN ")).toEqual({ year: 2026, month: 9, location: "elwynn" });
   });
 
   it("rejects a malformed anchor rather than half-reading it", () => {

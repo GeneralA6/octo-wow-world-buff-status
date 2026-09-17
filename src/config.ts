@@ -5,6 +5,7 @@ import { OCTOWOW_CDN } from "./net/client-resolver.js";
 import type { GroupingMode } from "./watcher/raid-events.js";
 import type { Faction } from "./watcher/buff-store.js";
 import { parseFaireAnchor, VANILLA_SCHEDULE, type FaireSchedule } from "./darkmoon/schedule.js";
+import { DEFAULT_CORROBORATION, type CorroborationPolicy } from "./darkmoon/corroboration.js";
 
 const GROUPING_MODES: readonly GroupingMode[] = ["auto", "guild", "lair"];
 
@@ -63,6 +64,8 @@ export interface BotConfig {
   readonly clientCdn: string;
   /** The Darkmoon Faire schedule the `darkmoon` command computes from. */
   readonly darkmoon: FaireSchedule;
+  /** How much agreement a player-broadcast faire sighting needs before the bot believes it. */
+  readonly darkmoonCorroboration: CorroborationPolicy;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   /** Members a cohort must reach for a raid to count as forming ("about to start") — when the
@@ -490,18 +493,40 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   if (darkmoonUtcOffsetMinutes > 840) {
     errors.push("DARKMOON_UTC_OFFSET_MINUTES must be between -840 and 840");
   }
-  const darkmoonOpensOnWeekday = intWithDefault("DARKMOON_OPENS_WEEKDAY", VANILLA_SCHEDULE.opensOnWeekday, 0);
-  if (darkmoonOpensOnWeekday > 6) errors.push("DARKMOON_OPENS_WEEKDAY must be 0 (Sunday) to 6 (Saturday)");
+  const darkmoonSetupWeekday = intWithDefault("DARKMOON_SETUP_WEEKDAY", VANILLA_SCHEDULE.setupWeekday, 0);
+  if (darkmoonSetupWeekday > 6) errors.push("DARKMOON_SETUP_WEEKDAY must be 0 (Sunday) to 6 (Saturday)");
+  const darkmoonSetupToOpenDays = intWithDefault("DARKMOON_SETUP_DAYS", VANILLA_SCHEDULE.setupToOpenDays, 0);
+  if (darkmoonSetupToOpenDays > 14) errors.push("DARKMOON_SETUP_DAYS must be 0-14");
   const darkmoonOccurrence = intWithDefault("DARKMOON_OCCURRENCE", VANILLA_SCHEDULE.occurrence, 1);
   if (darkmoonOccurrence > 4) errors.push("DARKMOON_OCCURRENCE must be 1-4");
   const darkmoonDurationDays = intWithDefault("DARKMOON_DURATION_DAYS", VANILLA_SCHEDULE.durationDays, 1);
   if (darkmoonDurationDays > 28) errors.push("DARKMOON_DURATION_DAYS must be 1-28");
   const darkmoonAnchorRaw = env.DARKMOON_ANCHOR?.trim();
   const darkmoonAnchor = darkmoonAnchorRaw ? parseFaireAnchor(darkmoonAnchorRaw) : VANILLA_SCHEDULE.anchor;
-  if (darkmoonAnchor === null) errors.push(`DARKMOON_ANCHOR must look like "2026-09:elwynn"`);
+  if (darkmoonAnchor === null) errors.push(`DARKMOON_ANCHOR must look like "2020-02:mulgore"`);
+  // Tamper resistance for the LFT sighting feed, which is player-typed text anyone can forge.
+  // Quorum counts DISTINCT SENDERS, so lowering it to 1 restores "believe whoever spoke last" —
+  // which is what PizzaWorldBuffs itself does, and is only safe in a client trusting its own user.
+  const darkmoonQuorum = intWithDefault("DARKMOON_QUORUM", DEFAULT_CORROBORATION.quorum, 1);
+  if (darkmoonQuorum > 50) errors.push("DARKMOON_QUORUM must be 1-50");
+  const darkmoonChangeCooldownHours = intWithDefault(
+    "DARKMOON_CHANGE_COOLDOWN_HOURS",
+    DEFAULT_CORROBORATION.changeCooldownMs / 3_600_000,
+    0,
+  );
+  // Shorter than the gap between faires, or the real monthly move would be the thing it blocks.
+  if (darkmoonChangeCooldownHours > 20 * 24) {
+    errors.push("DARKMOON_CHANGE_COOLDOWN_HOURS must be 0-480 (under the gap between faires)");
+  }
+  const darkmoonCorroboration: CorroborationPolicy = {
+    quorum: darkmoonQuorum,
+    changeCooldownMs: darkmoonChangeCooldownHours * 3_600_000,
+  };
+
   const darkmoon: FaireSchedule = {
-    opensOnWeekday: darkmoonOpensOnWeekday,
+    setupWeekday: darkmoonSetupWeekday,
     occurrence: darkmoonOccurrence,
+    setupToOpenDays: darkmoonSetupToOpenDays,
     durationDays: darkmoonDurationDays,
     utcOffsetMinutes: darkmoonUtcOffsetMinutes,
     anchor: darkmoonAnchor ?? VANILLA_SCHEDULE.anchor,
@@ -555,6 +580,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     autoResolve,
     clientCdn,
     darkmoon,
+    darkmoonCorroboration,
     watchAreaId,
     watchAreaName,
     minRaidSize,

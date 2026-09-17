@@ -445,26 +445,29 @@ describe("loadConfig darkmoon", () => {
   it("defaults to the vanilla faire rule", () => {
     const config = loadConfig({ ...minimalEnv });
     expect(config.darkmoon).toEqual({
-      opensOnWeekday: 1,
+      setupWeekday: 5,
       occurrence: 1,
+      setupToOpenDays: 3,
       durationDays: 7,
       utcOffsetMinutes: 0,
-      anchor: { year: 2026, month: 9, location: "elwynn" },
+      anchor: { year: 2020, month: 2, location: "mulgore" },
     });
   });
 
   it("takes a whole non-vanilla rule from the environment", () => {
     const config = loadConfig({
       ...minimalEnv,
-      DARKMOON_OPENS_WEEKDAY: "5",
+      DARKMOON_SETUP_WEEKDAY: "1",
       DARKMOON_OCCURRENCE: "2",
+      DARKMOON_SETUP_DAYS: "0",
       DARKMOON_DURATION_DAYS: "4",
       DARKMOON_UTC_OFFSET_MINUTES: "-300",
       DARKMOON_ANCHOR: "2027-03:mulgore",
     });
     expect(config.darkmoon).toEqual({
-      opensOnWeekday: 5,
+      setupWeekday: 1,
       occurrence: 2,
+      setupToOpenDays: 0,
       durationDays: 4,
       utcOffsetMinutes: -300,
       anchor: { year: 2027, month: 3, location: "mulgore" },
@@ -472,10 +475,11 @@ describe("loadConfig darkmoon", () => {
   });
 
   it("rejects a schedule that could not describe a real faire", () => {
-    expect(() => loadConfig({ ...minimalEnv, DARKMOON_OPENS_WEEKDAY: "7" })).toThrow(
-      /DARKMOON_OPENS_WEEKDAY must be 0 \(Sunday\) to 6 \(Saturday\)/,
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_SETUP_WEEKDAY: "7" })).toThrow(
+      /DARKMOON_SETUP_WEEKDAY must be 0 \(Sunday\) to 6 \(Saturday\)/,
     );
     expect(() => loadConfig({ ...minimalEnv, DARKMOON_OCCURRENCE: "5" })).toThrow(/DARKMOON_OCCURRENCE must be 1-4/);
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_SETUP_DAYS: "20" })).toThrow(/DARKMOON_SETUP_DAYS must be 0-14/);
     expect(() => loadConfig({ ...minimalEnv, DARKMOON_DURATION_DAYS: "40" })).toThrow(
       /DARKMOON_DURATION_DAYS must be 1-28/,
     );
@@ -486,10 +490,34 @@ describe("loadConfig darkmoon", () => {
 
   it("rejects a malformed anchor rather than quietly moving every month", () => {
     expect(() => loadConfig({ ...minimalEnv, DARKMOON_ANCHOR: "september:elwynn" })).toThrow(
-      /DARKMOON_ANCHOR must look like "2026-09:elwynn"/,
+      /DARKMOON_ANCHOR must look like "2020-02:mulgore"/,
     );
     expect(() => loadConfig({ ...minimalEnv, DARKMOON_ANCHOR: "2026-09:booty bay" })).toThrow(
       /DARKMOON_ANCHOR/,
     );
+  });
+});
+
+describe("loadConfig darkmoon corroboration", () => {
+  it("defaults to requiring several distinct senders and a long cooldown", () => {
+    const config = loadConfig({ ...minimalEnv });
+    expect(config.darkmoonCorroboration).toEqual({ quorum: 3, changeCooldownMs: 12 * 3_600_000 });
+  });
+
+  it("can be relaxed to trust whoever spoke last", () => {
+    const config = loadConfig({
+      ...minimalEnv,
+      DARKMOON_QUORUM: "1",
+      DARKMOON_CHANGE_COOLDOWN_HOURS: "0",
+    });
+    expect(config.darkmoonCorroboration).toEqual({ quorum: 1, changeCooldownMs: 0 });
+  });
+
+  it("rejects a cooldown longer than the gap between faires, which would block the real move", () => {
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_CHANGE_COOLDOWN_HOURS: "500" })).toThrow(
+      /DARKMOON_CHANGE_COOLDOWN_HOURS must be 0-480/,
+    );
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_QUORUM: "0" })).toThrow(/DARKMOON_QUORUM/);
+    expect(() => loadConfig({ ...minimalEnv, DARKMOON_QUORUM: "99" })).toThrow(/DARKMOON_QUORUM must be 1-50/);
   });
 });

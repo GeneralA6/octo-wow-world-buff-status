@@ -1,68 +1,162 @@
+import {
+  CORROBORATION_WINDOW_MS,
+  DEFAULT_CORROBORATION,
+  shouldSettle,
+  SightingTally,
+  type CorroborationPolicy,
+  type SettledSighting,
+} from "./corroboration.js";
+import { matchHerald } from "./herald.js";
+import type { KnowledgeStore } from "./knowledge-store.js";
 import { isTrustedBroadcast, parseDmfBroadcast, sightedAt } from "./pwb.js";
-import { resolveFaire, type FaireReport, type FaireSighting } from "./resolve.js";
+import {
+  anchorHerald,
+  anchorSighting,
+  contradictsSchedule,
+  NO_KNOWLEDGE,
+  resolveFaire,
+  type FaireKnowledge,
+  type FaireObservation,
+  type FaireReport,
+} from "./resolve.js";
 import type { FaireSchedule } from "./schedule.js";
-import type { SightingStore } from "./sighting-store.js";
 
 /**
- * Holds what the bot knows about the Darkmoon Faire: the newest sighting overheard on the LFT
- * channel, kept in memory for the answer path and in Mongo so a redeploy does not forget it.
+ * Holds what the bot knows about the Darkmoon Faire, fed by the two things it already overhears:
+ * NPC chat in the capitals (a herald announcing the faire is coming) and the LFT channel (a
+ * PizzaWorldBuffs sighting). Kept in memory for the answer path and in Mongo so a redeploy does
+ * not forget it.
  *
- * Every LFT line the watcher already receives is offered to `observe`; the ones that are not PWB
- * faire broadcasts cost a `startsWith`. Acceptance is PWB's own rule — freshest sighting wins —
- * so the bot and the addon every player runs never disagree about where the faire is.
+ * The two are stored side by side rather than as one "latest observation", because they are not
+ * interchangeable: a herald is server-authored and cannot be faked, so it must never be displaced
+ * by a `PWB_DMF:` line a player typed.
+ *
+ * Within the channel feed, newest-wins is PWB's own rule and keeping it means the bot and the
+ * addon every player runs never disagree — but PWB is a client trusting its own user, and this is
+ * a bot answering strangers, so newest-wins alone would let one troll move the answer and rewrite
+ * the alternation for months. A sighting therefore has to clear `corroboration.ts` before it
+ * counts, and only the herald path skips that, because the server is the one speaking.
  */
+
+/** What a line on the LFT channel did. Reported rather than reduced to a boolean so the caller can
+ *  tell "nothing to do with us" from "we cannot identify senders any more", which look identical
+ *  from outside and mean very different things. */
+export type ObserveOutcome =
+  /** Became the settled sighting. */
+  | "accepted"
+  /** A valid claim, counted towards consensus, not (yet) enough to settle. */
+  | "counted"
+  /** Not a faire broadcast, or from a client version whose sightings cannot be trusted. */
+  | "ignored"
+  /** A faire broadcast with no usable sender — it cannot vote, and a silent feed would follow. */
+  | "unidentified";
 
 export interface FaireServiceDeps {
   readonly schedule: FaireSchedule;
-  readonly store: SightingStore;
-  /** Fired when a strictly newer sighting is accepted, so the caller can log it. */
-  readonly onSighting?: (sighting: FaireSighting) => void;
+  readonly store: KnowledgeStore;
+  /** Fired when an observation is accepted, so the caller can log it. */
+  readonly onObservation?: (observation: FaireObservation) => void;
+  /** How much agreement a sighting needs before it is believed. Defaults to DEFAULT_CORROBORATION. */
+  readonly corroboration?: CorroborationPolicy;
+  /** Fired when the faire is seen at a moment the schedule says it is away — the rule is wrong
+   *  and only a human can fix it. Carries the instant it was seen. */
+  readonly onScheduleConflict?: (sightedAt: number) => void;
 }
 
 export class FaireService {
   readonly #deps: FaireServiceDeps;
-  #sighting: FaireSighting | null = null;
+  #knowledge: FaireKnowledge = NO_KNOWLEDGE;
+  /** Live corroboration window over the LFT feed — deliberately not persisted. */
+  readonly #tally = new SightingTally(CORROBORATION_WINDOW_MS);
+  /** The zone currently settled on, for the change cooldown. */
+  #settled: SettledSighting | null = null;
 
   constructor(deps: FaireServiceDeps) {
     this.#deps = deps;
   }
 
-  /** Load the persisted sighting. Call once on boot, before the first answer. */
+  /** Load the persisted observations. Call once on boot, before the first answer. */
   async load(): Promise<void> {
-    this.#sighting = await this.#deps.store.load();
+    this.#knowledge = await this.#deps.store.load();
   }
 
-  /** The sighting currently held, for logging and tests. */
-  get sighting(): FaireSighting | null {
-    return this.#sighting;
+  /** What is currently held, for logging and tests. */
+  get knowledge(): FaireKnowledge {
+    return this.#knowledge;
   }
 
   /**
-   * Offer a line heard on the LFT channel. Returns true when it became the newest sighting.
+   * Offer a line heard on the LFT channel, with the SERVER-STAMPED id of whoever sent it.
    *
-   * A sighting is only replaced by a strictly newer one, so the constant rebroadcast traffic
-   * (every client, every 10-60s, mostly repeating what we already hold) writes nothing.
+   * A line on its own is never believed — see `corroboration.ts`. It is a vote, and only a
+   * corroborated majority is allowed to settle. `senderId` must be the sender from the packet,
+   * never anything out of the message body, or the guard is worthless.
    */
-  async observe(text: string, receivedAt: number): Promise<boolean> {
+  async observeChannel(text: string, senderId: string, receivedAt: number): Promise<ObserveOutcome> {
     const broadcast = parseDmfBroadcast(text);
-    if (broadcast === null || !isTrustedBroadcast(broadcast)) return false;
+    if (broadcast === null || !isTrustedBroadcast(broadcast)) return "ignored";
+
+    // An unidentifiable sender cannot vote — counting it would hand a troll unlimited ballots.
+    // Reported rather than swallowed: if the channel's sender field ever stops parsing, this is
+    // the only thing that would make the whole feed go quiet, and silence should be visible.
+    if (senderId === "" || senderId === "0") return "unidentified";
+
+    this.#tally.record({ location: broadcast.location, senderId, at: receivedAt });
+    const consensus = this.#tally.leader(receivedAt);
+    // This line may only be believed if the majority is saying what IT says. Checking the
+    // consensus alone would let a troll's line ride in on the quorum the honest clients built:
+    // the gate would pass on their zone and then write his.
+    if (consensus === null || consensus.location !== broadcast.location) return "counted";
+    if (!shouldSettle(this.#deps.corroboration ?? DEFAULT_CORROBORATION, this.#settled, consensus, receivedAt)) {
+      return "counted";
+    }
 
     const seenAt = sightedAt(broadcast, receivedAt);
-    if (this.#sighting !== null && seenAt <= this.#sighting.sightedAt) return false;
+    const current = this.#knowledge.sighting;
+    if (current !== null && seenAt <= current.observedAt) return "counted";
 
-    const sighting: FaireSighting = {
-      location: broadcast.location,
-      sightedAt: seenAt,
-      witness: broadcast.witness,
-    };
-    this.#sighting = sighting;
-    await this.#deps.store.save(sighting);
-    this.#deps.onSighting?.(sighting);
-    return true;
+    const observation = anchorSighting(this.#deps.schedule, broadcast.location, seenAt, broadcast.witness);
+    if (observation === null) {
+      // The faire was seen when the calendar says it is nowhere. Nothing can be anchored to a
+      // window the schedule does not believe exists, so this teaches us only that the rule needs
+      // a human. Only reported once corroborated, so one troll line cannot raise the alarm.
+      if (contradictsSchedule(this.#deps.schedule, seenAt)) this.#deps.onScheduleConflict?.(seenAt);
+      return "counted";
+    }
+    this.#settled = { location: observation.location, acceptedAt: receivedAt };
+    await this.#accept({ ...this.#knowledge, sighting: observation }, observation);
+    return "accepted";
+  }
+
+  /**
+   * Offer an NPC chat line heard in a capital. Returns true when it was a herald announcement we
+   * had not already heard for this window.
+   */
+  async observeMonsterChat(senderName: string, text: string, heardAt: number): Promise<boolean> {
+    const announcement = matchHerald(senderName, text);
+    if (announcement === null) return false;
+
+    const observation = anchorHerald(
+      this.#deps.schedule,
+      announcement.location,
+      heardAt,
+      announcement.herald,
+    );
+    const current = this.#knowledge.herald;
+    // Heralds repeat themselves every few minutes for a week; only a NEW window is news.
+    if (current !== null && observation.windowSetupAt <= current.windowSetupAt) return false;
+    return this.#accept({ ...this.#knowledge, herald: observation }, observation);
   }
 
   /** What to tell a player asking where the faire is. */
   report(now: number): FaireReport {
-    return resolveFaire(this.#deps.schedule, this.#sighting, now);
+    return resolveFaire(this.#deps.schedule, this.#knowledge, now);
+  }
+
+  async #accept(knowledge: FaireKnowledge, accepted: FaireObservation): Promise<boolean> {
+    this.#knowledge = knowledge;
+    await this.#deps.store.save(knowledge);
+    this.#deps.onObservation?.(accepted);
+    return true;
   }
 }

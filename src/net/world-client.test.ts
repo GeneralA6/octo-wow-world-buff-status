@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { AUTH_OK, ChatType, GuildEvent, WorldOpcode } from "../protocol/opcodes.js";
 import type { WhoResult } from "../protocol/who.js";
+import type { MonsterChat } from "../protocol/chat.js";
 import { PacketReader, PacketWriter } from "./byte-buffer.js";
 import type { NodeSocketLike } from "./socket.js";
 import { WorldClient } from "./world-client.js";
@@ -85,12 +86,13 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
   }
 
-  /** Deliver a zone monster yell (the buff yell arrives this way) to the client. */
-  pushMonsterYell(senderGuid: bigint, senderName: string, text: string): void {
+  /** Deliver monster chat to the client — a yell by default (how the buff yell arrives), or any
+   *  other monster chat type, which is how the Darkmoon heralds may speak. */
+  pushMonsterYell(senderGuid: bigint, senderName: string, text: string, type: number = ChatType.MonsterYell): void {
     const name = Buffer.from(senderName, "utf8");
     const msg = Buffer.from(text, "utf8");
     const body = new PacketWriter()
-      .u8(ChatType.MonsterYell)
+      .u8(type)
       .u32LE(0)
       .u64LE(senderGuid)
       .u32LE(name.length + 1)
@@ -533,6 +535,50 @@ describe("WorldClient (against a scripted mock server)", () => {
     const yell = "The dread lady, Onyxia, hangs from the arches!";
     socket.pushMonsterYell(0n, "Major Mattingly", yell);
     expect(await withTimeout(yelled)).toEqual({ name: "Major Mattingly", text: yell });
+
+    client.close();
+  });
+
+  it("routes an NPC SAY to onMonsterChat but not to the yell-only hook", async () => {
+    // The Darkmoon heralds' chat type is unconfirmed on this realm, so the wider feed has to carry
+    // says as well as yells — a yell-only hook would silently never hear them.
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    let deliverChat: (v: MonsterChat) => void = () => {};
+    const chatted = new Promise<MonsterChat>((resolve) => {
+      deliverChat = resolve;
+    });
+    const yells: string[] = [];
+
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x44,
+      pingIntervalMs: 0,
+      handlers: {
+        onReady: () => markReady(),
+        onMonsterChat: (chat) => deliverChat(chat),
+        onMonsterYell: (_name, text) => yells.push(text),
+      },
+    });
+
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    const announcement = "The Darkmoon Faire is coming! Come one, come all!";
+    socket.pushMonsterYell(0n, "Kruban Darkblade", announcement, ChatType.MonsterSay);
+    const chat = await withTimeout(chatted);
+    expect(chat.senderName).toBe("Kruban Darkblade");
+    expect(chat.text).toBe(announcement);
+    expect(chat.type).toBe(ChatType.MonsterSay);
+    expect(yells).toEqual([]);
 
     client.close();
   });

@@ -20,6 +20,7 @@ import {
   parsePlayerNotFound,
   parseServerChat,
   type FriendListEntry,
+  type MonsterChat,
   type FriendStatus,
 } from "../protocol/chat.js";
 import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.js";
@@ -53,6 +54,11 @@ export interface WorldClientHandlers {
   onWhisperUndelivered?: (target: string) => void;
   /** An NPC yelled to the zone (raw). The wiring layer decides if it is a buff yell. */
   onMonsterYell?: (senderName: string, text: string) => void;
+  /** Any NPC chat — say, yell or whisper — with its chat type. Separate from `onMonsterYell`
+   *  because a buff yell is definitively a YELL and gains nothing from the wider feed, while the
+   *  Darkmoon heralds' chat type is unconfirmed on this realm and would be missed by a yell-only
+   *  hook. The wiring layer decides what each line means. */
+  onMonsterChat?: (chat: MonsterChat) => void;
   /** A message on a global chat CHANNEL we joined (e.g. Turtle's "LFT" addon-comms channel). The
    *  raw body is passed too, since the channel layout is unconfirmed — the wiring logs it. */
   onChannelMessage?: (channelName: string, senderGuid: bigint, text: string, raw: Buffer) => void;
@@ -489,6 +495,7 @@ export class WorldClient {
       this.#logger.debug(
         `world: monster chat from ${JSON.stringify(chat.senderName)}: ${JSON.stringify(chat.text)}`,
       );
+      this.#handlers.onMonsterChat?.(chat);
       if (chat.type === ChatType.MonsterYell) this.#handlers.onMonsterYell?.(chat.senderName, chat.text);
     } catch (error) {
       this.#logger.debug(

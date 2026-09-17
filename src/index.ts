@@ -42,12 +42,12 @@ import {
 } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
 import { FaireService } from "./darkmoon/service.js";
-import { contradictsSchedule } from "./darkmoon/resolve.js";
+
 import {
-  InMemorySightingStore,
-  MongoSightingStore,
-  type SightingStore,
-} from "./darkmoon/sighting-store.js";
+  InMemoryKnowledgeStore,
+  MongoKnowledgeStore,
+  type KnowledgeStore,
+} from "./darkmoon/knowledge-store.js";
 import { formatHeartbeat } from "./watcher/heartbeat.js";
 import {
   InMemoryDurationStore,
@@ -620,17 +620,31 @@ async function runConnection(
         // turned in NOW — before the yell. Fire it, but to the OPS (errors) channel for now, not the
         // public buff channel, while the source addon has few users. Deduped per turn-in (the channel
         // retransmits the same OB_INC many times). LFT is otherwise a firehose we don't log.
-        onChannelMessage: (channelName, _senderGuid, text, raw) => {
+        onChannelMessage: (channelName, senderGuid, text, raw) => {
           lftSeen += 1;
           const runs = printableAsciiRuns(raw);
           // PizzaWorldBuffs gossips the Darkmoon Faire's location on this same channel. Offered the
           // decoded text and the raw runs for the same reason the OB_INC: line below is: the channel
-          // layout is unconfirmed, so the prefix sometimes only surfaces in a raw run. Everything
-          // that isn't a faire broadcast costs a startsWith, and only a strictly newer sighting writes.
+          // layout is unconfirmed, so the prefix sometimes only surfaces in a raw run.
+          //
+          // The SENDER's guid goes with it and is the whole tamper guard: the server stamps it, so
+          // it is the one part of a channel line a troll cannot choose. A sighting is only a vote
+          // until enough distinct senders agree (see darkmoon/corroboration.ts).
           const dmfLine = [text, ...runs].find((s) => s.startsWith("PWB_DMF:"));
           if (dmfLine !== undefined) {
             void faire
-              .observe(dmfLine, Date.now())
+              .observeChannel(dmfLine, senderGuid.toString(), Date.now())
+              .then((outcome) => {
+                // The channel layout is unconfirmed, so an unreadable sender is a real possibility
+                // — and it would quietly disable the whole feed, since a vote nobody can attribute
+                // is never counted. Log it rather than let the faire silently stop updating.
+                if (outcome === "unidentified") {
+                  logger.warn(
+                    `darkmoon: faire broadcast with no usable sender guid — sightings cannot be ` +
+                      `corroborated and will be ignored until the channel's sender field parses`,
+                  );
+                }
+              })
               .catch((error) => logger.error(`darkmoon: observe failed (${describeError(error)})`));
           }
           const obLine = [text, ...runs].find((s) => s.startsWith("OB_INC:") || s.startsWith("OB:"));
@@ -733,6 +747,8 @@ async function runListener(
   yellSink: YellSink,
   listenerWho: ListenerWho,
   whisperPool: WhisperPool,
+  /** Hears the Darkmoon heralds, who wander the capitals these listeners are parked in. */
+  faire: FaireService,
   // Fired once this listener reaches in-world — the realm-recovery signal (see runConnection).
   onConnected: () => void,
 ): Promise<void> {
@@ -874,6 +890,16 @@ async function runListener(
             interactTimer = setTimeout(tryInteract, OBJECT_POLL_MS);
             interactTimer.unref?.();
           }
+        },
+        // The Darkmoon heralds wander a capital the week before the faire arrives — exactly where
+        // these listeners are parked. Fed from the wider monster-chat feed rather than the yell
+        // hook below because whether they yell or merely say is unconfirmed on this realm, and a
+        // yell-only hook would silently never fire. Note only Orgrimmar's herald is ever in
+        // earshot: his Alliance counterpart stands in IRONFORGE, not Stormwind.
+        onMonsterChat: (chat) => {
+          void faire
+            .observeMonsterChat(chat.senderName, chat.text, Date.now())
+            .catch((error) => logger.error(`darkmoon: herald observe failed (${describeError(error)})`));
         },
         onMonsterYell: (senderName, text) => {
           const faction = matchBuffYell(text);
@@ -1178,38 +1204,41 @@ async function main(): Promise<void> {
   // Where the Darkmoon Faire was last seen, learned from PizzaWorldBuffs' broadcasts on the LFT
   // channel. Worth persisting even though the faire only visits weekly: the sighting also pins the
   // calendar's zone alternation, and that fact stays true long after the faire has left.
-  let sightingStore: SightingStore = new InMemorySightingStore();
+  let knowledgeStore: KnowledgeStore = new InMemoryKnowledgeStore();
   if (config.mongodbUri) {
     try {
-      sightingStore = await MongoSightingStore.connect(config.mongodbUri, config.mongodbDb);
-      logger.info("darkmoon: remembering faire sightings in MongoDB");
+      knowledgeStore = await MongoKnowledgeStore.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("darkmoon: remembering faire observations in MongoDB");
     } catch (error) {
       logger.error(`darkmoon: MongoDB connect failed (${describeError(error)}); remembering in memory`);
     }
   }
   const faire = new FaireService({
     schedule: config.darkmoon,
-    store: sightingStore,
-    onSighting: (sighting) => {
+    store: knowledgeStore,
+    corroboration: config.darkmoonCorroboration,
+    onObservation: (observation) =>
       logger.info(
-        `darkmoon: faire seen in ${sighting.location} by ${sighting.witness} ` +
-          `(${new Date(sighting.sightedAt).toISOString()})`,
-      );
-      // A wrong zone heals itself; a sighting outside every calendar week does not — it means
-      // Turtle runs the faire on a different cadence than vanilla, and only DARKMOON_* fixes it.
-      if (contradictsSchedule(config.darkmoon, sighting)) {
-        logger.warn(
-          `darkmoon: faire seen while the schedule says it is travelling — the DARKMOON_OPENS_WEEKDAY/` +
-            `_OCCURRENCE/_DURATION_DAYS rule does not match this realm and needs correcting`,
-        );
-      }
-    },
+        `darkmoon: ${observation.source} puts the faire in ${observation.location} ` +
+          `(${observation.witness}, ${new Date(observation.observedAt).toISOString()})`,
+      ),
+    // A wrong zone heals itself — it flips the alternation for good. A sighting outside every
+    // calendar week cannot: it means this realm runs the faire on a different cadence, and only
+    // the DARKMOON_* schedule config fixes that.
+    onScheduleConflict: (seenAt) =>
+      logger.warn(
+        `darkmoon: faire seen ${new Date(seenAt).toISOString()}, when the schedule says it is away — ` +
+          `the DARKMOON_SETUP_WEEKDAY/_OCCURRENCE/_SETUP_DAYS/_DURATION_DAYS rule does not match ` +
+          `this realm and needs correcting`,
+      ),
   });
   await faire.load().catch((error) => logger.error(`darkmoon: load failed (${describeError(error)})`));
+  const known = faire.knowledge.herald ?? faire.knowledge.sighting;
   logger.info(
-    faire.sighting
-      ? `darkmoon: last known faire ${faire.sighting.location}, seen ${new Date(faire.sighting.sightedAt).toISOString()}`
-      : "darkmoon: no sighting yet — answering from the calendar until one is heard on LFT",
+    known
+      ? `darkmoon: alternation pinned by ${known.source} (${known.location}, ` +
+          `${new Date(known.observedAt).toISOString()})`
+      : "darkmoon: nothing observed yet — answering from the calendar until a herald or sighting lands",
   );
 
   // Player-submitted feedback/suggestions — kept for review, posted to the feedback channel.
@@ -1451,7 +1480,7 @@ async function main(): Promise<void> {
       buffStore.close(),
       broadcasts.close(),
       durationStore.close(),
-      sightingStore.close(),
+      knowledgeStore.close(),
       feedbackStore.close(),
       introStore.close(),
       userLedger.close(),
@@ -1665,7 +1694,7 @@ async function main(): Promise<void> {
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runListener(config, listener, log, client, onBuff, outreach, yellSink, listenerWho, whisperPool, () =>
+        await runListener(config, listener, log, client, onBuff, outreach, yellSink, listenerWho, whisperPool, faire, () =>
           announceRealmUp(listener.characterName),
         );
         log.warn("connection closed; reconnecting shortly");

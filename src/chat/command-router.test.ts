@@ -410,11 +410,18 @@ describe("CommandRouter darkmoon", () => {
     phase: "up",
     location: "mulgore",
     site: FAIRE_SITES.mulgore,
+    setupAt: Date.parse("2026-09-04T00:00:00Z"),
     opensAt: Date.parse("2026-09-07T00:00:00Z"),
     closesAt: Date.parse("2026-09-14T00:00:00Z"),
     source: "sighting",
-    locationConfirmed: true,
-    sighting: { location: "mulgore", sightedAt: NOW - 60_000, witness: "Someplayer" },
+    confirmedBy: "sighting",
+    sighting: {
+      location: "mulgore",
+      windowSetupAt: Date.parse("2026-09-04T00:00:00Z"),
+      observedAt: NOW - 60_000,
+      source: "sighting",
+      witness: "Someplayer",
+    },
     ...over,
   });
   const faireDeps = (report: FaireReport = faire()) =>
@@ -459,7 +466,7 @@ describe("CommandRouter darkmoon", () => {
   });
 
   it("passes the hedge through when nothing has confirmed the zone", async () => {
-    const { router } = faireDeps(faire({ source: "calendar", locationConfirmed: false }));
+    const { router } = faireDeps(faire({ source: "calendar", confirmedBy: null }));
     expect((await router.handle("Raider", "darkmoon"))[0]).toMatch(/probably up/);
   });
 });
