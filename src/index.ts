@@ -41,6 +41,12 @@ import {
   type Faction,
 } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
+import { FaireService } from "./darkmoon/service.js";
+import {
+  InMemorySightingStore,
+  MongoSightingStore,
+  type SightingStore,
+} from "./darkmoon/sighting-store.js";
 import { formatHeartbeat } from "./watcher/heartbeat.js";
 import {
   InMemoryDurationStore,
@@ -247,6 +253,8 @@ interface ConnectionServices {
   readonly raidStateStore: RaidStateStore;
   readonly lockoutStore: LockoutStore;
   readonly durationStore: DurationStore;
+  /** Where the Darkmoon Faire is — fed by the LFT channel, read by the "darkmoon" command. */
+  readonly faire: FaireService;
   readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
   /** Lifetime distinct-subscriber count for the heartbeat stat (survives unsubscribing). */
@@ -287,7 +295,7 @@ async function runConnection(
   // on a stable, reasonable ping (a raid can't run on a laggy server).
   onLatency: (rttMs: number) => void,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, faire, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
   // Throttles the per-lane Chronicle early-confirm check to ~once a minute even if /who polls faster.
   const { sessionKey, realms } = await new AuthClient(logger).login({
@@ -614,6 +622,16 @@ async function runConnection(
         onChannelMessage: (channelName, _senderGuid, text, raw) => {
           lftSeen += 1;
           const runs = printableAsciiRuns(raw);
+          // PizzaWorldBuffs gossips the Darkmoon Faire's location on this same channel. Offered the
+          // decoded text and the raw runs for the same reason the OB_INC: line below is: the channel
+          // layout is unconfirmed, so the prefix sometimes only surfaces in a raw run. Everything
+          // that isn't a faire broadcast costs a startsWith, and only a strictly newer sighting writes.
+          const dmfLine = [text, ...runs].find((s) => s.startsWith("PWB_DMF:"));
+          if (dmfLine !== undefined) {
+            void faire
+              .observe(dmfLine, Date.now())
+              .catch((error) => logger.error(`darkmoon: observe failed (${describeError(error)})`));
+          }
           const obLine = [text, ...runs].find((s) => s.startsWith("OB_INC:") || s.startsWith("OB:"));
           const incoming = parseHeadIncoming(obLine ?? "");
           if (incoming && isOnyxiaHead(incoming.boss)) {
@@ -1156,6 +1174,34 @@ async function main(): Promise<void> {
       logger.error(`durations: MongoDB connect failed (${describeError(error)}); recording in memory`);
     }
   }
+  // Where the Darkmoon Faire was last seen, learned from PizzaWorldBuffs' broadcasts on the LFT
+  // channel. Worth persisting even though the faire only visits weekly: the sighting also pins the
+  // calendar's zone alternation, and that fact stays true long after the faire has left.
+  let sightingStore: SightingStore = new InMemorySightingStore();
+  if (config.mongodbUri) {
+    try {
+      sightingStore = await MongoSightingStore.connect(config.mongodbUri, config.mongodbDb);
+      logger.info("darkmoon: remembering faire sightings in MongoDB");
+    } catch (error) {
+      logger.error(`darkmoon: MongoDB connect failed (${describeError(error)}); remembering in memory`);
+    }
+  }
+  const faire = new FaireService({
+    schedule: config.darkmoon,
+    store: sightingStore,
+    onSighting: (sighting) =>
+      logger.info(
+        `darkmoon: faire seen in ${sighting.location} by ${sighting.witness} ` +
+          `(${new Date(sighting.sightedAt).toISOString()})`,
+      ),
+  });
+  await faire.load().catch((error) => logger.error(`darkmoon: load failed (${describeError(error)})`));
+  logger.info(
+    faire.sighting
+      ? `darkmoon: last known faire ${faire.sighting.location}, seen ${new Date(faire.sighting.sightedAt).toISOString()}`
+      : "darkmoon: no sighting yet — answering from the calendar until one is heard on LFT",
+  );
+
   // Player-submitted feedback/suggestions — kept for review, posted to the feedback channel.
   let feedbackStore: FeedbackStore = new InMemoryFeedbackStore();
   if (config.mongodbUri) {
@@ -1315,6 +1361,7 @@ async function main(): Promise<void> {
     guildName: config.guildName,
     community: config.community,
     discordInvite: config.discordServerInvite,
+    faireReport: () => faire.report(Date.now()),
     onFeedback,
     onSubscribe: (name) =>
       void userLedger.record(name).catch((error) => logger.debug(`users: record failed (${describeError(error)})`)),
@@ -1345,6 +1392,7 @@ async function main(): Promise<void> {
     raidStateStore,
     lockoutStore,
     durationStore,
+    faire,
     snapshots,
     store,
     userLedger,
@@ -1393,6 +1441,7 @@ async function main(): Promise<void> {
       buffStore.close(),
       broadcasts.close(),
       durationStore.close(),
+      sightingStore.close(),
       feedbackStore.close(),
       introStore.close(),
       userLedger.close(),

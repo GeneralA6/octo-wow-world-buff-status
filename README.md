@@ -218,7 +218,23 @@ alerts to players in-game. Whisper the character:
 | `confirm <code>` / `<code>` | confirm a flow-B code in-game |
 | `discord off` | unlink |
 | `mode both` \| `mode offline` | DM always, or only when your character is offline |
+| `darkmoon` (`dmf`, `faire`) | where the Darkmoon Faire is this month |
 | `status` / `me` / `help` | current raid state / your settings / commands |
+
+`darkmoon` answers from two sources that cover each other's blind spot. **Where** comes
+from [PizzaWorldBuffs](https://github.com/Pizzahawaiii/PizzaWorldBuffs): every PWB client
+rebroadcasts its last faire sighting on the same hidden `LFT` channel the bot already
+reads for head warnings (`PWB_DMF:<version>:<zone>-<secondsAgo>-<witness>`), so during a
+faire week the bot knows the zone within minutes and agrees with the addon players are
+already running. PWB has no schedule logic at all, so **when** comes from a calendar
+(`src/darkmoon/schedule.ts`) computing the vanilla rule: one week a month, first Monday,
+alternating Elwynn Forest and Mulgore.
+
+The calendar's zone alternation ships as a vanilla *assumption*, so until the bot hears a
+real sighting it hedges — "probably up in Elwynn Forest". One sighting fixes that for
+good: knowing one real month pins every other month in both directions, which is why the
+sighting is persisted alongside the subscribers. A sighting fresh enough to mean someone
+is standing in the tents also outranks the calendar on whether the faire is up at all.
 
 A whisper's packet carries only the sender's **GUID**, so the bot name-queries to
 resolve who whispered (and to reply). Outgoing whispers are **throttled** so a raid
