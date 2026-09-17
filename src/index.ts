@@ -1267,6 +1267,13 @@ async function main(): Promise<void> {
       // would sit on the old answer until the next timer tick.
       void darkmoonWidget?.refresh();
     },
+    // The one line worth keeping: a trail of moves is the only record of how this realm actually
+    // rotates the faire, and nothing else here writes that down.
+    onMove: (move) =>
+      logger.info(
+        `darkmoon: FAIRE MOVED ${move.from ?? "unknown"} -> ${move.to} ` +
+          `(${move.observation.source}, ${move.observation.witness})`,
+      ),
   });
   await faire.load().catch((error) => logger.error(`darkmoon: load failed (${describeError(error)})`));
   const lastSeen = faire.answer(Date.now());

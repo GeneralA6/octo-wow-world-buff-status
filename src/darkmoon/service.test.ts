@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FaireService, type ObserveOutcome } from "./service.js";
+import { FaireService, type FaireMove, type ObserveOutcome } from "./service.js";
 import { InMemoryKnowledgeStore, type KnowledgeStore } from "./knowledge-store.js";
 import { DEFAULT_CORROBORATION, type CorroborationPolicy } from "./corroboration.js";
 import { NO_KNOWLEDGE, type FaireKnowledge, type FaireObservation } from "./observation.js";
@@ -11,6 +11,7 @@ function makeService(
   store: KnowledgeStore = new InMemoryKnowledgeStore(),
   hooks: {
     onObservation?: (observation: FaireObservation) => void;
+    onMove?: (change: FaireMove) => void;
     corroboration?: CorroborationPolicy;
   } = {},
 ): FaireService {
@@ -221,5 +222,46 @@ describe("FaireService.load", () => {
     const service = makeService();
     await service.load();
     expect(service.answer(NOW)).toEqual({ known: false });
+  });
+});
+
+describe("FaireService move trail", () => {
+  it("reports the first zone it ever learns as a move from nothing", async () => {
+    const onMove = vi.fn();
+    const service = makeService(new InMemoryKnowledgeStore(), { onMove });
+    await service.observeNearbyNpc("Sayge", "elwynn", NOW);
+    expect(onMove).toHaveBeenCalledTimes(1);
+    expect(onMove.mock.calls[0]?.[0]).toMatchObject({ from: null, to: "elwynn" });
+  });
+
+  it("reports a real move, once, with both ends", async () => {
+    const onMove = vi.fn();
+    const service = makeService(new InMemoryKnowledgeStore(), { onMove });
+    await service.observeNearbyNpc("Sayge", "elwynn", NOW);
+    await service.observeNearbyNpc("Sayge", "mulgore", NOW + 7 * 86_400_000);
+    expect(onMove).toHaveBeenCalledTimes(2);
+    expect(onMove.mock.calls[1]?.[0]).toMatchObject({ from: "elwynn", to: "mulgore" });
+  });
+
+  it("stays quiet while the same faire is re-seen", async () => {
+    const onMove = vi.fn();
+    const service = makeService(new InMemoryKnowledgeStore(), { onMove });
+    await service.observeNearbyNpc("Sayge", "elwynn", NOW);
+    await service.observeNearbyNpc("Flik", "elwynn", NOW + 40 * 60_000);
+    await service.observeNearbyNpc("Silas Darkmoon", "elwynn", NOW + 80 * 60_000);
+    expect(onMove).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call it a move when the accepted look is not the newest one", async () => {
+    // Our own character saw Elwynn a minute ago; an older channel sighting of Mulgore is accepted
+    // into the record but never becomes the answer, so nothing a player sees has changed.
+    const onMove = vi.fn();
+    const service = makeService(new InMemoryKnowledgeStore(), { onMove });
+    await service.observeNearbyNpc("Sayge", "elwynn", NOW);
+    onMove.mockClear();
+    await flood(service, "PWB_DMF:10401:M-3600-Someplayer", NOW + 1000);
+    expect(service.knowledge.sighting).not.toBeNull();
+    expect(onMove).not.toHaveBeenCalled();
+    expect(service.answer(NOW + 1000)).toMatchObject({ location: "elwynn" });
   });
 });

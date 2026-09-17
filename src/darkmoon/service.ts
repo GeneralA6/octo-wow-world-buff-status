@@ -44,10 +44,22 @@ export type ObserveOutcome =
   /** A faire broadcast with no usable sender — it cannot vote, and a silent feed would follow. */
   | "unidentified";
 
+/** The answer's zone changed. `from` is null when we had no usable answer before. */
+export interface FaireMove {
+  readonly from: FaireLocation | null;
+  readonly to: FaireLocation;
+  readonly observation: FaireObservation;
+}
+
 export interface FaireServiceDeps {
   readonly store: KnowledgeStore;
   /** Fired when an observation is accepted, so the caller can log it and redraw. */
   readonly onObservation?: (observation: FaireObservation) => void;
+  /** Fired when accepting an observation CHANGES the answer's zone (or gives us one for the first
+   *  time). Separate from onObservation because a move is the rare, interesting event — the rest is
+   *  the same faire being re-seen — and a trail of moves is the only record of how this realm
+   *  actually rotates, which nothing else here writes down. */
+  readonly onMove?: (change: FaireMove) => void;
   /** How much agreement a channel sighting needs. Defaults to DEFAULT_CORROBORATION. */
   readonly corroboration?: CorroborationPolicy;
 }
@@ -115,7 +127,7 @@ export class FaireService {
       witness: broadcast.witness,
     };
     this.#settled = { location: observation.location, acceptedAt: receivedAt };
-    await this.#accept({ ...this.#knowledge, sighting: observation }, observation);
+    await this.#accept({ ...this.#knowledge, sighting: observation }, observation, receivedAt);
     return "accepted";
   }
 
@@ -136,7 +148,7 @@ export class FaireService {
       return false;
     }
     const observation: FaireObservation = { location, observedAt: seenAt, source: "onsite", witness: npc };
-    return this.#accept({ ...this.#knowledge, onsite: observation }, observation);
+    return this.#accept({ ...this.#knowledge, onsite: observation }, observation, seenAt);
   }
 
   /** Where the faire is, as far as anyone has actually looked. */
@@ -144,10 +156,23 @@ export class FaireService {
     return answerFaire(this.#knowledge, now);
   }
 
-  async #accept(knowledge: FaireKnowledge, accepted: FaireObservation): Promise<boolean> {
+  /** `now` is the present moment, NOT the observation's own timestamp: a move is a change to what
+   *  a player asking right now would be told, and an older look that never becomes the newest one
+   *  changes nothing. Judging at the observation's timestamp would hide every newer look behind it
+   *  and read as a move every time. */
+  async #accept(knowledge: FaireKnowledge, accepted: FaireObservation, now: number): Promise<boolean> {
+    const before = answerFaire(this.#knowledge, now);
     this.#knowledge = knowledge;
+    const after = answerFaire(knowledge, now);
     await this.#deps.store.save(knowledge);
     this.#deps.onObservation?.(accepted);
+    if (after.known && (!before.known || before.location !== after.location)) {
+      this.#deps.onMove?.({
+        from: before.known ? before.location : null,
+        to: after.location,
+        observation: accepted,
+      });
+    }
     return true;
   }
 }
