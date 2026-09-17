@@ -39,12 +39,13 @@ describe("buildFaireEmbed", () => {
     expect(embed.description).not.toMatch(/Elwynn|Mulgore/);
   });
 
-  it("says in the footer who saw it", () => {
-    expect(buildFaireEmbed(known({ source: "onsite", witness: "Sayge" }), NOW).footer?.text).toContain(
-      "our own character",
+  it("credits the player who saw it, without explaining the plumbing", () => {
+    expect(buildFaireEmbed(known({ witness: "Dontross" }), NOW).footer?.text).toBe("spotted by Dontross");
+    // On-site, the witness is the NPC we SAW — not someone to credit with the spotting.
+    expect(buildFaireEmbed(known({ source: "onsite", witness: "Sayge" }), NOW).footer?.text).toBe(
+      "spotted by the bot",
     );
-    expect(buildFaireEmbed(known(), NOW).footer?.text).toContain("PizzaWorldBuffs");
-    expect(buildFaireEmbed({ known: false }, NOW).footer?.text).toContain("nothing seen recently");
+    expect(buildFaireEmbed({ known: false }, NOW).footer?.text).toBe("no recent sightings");
   });
 });
 

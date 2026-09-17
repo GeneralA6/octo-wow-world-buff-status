@@ -27,12 +27,11 @@ const COLOUR_FRESH = 0x57f287;
 const COLOUR_STALE = 0xfee75c;
 const COLOUR_UNKNOWN = 0x4f545c;
 
-/** Where the answer came from, said plainly — the reader gets to judge it for themselves. */
+/** Who saw it. Just the name — how the bot heard about it is not the reader's problem, and for an
+ *  on-site look the witness field is the NPC we saw, not someone who could be credited. */
 function provenance(answer: FaireAnswer): string {
-  if (!answer.known) return "nothing seen recently on the LFT channel or by our own character";
-  return answer.source === "onsite"
-    ? `seen by our own character, standing in it (${answer.witness})`
-    : `seen in-game by players (PizzaWorldBuffs · ${answer.witness})`;
+  if (!answer.known) return "no recent sightings";
+  return answer.source === "onsite" ? "spotted by the bot" : `spotted by ${answer.witness}`;
 }
 
 export function buildFaireEmbed(answer: FaireAnswer, now: number): DiscordEmbed {
