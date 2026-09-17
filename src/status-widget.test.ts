@@ -72,7 +72,10 @@ describe("buildServerStatusEmbed", () => {
     expect(embed.color).toBe(COLOR_UP);
     expect(embed.title).toBe("🟢 N'Zoth — Online");
     expect(embed.description).toContain("responding normally");
-    expect(fieldValue(embed, "Status")).toBe("Online, up 3h");
+    expect(fieldValue(embed, "Status")).toBe("Online");
+    // No uptime clause. stateSince restarts with the process, so "up 0m" moments after a redeploy
+    // would be the bot's own uptime wearing the realm's name, with no way for a reader to tell.
+    expect(fieldValue(embed, "Status")).not.toMatch(/up /);
     expect(fieldValue(embed, "Realm response")).toBe("Stable");
     expect(fieldValue(embed, "Last outage")).toBe("None recorded");
     expect(embed.footer?.text).toBe("Watching for 2d");

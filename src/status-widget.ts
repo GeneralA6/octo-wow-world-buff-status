@@ -86,11 +86,21 @@ function isOffHealth(view: ServerStatusView): boolean {
   return view.up && (view.response === "elevated" || view.response === "unstable");
 }
 
+/**
+ * Up/down, plus how long ONLY while down.
+ *
+ * The uptime clause is deliberately gone. `stateSince` starts when this process first saw the realm
+ * up, so it resets on every redeploy — "Online, up 0m" moments after a deploy is the bot's uptime
+ * wearing the realm's name, and a reader has no way to tell the difference. The realm being up is
+ * already evident from the player count next to it.
+ *
+ * A DOWN duration is the opposite: it is a real outage clock, measured from when the monitor saw
+ * the realm stop answering, and it is the first thing anyone wants when they open the channel.
+ */
 function statusField(view: ServerStatusView): string {
-  const word = view.up ? "Online" : "Down";
-  if (view.stateSince === null) return word;
-  const forHowLong = humanSpan(view.now - view.stateSince);
-  return view.up ? `${word}, up ${forHowLong}` : `${word}, ${forHowLong}`;
+  if (view.up) return "Online";
+  if (view.stateSince === null) return "Down";
+  return `Down, ${humanSpan(view.now - view.stateSince)}`;
 }
 
 /** Group thousands so a four-figure population reads at a glance: 1204 -> "1,204". The locale is
