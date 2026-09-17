@@ -86,23 +86,6 @@ function isOffHealth(view: ServerStatusView): boolean {
   return view.up && (view.response === "elevated" || view.response === "unstable");
 }
 
-/**
- * Up/down, plus how long ONLY while down.
- *
- * The uptime clause is deliberately gone. `stateSince` starts when this process first saw the realm
- * up, so it resets on every redeploy — "Online, up 0m" moments after a deploy is the bot's uptime
- * wearing the realm's name, and a reader has no way to tell the difference. The realm being up is
- * already evident from the player count next to it.
- *
- * A DOWN duration is the opposite: it is a real outage clock, measured from when the monitor saw
- * the realm stop answering, and it is the first thing anyone wants when they open the channel.
- */
-function statusField(view: ServerStatusView): string {
-  if (view.up) return "Online";
-  if (view.stateSince === null) return "Down";
-  return `Down, ${humanSpan(view.now - view.stateSince)}`;
-}
-
 /** Group thousands so a four-figure population reads at a glance: 1204 -> "1,204". The locale is
  *  pinned so the rendering is identical whatever the host's is. */
 function formatCount(count: number): string {
@@ -142,8 +125,18 @@ function titleSuffix(view: ServerStatusView): string {
   return "Online";
 }
 
+/**
+ * The one sentence describing the realm right now.
+ *
+ * It carries the outage clock while down, because that is the same fact stated once instead of
+ * twice: the title already says "Down", so a separate Status field repeating it added nothing but
+ * a second place to read the same word.
+ */
 function describeState(view: ServerStatusView): string {
-  if (!view.up) return "The realm is down.";
+  if (!view.up) {
+    if (view.stateSince === null) return "The realm is down.";
+    return `The realm has been down for ${humanSpan(view.now - view.stateSince)}.`;
+  }
   if (view.response === "elevated") return "The realm is up but latency is higher than usual.";
   if (view.response === "unstable") return "The realm is up but latency is fluctuating.";
   return "The realm is up and responding normally.";
@@ -165,11 +158,13 @@ export function buildServerStatusEmbed(view: ServerStatusView): DiscordEmbed {
         { name: "Realm response", value: responseField(view.response), inline: true },
       ]
     : [];
-  const fields: DiscordEmbed["fields"] = [
-    { name: "Status", value: statusField(view), inline: true },
-    ...liveFields,
-    { name: "Last outage", value: lastOutageField(view), inline: true },
-  ];
+  // No "Status" field: the title, the coloured dot and the description already say up or down, and
+  // a fourth copy next to "Last outage" — which is about a DIFFERENT outage, in a different tense —
+  // was the confusing part. While down, the previous outage is dropped for the same reason the
+  // population and ping are: the outage happening right now is the only one anyone is reading for.
+  const fields: DiscordEmbed["fields"] = view.up
+    ? [...liveFields, { name: "Last outage", value: lastOutageField(view), inline: true }]
+    : [];
 
   return {
     title: `${dot} ${view.realm} — ${titleSuffix(view)}`,

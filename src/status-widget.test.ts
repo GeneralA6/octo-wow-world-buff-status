@@ -72,10 +72,9 @@ describe("buildServerStatusEmbed", () => {
     expect(embed.color).toBe(COLOR_UP);
     expect(embed.title).toBe("🟢 N'Zoth — Online");
     expect(embed.description).toContain("responding normally");
-    expect(fieldValue(embed, "Status")).toBe("Online");
-    // No uptime clause. stateSince restarts with the process, so "up 0m" moments after a redeploy
-    // would be the bot's own uptime wearing the realm's name, with no way for a reader to tell.
-    expect(fieldValue(embed, "Status")).not.toMatch(/up /);
+    // No Status field at all — the title, the coloured dot and the description already say it, and
+    // a fourth copy sitting next to "Last outage" was what made the pair confusing to read.
+    expect(fieldValue(embed, "Status")).toBeUndefined();
     expect(fieldValue(embed, "Realm response")).toBe("Stable");
     expect(fieldValue(embed, "Last outage")).toBe("None recorded");
     expect(embed.footer?.text).toBe("Watching for 2d");
@@ -110,8 +109,10 @@ describe("buildServerStatusEmbed", () => {
     const embed = buildServerStatusEmbed(view({ up: false, response: "unknown", stateSince: NOW - 12 * 60_000 }));
     expect(embed.color).toBe(COLOR_DOWN);
     expect(embed.title).toBe("🔴 N'Zoth — Down");
-    expect(embed.description).toBe("The realm is down.");
-    expect(fieldValue(embed, "Status")).toBe("Down, 12m");
+    // The outage clock lives in the state sentence now — the title already says "Down", so a
+    // Status field repeating it was a fourth copy of the same word.
+    expect(embed.description).toBe("The realm has been down for 12m.");
+    expect(fieldValue(embed, "Status")).toBeUndefined();
     expect(fieldValue(embed, "Realm response")).toBeUndefined();
   });
 
@@ -134,12 +135,15 @@ describe("buildServerStatusEmbed", () => {
     const embed = buildServerStatusEmbed(view({ up: false, playersOnline: 661 }));
     expect(fieldValue(embed, "Players online")).toBeUndefined();
     expect(fieldValue(embed, "Realm response")).toBeUndefined();
-    expect(fieldValue(embed, "Status")).toBe("Down, 3h");
+    // The previous outage goes too: while one is happening, it is the only one anyone is reading for.
+    expect(fieldValue(embed, "Last outage")).toBeUndefined();
+    expect(embed.description).toBe("The realm has been down for 3h.");
   });
 
-  it("omits the duration when the state's start is unknown", () => {
-    expect(fieldValue(buildServerStatusEmbed(view({ stateSince: null })), "Status")).toBe("Online");
-    expect(fieldValue(buildServerStatusEmbed(view({ up: false, stateSince: null })), "Status")).toBe("Down");
+  it("omits the outage duration when the state's start is unknown", () => {
+    expect(buildServerStatusEmbed(view({ up: false, stateSince: null })).description).toBe(
+      "The realm is down.",
+    );
   });
 });
 
