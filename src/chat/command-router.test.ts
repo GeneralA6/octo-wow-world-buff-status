@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
 import type { ActiveRaid } from "../watcher/raid-events.js";
 import { CommandRouter, isSubscribeRequest, type BuffCooldown } from "./command-router.js";
+import { FAIRE_SITES } from "../darkmoon/schedule.js";
+import type { FaireReport } from "../darkmoon/resolve.js";
 
 function deps(
   opts: {
@@ -9,6 +11,8 @@ function deps(
     raidElapsed?: () => number | null;
     raidNumber?: () => number | null;
     buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
+    faireReport?: () => FaireReport;
+    now?: () => number;
   } = {},
 ) {
   const store = new InMemorySubscriberStore();
@@ -21,6 +25,8 @@ function deps(
     raidElapsed: opts.raidElapsed,
     raidNumber: opts.raidNumber,
     buffCooldowns: opts.buffCooldowns,
+    faireReport: opts.faireReport,
+    now: opts.now,
     areaName: "Onyxia's Lair",
     guildName: "Rage Quit",
     community: "OctoWoW",
@@ -395,5 +401,65 @@ describe("CommandRouter", () => {
     expect(help).toMatch(/discord/i);
     expect(help).toMatch(/feedback/i);
     expect(help).not.toMatch(/profile|notify|\bfaction\b|alliance/i);
+  });
+});
+
+describe("CommandRouter darkmoon", () => {
+  const NOW = Date.parse("2026-09-10T12:00:00Z");
+  const faire = (over: Partial<FaireReport> = {}): FaireReport => ({
+    phase: "up",
+    location: "mulgore",
+    site: FAIRE_SITES.mulgore,
+    opensAt: Date.parse("2026-09-07T00:00:00Z"),
+    closesAt: Date.parse("2026-09-14T00:00:00Z"),
+    source: "sighting",
+    locationConfirmed: true,
+    sighting: { location: "mulgore", sightedAt: NOW - 60_000, witness: "Someplayer" },
+    ...over,
+  });
+  const faireDeps = (report: FaireReport = faire()) =>
+    deps({ faireReport: () => report, now: () => NOW });
+
+  it("answers where the faire is, in one line", async () => {
+    const { router } = faireDeps();
+    const reply = await router.handle("Raider", "darkmoon");
+    expect(reply).toHaveLength(1);
+    expect(reply[0]).toBe(
+      "Darkmoon Faire is up in Mulgore (below Thunder Bluff) - closes in ~3d12h.",
+    );
+  });
+
+  it("answers to the phrasing PizzaWorldBuffs' own bot uses", async () => {
+    const { router } = faireDeps();
+    for (const text of ["dmf", "dmf where", "faire", "/darkmoon", "!dmf", "DARKMOON"]) {
+      expect((await router.handle("Raider", text))[0]).toMatch(/Darkmoon Faire/);
+    }
+  });
+
+  it("answers a natural-language question about the faire", async () => {
+    const { router } = faireDeps();
+    for (const text of ["where is the darkmoon faire?", "dark moon fairy?", "is dmf up"]) {
+      expect((await router.handle("Raider", text))[0]).toMatch(/Darkmoon Faire/);
+    }
+  });
+
+  it("does not let a faire question fall through to the buff answer", async () => {
+    const { router } = faireDeps();
+    const reply = await router.handle("Raider", "darkmoon buff?");
+    expect(reply[0]).toMatch(/Darkmoon Faire/);
+    expect(reply[0]).not.toMatch(/Rallying Cry/);
+  });
+
+  it("says so plainly when the faire tracker isn't wired, rather than guessing a zone", async () => {
+    const { router } = deps();
+    const reply = await router.handle("Raider", "darkmoon");
+    expect(reply).toHaveLength(1);
+    expect(reply[0]).toMatch(/not tracking the Darkmoon Faire/i);
+    expect(reply[0]).not.toMatch(/Mulgore|Elwynn/);
+  });
+
+  it("passes the hedge through when nothing has confirmed the zone", async () => {
+    const { router } = faireDeps(faire({ source: "calendar", locationConfirmed: false }));
+    expect((await router.handle("Raider", "darkmoon"))[0]).toMatch(/probably up/);
   });
 });

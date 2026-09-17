@@ -15,6 +15,7 @@ export type Intent =
   | "feedback"
   | "discord"
   | "guild"
+  | "darkmoon"
   | "buff"
   | "status"
   | "thanks"
@@ -38,6 +39,9 @@ const PATTERNS: readonly (readonly [Intent, RegExp])[] = [
     "guild",
     /\b(guild|invite me|how (do i|to) join|joining|recruit\w*|rage\s?quit|who (made|runs|built|created|owns) (you|this|it|the bot)|what guild|your guild|apply|application)\b/,
   ],
+  // Ahead of "buff": the faire hands out its own buffs, so "darkmoon buff" is a faire question,
+  // not a Rallying Cry one. "fair" is deliberately absent — "fair enough" is not a faire question.
+  ["darkmoon", /\bdark\s?moon\w*\b|\bdmf\b|\bfaire\b/],
   [
     "buff",
     /\b(buff|rallying cry|world ?buff|the head|onyxia buff|eta|cooldown|cd|next (buff|one|drop))\b|when.{0,20}(drop|up|next|fresh)|(drop|up).{0,20}when|time left/,

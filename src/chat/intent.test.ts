@@ -72,3 +72,32 @@ describe("parseIntent", () => {
     expect(parseIntent("please unsubscribe me")).toBe("unsubscribe");
   });
 });
+
+describe("parseIntent darkmoon", () => {
+  const cases: readonly (readonly [string, "darkmoon" | null])[] = [
+    ["where is the darkmoon faire", "darkmoon"],
+    ["darkmoon?", "darkmoon"],
+    ["dark moon fairy?", "darkmoon"],
+    ["is dmf up this week", "darkmoon"],
+    ["when is the faire", "darkmoon"],
+    ["darkmoon tickets", "darkmoon"],
+    // "fair" is not "faire" — these are ordinary chat, and answering them with a zone is a bug.
+    ["fair enough", null],
+    ["that's not fair", null],
+    ["fairly quiet tonight", null],
+  ];
+  for (const [text, expected] of cases) {
+    it(`maps ${JSON.stringify(text)} -> ${expected}`, () => {
+      expect(parseIntent(text)).toBe(expected);
+    });
+  }
+
+  it("prefers darkmoon over buff — the faire hands out its own buffs", () => {
+    expect(parseIntent("darkmoon buff?")).toBe("darkmoon");
+    expect(parseIntent("what buffs does the faire give")).toBe("darkmoon");
+  });
+
+  it("leaves a plain world-buff question alone", () => {
+    expect(parseIntent("when's the next buff drop")).toBe("buff");
+  });
+});

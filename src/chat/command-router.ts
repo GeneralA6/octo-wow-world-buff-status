@@ -8,6 +8,8 @@ import {
 import type { ActiveRaid } from "../watcher/raid-events.js";
 import { CITY_FOR, humanClock } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
+import { formatFaire } from "../darkmoon/format.js";
+import type { FaireReport } from "../darkmoon/resolve.js";
 
 /** The exact words that subscribe a caller (also handled in `handle`'s switch). */
 const SUBSCRIBE_COMMANDS = new Set(["subscribe", "sub", "start"]);
@@ -52,6 +54,7 @@ export function factionLabel(factions: readonly Faction[]): string {
  *   invite | join                   — guild-invite the caller
  *   feedback | suggest              — send a message to the team
  *   discord                         — share the community Discord invite link
+ *   darkmoon | dmf | faire          — where the Darkmoon Faire is this month
  *   status | profile | help
  */
 export interface CommandDeps {
@@ -79,6 +82,11 @@ export interface CommandDeps {
   readonly raidNumber?: () => number | null;
   /** Per-faction buff cooldown for status — how long until a fresh Rallying Cry can drop. */
   readonly buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
+  /** Where the Darkmoon Faire is, for the "darkmoon" command. Undefined = the tracker isn't
+   *  wired and the command says so instead of answering from a guess. */
+  readonly faireReport?: () => FaireReport;
+  /** Injectable clock, so the faire's "closes in ~3d" is testable. Defaults to Date.now. */
+  readonly now?: () => number;
 }
 
 export class CommandRouter {
@@ -167,6 +175,12 @@ export class CommandRouter {
         return this.#setFaction(sender, command);
       case "discord":
         return this.#discord();
+      // "dmf"/"dmf where" are what PizzaWorldBuffs' own bot answers to, so a player who already
+      // knows that phrasing gets an answer here without learning a second vocabulary.
+      case "darkmoon":
+      case "dmf":
+      case "faire":
+        return this.#darkmoon();
       case "status":
         return this.#status(sender, sourceFaction);
       case "help":
@@ -177,6 +191,7 @@ export class CommandRouter {
           `status - what's raiding Onyxia now, and when the buff last dropped`,
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
           `discord - our Discord invite link`,
+          `darkmoon - where the Darkmoon Faire is this month`,
           `feedback <message> - send a suggestion or bug report`,
           `invite - join <${this.#deps.guildName}>`,
         ];
@@ -285,6 +300,13 @@ export class CommandRouter {
     return [`Done - I'll alert you for ${factionLabel(factions)} buffs.`];
   }
 
+  /** Where the Darkmoon Faire is. Unwired = say so, rather than guess at a zone. */
+  #darkmoon(): string[] {
+    const { faireReport, now } = this.#deps;
+    if (!faireReport) return [`I'm not tracking the Darkmoon Faire right now - sorry!`];
+    return [formatFaire(faireReport(), (now ?? Date.now)())];
+  }
+
   /** Share the Discord invite link, with a one-line note on what it's for. Null = unconfigured. */
   #discord(): string[] {
     const { discordInvite } = this.#deps;
@@ -328,6 +350,7 @@ export class CommandRouter {
       case "unsubscribe":
       case "status":
       case "discord":
+      case "darkmoon":
       case "help":
         return this.handle(sender, intent, sourceFaction);
       case "feedback":
