@@ -199,6 +199,8 @@ export interface BotConfig {
    *  realm up/down + health at a glance. Distinct from the community down/up event posts (which stay
    *  in the Onyxia channel with their role pings). Null = the widget is off. */
   readonly discordServerStatusChannelId: string | null;
+  /** Channel holding the live Darkmoon Faire board, edited in place. Null = no board. */
+  readonly discordDarkmoonChannelId: string | null;
   /** How often the live server-status widget re-renders (to keep uptime/latency fresh), in ms. The
    *  realm up/down transitions refresh it immediately; this is the idle cadence between them. */
   readonly statusWidgetRefreshMs: number;
@@ -477,6 +479,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordErrorsChannelId = env.DISCORD_ERRORS_CHANNEL_ID?.trim() || null;
   const discordTestsChannelId = env.DISCORD_TESTS_CHANNEL_ID?.trim() || null;
   const discordServerStatusChannelId = env.DISCORD_SERVER_STATUS_CHANNEL_ID?.trim() || null;
+  const discordDarkmoonChannelId = env.DISCORD_DARKMOON_CHANNEL_ID?.trim() || null;
   const statusWidgetRefreshMs = intWithDefault("WOW_STATUS_REFRESH_SECONDS", 300, 30) * 1000;
   const statusNoticeLingerMs = intWithDefault("WOW_STATUS_NOTICE_LINGER_SECONDS", 5, 0) * 1000;
   const statusRenameRaw = env.WOW_STATUS_CHANNEL_RENAME?.trim().toLowerCase();
@@ -489,6 +492,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     ["DISCORD_HORDE_ROLE_ID", discordHordeRoleId],
   ] as const) {
     if (value && !/^\d+$/.test(value)) errors.push(`${name} must be a numeric Discord role id`);
+  }
+  if (discordDarkmoonChannelId && !/^\d+$/.test(discordDarkmoonChannelId)) {
+    errors.push("DISCORD_DARKMOON_CHANNEL_ID must be a numeric Discord channel id");
   }
   // Darkmoon Faire schedule. Every field of the vanilla rule is exposed, so a Turtle deviation is
   // a config change rather than a patch — and the WEEK is the part config has to cover, because it
@@ -644,6 +650,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordErrorsChannelId,
     discordTestsChannelId,
     discordServerStatusChannelId,
+    discordDarkmoonChannelId,
     statusWidgetRefreshMs,
     statusNoticeLingerMs,
     statusChannelRenameEnabled,

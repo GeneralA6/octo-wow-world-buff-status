@@ -43,6 +43,12 @@ import {
 import { matchBuffYell } from "./watcher/buff-yell.js";
 import { FaireService } from "./darkmoon/service.js";
 import { NpcWatch } from "./darkmoon/npc-watch.js";
+import { DarkmoonWidget } from "./darkmoon/widget.js";
+import {
+  InMemoryDarkmoonWidgetStore,
+  MongoDarkmoonWidgetStore,
+  type DarkmoonWidgetStore,
+} from "./darkmoon/widget-store.js";
 
 import {
   InMemoryKnowledgeStore,
@@ -1102,6 +1108,8 @@ async function main(): Promise<void> {
   }
   let statusWidget: ServerStatusWidget | null = null;
   let statusRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  let darkmoonWidget: DarkmoonWidget | null = null;
+  let darkmoonRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
   const watchOptions: RaidTrackerOptions = {
     minRaidSize: config.minRaidSize,
@@ -1246,15 +1254,29 @@ async function main(): Promise<void> {
       logger.error(`darkmoon: MongoDB connect failed (${describeError(error)}); remembering in memory`);
     }
   }
+  // Which message the Darkmoon board owns. Its own tiny document: losing it would orphan the board
+  // and post a second one on every redeploy.
+  let darkmoonWidgetStore: DarkmoonWidgetStore = new InMemoryDarkmoonWidgetStore();
+  if (config.mongodbUri && config.discordDarkmoonChannelId) {
+    try {
+      darkmoonWidgetStore = await MongoDarkmoonWidgetStore.connect(config.mongodbUri, config.mongodbDb);
+    } catch (error) {
+      logger.error(`darkmoon: board state MongoDB connect failed (${describeError(error)}); in memory`);
+    }
+  }
   const faire = new FaireService({
     schedule: config.darkmoon,
     store: knowledgeStore,
     corroboration: config.darkmoonCorroboration,
-    onObservation: (observation) =>
+    onObservation: (observation) => {
       logger.info(
         `darkmoon: ${observation.source} puts the faire in ${observation.location} ` +
           `(${observation.witness}, ${new Date(observation.observedAt).toISOString()})`,
-      ),
+      );
+      // Learning where the faire is is exactly when the board is worth redrawing — without this it
+      // would sit on the old answer until the next timer tick.
+      void darkmoonWidget?.refresh();
+    },
     // A wrong zone heals itself — it flips the alternation for good. A sighting outside every
     // calendar week cannot: it means this realm runs the faire on a different cadence, and only
     // the DARKMOON_* schedule config fixes that.
@@ -1504,6 +1526,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info(`shutting down (${signal})`);
     if (statusRefreshTimer) clearInterval(statusRefreshTimer);
+    if (darkmoonRefreshTimer) clearInterval(darkmoonRefreshTimer);
     // Exit even if a store.close() hangs, so we log out fast and don't overlap a redeploy.
     const hardExit = setTimeout(() => process.exit(0), 3_000);
     hardExit.unref?.();
@@ -1514,6 +1537,7 @@ async function main(): Promise<void> {
       broadcasts.close(),
       durationStore.close(),
       knowledgeStore.close(),
+      darkmoonWidgetStore.close(),
       feedbackStore.close(),
       introStore.close(),
       userLedger.close(),
@@ -1671,6 +1695,28 @@ async function main(): Promise<void> {
     statusRefreshTimer.unref?.();
   } else if (statusChannelId && !dm.isConfigured) {
     logger.warn("DISCORD_SERVER_STATUS_CHANNEL_ID is set but no DISCORD_BOT_TOKEN — the status widget is off");
+  }
+
+  // The Darkmoon board: one message in its own channel, edited in place. It shares the status
+  // widget's refresh timer setting, but a render only reaches Discord when the TEXT changes — the
+  // faire moves four times a month, so the channel sits still for weeks instead of ticking.
+  const darkmoonChannelId = config.discordDarkmoonChannelId;
+  if (darkmoonChannelId && dm.isConfigured) {
+    darkmoonWidget = new DarkmoonWidget({
+      channel: {
+        create: (message) => dm.createChannelMessage(darkmoonChannelId, message),
+        edit: (messageId, message) => dm.editChannelMessage(darkmoonChannelId, messageId, message),
+      },
+      store: darkmoonWidgetStore,
+      report: (now) => faire.report(now),
+      logger: prefixed(logger, "darkmoon"),
+    });
+    await darkmoonWidget.load();
+    void darkmoonWidget.refresh(); // paint once on boot; the timer and new observations keep it current
+    darkmoonRefreshTimer = setInterval(() => void darkmoonWidget?.refresh(), config.statusWidgetRefreshMs);
+    darkmoonRefreshTimer.unref?.();
+  } else if (darkmoonChannelId && !dm.isConfigured) {
+    logger.warn("DISCORD_DARKMOON_CHANNEL_ID is set but no DISCORD_BOT_TOKEN — the Darkmoon board is off");
   }
 
   const watcherLog = prefixed(logger, config.characterName);

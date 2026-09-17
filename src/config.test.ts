@@ -542,3 +542,22 @@ describe("loadConfig darkmoon on-site watch", () => {
     );
   });
 });
+
+describe("loadConfig darkmoon board channel", () => {
+  it("is off unless a channel is given", () => {
+    expect(loadConfig({ ...minimalEnv }).discordDarkmoonChannelId).toBeNull();
+  });
+
+  it("takes the channel id", () => {
+    expect(
+      loadConfig({ ...minimalEnv, DISCORD_DARKMOON_CHANNEL_ID: "1550052958698479677" })
+        .discordDarkmoonChannelId,
+    ).toBe("1550052958698479677");
+  });
+
+  it("rejects anything that is not a Discord snowflake", () => {
+    expect(() => loadConfig({ ...minimalEnv, DISCORD_DARKMOON_CHANNEL_ID: "#darkmoon-faire" })).toThrow(
+      /DISCORD_DARKMOON_CHANNEL_ID must be a numeric Discord channel id/,
+    );
+  });
+});
