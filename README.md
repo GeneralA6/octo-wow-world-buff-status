@@ -225,6 +225,7 @@ alerts to players in-game. Whisper the character:
 
 | source | proves | can it be faked? |
 |---|---|---|
+| **on-site** — the bot's own character parked at the faire site, recognising the staff standing beside it | where the faire is **now**, *and the setup day* | no — it's our own client |
 | **herald** — `Kruban Darkblade` in Orgrimmar, `Melnan Darkstone` in Ironforge, announcing in NPC chat the week before the faire arrives | which zone is **next** | no — the server speaks it |
 | **sighting** — a [PizzaWorldBuffs](https://github.com/Pizzahawaiii/PizzaWorldBuffs) `PWB_DMF:` broadcast on the hidden `LFT` channel the bot already reads for head warnings | where the tents are **right now** | yes — it is text a player typed |
 | **calendar** — `src/darkmoon/schedule.ts` | exactly **when**, and where only as far as its anchor is right | n/a |
@@ -236,6 +237,19 @@ a player standing in the tents. Every observation is pinned to a specific faire 
 which is what makes the correction permanent: knowing one real window's zone fixes every
 other month, forwards and backwards, so one herald or one corroborated sighting fixes the
 shipped anchor for good. Until that happens the bot hedges — "probably up in Elwynn".
+
+**On-site detection** (`DARKMOON_WATCH_LOCATION=elwynn|mulgore`, off by default) is how you
+*calibrate*. Park the watcher within sight of the faire field and the bot asks the server what
+the units around it are called (`CMSG_CREATURE_QUERY`, one query per NPC entry per session) and
+matches the faire's roster by **name** — not entry id, because a wrong id fails silently and
+looks exactly like an absent faire, while a wrong name shows up in the log. `Darkmoon Faire
+Carnie` is deliberately excluded: carnies stand in the capitals all month, which is the very bug
+that made PWB 1.4.0 report faires that weren't there.
+
+You only need it to work **once**. Confirming a single window pins the alternation for every
+month afterwards, in both directions — including the zone that character can never see — so
+after one faire week you can move it back and unset the variable. It is also the only source
+that can confirm the *setup day*, i.e. the one thing no sighting can ever fix.
 
 **The week rule is not the obvious one.** The carnies set up on the first **Friday** and
 the faire opens the **Monday after** — which is *not* "the first Monday of the month",
