@@ -186,12 +186,14 @@ export class CommandRouter {
       case "help":
       case "commands":
       case "?":
-        // Concise, one command per whisper, status first and the guild invite last.
+        // Concise, one command per whisper. Each line is its own whisper and they arrive in order,
+        // so the two people actually ask for — what's raiding, and where the faire is — go first,
+        // and the guild invite last.
         return [
           `status - what's raiding Onyxia now, and when the buff last dropped`,
+          `darkmoon - where the Darkmoon Faire was last seen`,
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
           `discord - our Discord invite link`,
-          `darkmoon - where the Darkmoon Faire was last seen`,
           `feedback <message> - send a suggestion or bug report`,
           `invite - join <${this.#deps.guildName}>`,
         ];
