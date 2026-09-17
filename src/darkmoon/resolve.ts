@@ -123,3 +123,16 @@ export function resolveFaire(
     sighting,
   };
 }
+
+/**
+ * Whether a sighting lands outside every week the calendar knows about.
+ *
+ * This is the one failure the bot cannot heal on its own. A sighting in the wrong ZONE proves the
+ * alternation is upside down and flips it permanently; a sighting on a day the rule calls quiet
+ * proves the RULE is wrong — Turtle runs the faire on a different cadence than vanilla — and no
+ * flip fixes that. It needs the DARKMOON_* schedule config changed, so it is worth a loud log
+ * rather than a silent fallback.
+ */
+export function contradictsSchedule(schedule: FaireSchedule, sighting: FaireSighting): boolean {
+  return faireStateAt(schedule, sighting.sightedAt).phase !== "up";
+}

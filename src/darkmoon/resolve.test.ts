@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { LIVE_SIGHTING_MS, parityFlip, resolveFaire, type FaireSighting } from "./resolve.js";
+import {
+  contradictsSchedule,
+  LIVE_SIGHTING_MS,
+  parityFlip,
+  resolveFaire,
+  type FaireSighting,
+} from "./resolve.js";
 import { VANILLA_SCHEDULE, type FaireSchedule } from "./schedule.js";
 
 const schedule: FaireSchedule = VANILLA_SCHEDULE;
@@ -121,5 +127,17 @@ describe("resolveFaire", () => {
       expect(report.locationConfirmed).toBe(false);
       expect(report.location).toBe("mulgore");
     });
+  });
+});
+
+describe("contradictsSchedule", () => {
+  it("is quiet when the faire was seen during a week the calendar knows about", () => {
+    expect(contradictsSchedule(schedule, seen("elwynn", DURING_SEPT))).toBe(false);
+    // The wrong zone is not a contradiction — that is the alternation, which corrects itself.
+    expect(contradictsSchedule(schedule, seen("mulgore", DURING_SEPT))).toBe(false);
+  });
+
+  it("flags a faire seen on a day the rule calls quiet", () => {
+    expect(contradictsSchedule(schedule, seen("mulgore", AFTER_SEPT))).toBe(true);
   });
 });

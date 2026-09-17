@@ -42,6 +42,7 @@ import {
 } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
 import { FaireService } from "./darkmoon/service.js";
+import { contradictsSchedule } from "./darkmoon/resolve.js";
 import {
   InMemorySightingStore,
   MongoSightingStore,
@@ -1189,11 +1190,20 @@ async function main(): Promise<void> {
   const faire = new FaireService({
     schedule: config.darkmoon,
     store: sightingStore,
-    onSighting: (sighting) =>
+    onSighting: (sighting) => {
       logger.info(
         `darkmoon: faire seen in ${sighting.location} by ${sighting.witness} ` +
           `(${new Date(sighting.sightedAt).toISOString()})`,
-      ),
+      );
+      // A wrong zone heals itself; a sighting outside every calendar week does not — it means
+      // Turtle runs the faire on a different cadence than vanilla, and only DARKMOON_* fixes it.
+      if (contradictsSchedule(config.darkmoon, sighting)) {
+        logger.warn(
+          `darkmoon: faire seen while the schedule says it is travelling — the DARKMOON_OPENS_WEEKDAY/` +
+            `_OCCURRENCE/_DURATION_DAYS rule does not match this realm and needs correcting`,
+        );
+      }
+    },
   });
   await faire.load().catch((error) => logger.error(`darkmoon: load failed (${describeError(error)})`));
   logger.info(
