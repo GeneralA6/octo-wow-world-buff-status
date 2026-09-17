@@ -221,20 +221,40 @@ alerts to players in-game. Whisper the character:
 | `darkmoon` (`dmf`, `faire`) | where the Darkmoon Faire is this month |
 | `status` / `me` / `help` | current raid state / your settings / commands |
 
-`darkmoon` answers from two sources that cover each other's blind spot. **Where** comes
-from [PizzaWorldBuffs](https://github.com/Pizzahawaiii/PizzaWorldBuffs): every PWB client
-rebroadcasts its last faire sighting on the same hidden `LFT` channel the bot already
-reads for head warnings (`PWB_DMF:<version>:<zone>-<secondsAgo>-<witness>`), so during a
-faire week the bot knows the zone within minutes and agrees with the addon players are
-already running. PWB has no schedule logic at all, so **when** comes from a calendar
-(`src/darkmoon/schedule.ts`) computing the vanilla rule: one week a month, first Monday,
-alternating Elwynn Forest and Mulgore.
+`darkmoon` answers from three sources, ranked by what each can actually prove:
 
-The calendar's zone alternation ships as a vanilla *assumption*, so until the bot hears a
-real sighting it hedges — "probably up in Elwynn Forest". One sighting fixes that for
-good: knowing one real month pins every other month in both directions, which is why the
-sighting is persisted alongside the subscribers. A sighting fresh enough to mean someone
-is standing in the tents also outranks the calendar on whether the faire is up at all.
+| source | proves | can it be faked? |
+|---|---|---|
+| **herald** — `Kruban Darkblade` in Orgrimmar, `Melnan Darkstone` in Ironforge, announcing in NPC chat the week before the faire arrives | which zone is **next** | no — the server speaks it |
+| **sighting** — a [PizzaWorldBuffs](https://github.com/Pizzahawaiii/PizzaWorldBuffs) `PWB_DMF:` broadcast on the hidden `LFT` channel the bot already reads for head warnings | where the tents are **right now** | yes — it is text a player typed |
+| **calendar** — `src/darkmoon/schedule.ts` | exactly **when**, and where only as far as its anchor is right | n/a |
+
+They are not one ranking, because they answer different questions. A herald outranks a
+sighting on the zone *alternation* (nobody can fake one). A sighting outranks both on
+whether the faire is physically in a zone this minute — a computed week cannot argue with
+a player standing in the tents. Every observation is pinned to a specific faire *window*,
+which is what makes the correction permanent: knowing one real window's zone fixes every
+other month, forwards and backwards, so one herald or one corroborated sighting fixes the
+shipped anchor for good. Until that happens the bot hedges — "probably up in Elwynn".
+
+**The week rule is not the obvious one.** The carnies set up on the first **Friday** and
+the faire opens the **Monday after** — which is *not* "the first Monday of the month",
+and differs by a whole week about two months in five. Blizzard's own Classic schedule ran
+10–16 Feb and 9–15 Mar 2020; the first-Monday rule would have said the 3rd and the 2nd.
+The three setup days are modelled too, since the tents are physically there (and
+sightable) before the faire will take anyone's tickets — `/darkmoon` says "setting up"
+rather than "up" for those days.
+
+**The sighting feed is hardened, because it is public text.** Anyone can paste a
+`PWB_DMF:` line naming the wrong zone. So a sighting is a *vote*, counted per distinct
+**sender** — the one field on a channel message the server stamps — and never per
+`witness`, which is inside the part a troll would be writing. This matches how PWB really
+behaves: each client stores one sighting and rebroadcasts it, so honest traffic is *many
+senders repeating one witness*, a shape a single troll cannot produce. A location needs a
+quorum of senders (`DARKMOON_QUORUM`, default 3) and the majority within the window wins;
+on top of that a settled zone cannot move for `DARKMOON_CHANGE_COOLDOWN_HOURS` (default
+12), so it cannot flap. The real monthly move arrives after ~3 weeks of silence and is
+never what the cooldown blocks. Heralds skip all of it — one is proof.
 
 A whisper's packet carries only the sender's **GUID**, so the bot name-queries to
 resolve who whispered (and to reply). Outgoing whispers are **throttled** so a raid
