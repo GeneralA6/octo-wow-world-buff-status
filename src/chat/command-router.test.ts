@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
 import type { ActiveRaid } from "../watcher/raid-events.js";
 import { CommandRouter, isSubscribeRequest, type BuffCooldown } from "./command-router.js";
-import { FAIRE_SITES } from "../darkmoon/schedule.js";
-import type { FaireReport } from "../darkmoon/resolve.js";
+import { FAIRE_SITES } from "../darkmoon/location.js";
+import type { FaireAnswer } from "../darkmoon/observation.js";
 
 function deps(
   opts: {
@@ -11,7 +11,7 @@ function deps(
     raidElapsed?: () => number | null;
     raidNumber?: () => number | null;
     buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
-    faireReport?: () => FaireReport;
+    faireAnswer?: () => FaireAnswer;
     now?: () => number;
   } = {},
 ) {
@@ -25,7 +25,7 @@ function deps(
     raidElapsed: opts.raidElapsed,
     raidNumber: opts.raidNumber,
     buffCooldowns: opts.buffCooldowns,
-    faireReport: opts.faireReport,
+    faireAnswer: opts.faireAnswer,
     now: opts.now,
     areaName: "Onyxia's Lair",
     guildName: "Rage Quit",
@@ -405,38 +405,27 @@ describe("CommandRouter", () => {
 });
 
 describe("CommandRouter darkmoon", () => {
-  const NOW = Date.parse("2026-09-10T12:00:00Z");
-  const faire = (over: Partial<FaireReport> = {}): FaireReport => ({
-    phase: "up",
+  const NOW = Date.parse("2026-09-17T12:00:00Z");
+  const answer = (over: Partial<Extract<FaireAnswer, { known: true }>> = {}): FaireAnswer => ({
+    known: true,
     location: "mulgore",
     site: FAIRE_SITES.mulgore,
-    setupAt: Date.parse("2026-09-04T00:00:00Z"),
-    opensAt: Date.parse("2026-09-07T00:00:00Z"),
-    closesAt: Date.parse("2026-09-14T00:00:00Z"),
+    observedAt: NOW - 240_000,
     source: "sighting",
-    confirmedBy: "sighting",
-    observation: {
-      location: "mulgore",
-      windowSetupAt: Date.parse("2026-09-04T00:00:00Z"),
-      observedAt: NOW - 60_000,
-      source: "sighting",
-      witness: "Someplayer",
-    },
+    witness: "Someplayer",
+    fresh: true,
     ...over,
   });
-  const faireDeps = (report: FaireReport = faire()) =>
-    deps({ faireReport: () => report, now: () => NOW });
+  const faireDeps = (a: FaireAnswer = answer()) => deps({ faireAnswer: () => a, now: () => NOW });
 
-  it("answers where the faire is, in one line", async () => {
+  it("answers where the faire was last seen, in one line", async () => {
     const { router } = faireDeps();
     const reply = await router.handle("Raider", "darkmoon");
     expect(reply).toHaveLength(1);
-    expect(reply[0]).toBe(
-      "Darkmoon Faire is up in Mulgore (below Thunder Bluff) - closes in ~3d12h.",
-    );
+    expect(reply[0]).toBe("Darkmoon Faire is in Mulgore (below Thunder Bluff) - seen 4m ago.");
   });
 
-  it("answers to the phrasing PizzaWorldBuffs' own bot uses", async () => {
+  it("answers to the phrasing PizzaWorldBuffs own bot uses", async () => {
     const { router } = faireDeps();
     for (const text of ["dmf", "dmf where", "faire", "/darkmoon", "!dmf", "DARKMOON"]) {
       expect((await router.handle("Raider", text))[0]).toMatch(/Darkmoon Faire/);
@@ -457,7 +446,7 @@ describe("CommandRouter darkmoon", () => {
     expect(reply[0]).not.toMatch(/Rallying Cry/);
   });
 
-  it("says so plainly when the faire tracker isn't wired, rather than guessing a zone", async () => {
+  it("says so plainly when the faire tracker is not wired", async () => {
     const { router } = deps();
     const reply = await router.handle("Raider", "darkmoon");
     expect(reply).toHaveLength(1);
@@ -465,8 +454,13 @@ describe("CommandRouter darkmoon", () => {
     expect(reply[0]).not.toMatch(/Mulgore|Elwynn/);
   });
 
-  it("passes the hedge through when nothing has confirmed the zone", async () => {
-    const { router } = faireDeps(faire({ source: "calendar", confirmedBy: null }));
-    expect((await router.handle("Raider", "darkmoon"))[0]).toMatch(/probably up/);
+  it("passes through that a look is too old to trust", async () => {
+    const { router } = faireDeps(answer({ fresh: false }));
+    expect((await router.handle("Raider", "darkmoon"))[0]).toMatch(/was last seen/);
+  });
+
+  it("admits it does not know, rather than naming a zone", async () => {
+    const { router } = faireDeps({ known: false });
+    expect((await router.handle("Raider", "darkmoon"))[0]).toMatch(/don.t know where/);
   });
 });

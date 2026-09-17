@@ -1,92 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildFaireEmbed, DarkmoonWidget, type FaireChannel } from "./widget.js";
 import { InMemoryDarkmoonWidgetStore } from "./widget-store.js";
-import { FAIRE_SITES } from "./schedule.js";
+import { FAIRE_SITES } from "./location.js";
 import { silentLogger } from "../logger.js";
-import type { FaireObservation, FaireReport } from "./resolve.js";
+import type { FaireAnswer } from "./observation.js";
 
-const utc = (iso: string): number => Date.parse(iso);
-const NOW = utc("2026-09-10T12:00:00Z");
+const NOW = Date.parse("2026-09-17T12:00:00Z");
 
-const seen = (at: number): FaireObservation => ({
-  location: "elwynn",
-  windowSetupAt: utc("2026-09-04T00:00:00Z"),
-  observedAt: at,
-  source: "sighting",
-  witness: "Someplayer",
-});
-
-const report = (over: Partial<FaireReport> = {}): FaireReport => ({
-  phase: "up",
+const known = (over: Partial<Extract<FaireAnswer, { known: true }>> = {}): FaireAnswer => ({
+  known: true,
   location: "elwynn",
   site: FAIRE_SITES.elwynn,
-  setupAt: utc("2026-09-04T00:00:00Z"),
-  opensAt: utc("2026-09-07T00:00:00Z"),
-  closesAt: utc("2026-09-14T00:00:00Z"),
-  source: "calendar",
-  confirmedBy: "sighting",
-  observation: null,
+  observedAt: NOW - 240_000,
+  source: "sighting",
+  witness: "Someplayer",
+  fresh: true,
   ...over,
 });
 
 describe("buildFaireEmbed", () => {
-  it("leads with where to go and how long is left", () => {
-    const embed = buildFaireEmbed(report(), NOW);
+  it("leads with where to go and how recently it was seen", () => {
+    const embed = buildFaireEmbed(known(), NOW);
     expect(embed.title).toBe("🎪 Darkmoon Faire");
     expect(embed.description).toContain("Elwynn Forest (south of Goldshire)");
-    expect(embed.description).toContain("Open now");
-    expect(embed.description).toContain("Closes in 3d12h");
+    expect(embed.description).toContain("Seen 4m ago");
   });
 
-  it("dates the visit so a reader can plan, not just count down", () => {
-    const embed = buildFaireEmbed(report(), NOW);
-    expect(embed.fields?.[0]).toEqual({
-      name: "This visit",
-      value: "Mon 7 Sept – Sun 13 Sept",
-      inline: true,
-    });
+  it("refuses the present tense on an old look, and colours it differently", () => {
+    const stale = buildFaireEmbed(known({ fresh: false, observedAt: NOW - 2 * 86_400_000 }), NOW);
+    expect(stale.description).toContain("Last seen 2d ago");
+    expect(stale.description).toContain("may have moved on");
+    expect(stale.color).not.toBe(buildFaireEmbed(known(), NOW).color);
   });
 
-  it("says setting up rather than open, and colours it differently", () => {
-    const setup = buildFaireEmbed(report({ phase: "setting-up" }), utc("2026-09-05T12:00:00Z"));
-    expect(setup.description).toContain("not open for business yet");
-    expect(setup.color).not.toBe(buildFaireEmbed(report(), NOW).color);
+  it("says plainly when nobody has seen it, without naming a zone", () => {
+    const embed = buildFaireEmbed({ known: false }, NOW);
+    expect(embed.description).toContain("Location unknown");
+    expect(embed.description).not.toMatch(/Elwynn|Mulgore/);
   });
 
-  it("points at the next visit while travelling, including when the tents go up", () => {
-    const embed = buildFaireEmbed(
-      report({
-        phase: "travelling",
-        location: "mulgore",
-        site: FAIRE_SITES.mulgore,
-        setupAt: utc("2026-10-02T00:00:00Z"),
-        opensAt: utc("2026-10-05T00:00:00Z"),
-        closesAt: utc("2026-10-12T00:00:00Z"),
-      }),
-      NOW,
+  it("says in the footer who saw it", () => {
+    expect(buildFaireEmbed(known({ source: "onsite", witness: "Sayge" }), NOW).footer?.text).toContain(
+      "our own character",
     );
-    expect(embed.description).toContain("Travelling");
-    expect(embed.description).toContain("Mulgore (below Thunder Bluff)");
-    expect(embed.fields?.map((f) => f.name)).toEqual(["Next visit", "Tents go up"]);
-    expect(embed.fields?.[1]?.value).toBe("Fri 2 Oct");
-  });
-
-  it("hedges in the body when nothing has confirmed the zone", () => {
-    expect(buildFaireEmbed(report({ confirmedBy: null }), NOW).description).toContain("Should be open");
-  });
-
-  it("says in the footer where the answer came from", () => {
-    expect(buildFaireEmbed(report({ confirmedBy: null }), NOW).footer?.text).toContain("not yet confirmed");
-    expect(buildFaireEmbed(report({ confirmedBy: "herald" }), NOW).footer?.text).toContain("herald");
-    expect(buildFaireEmbed(report({ source: "onsite" }), NOW).footer?.text).toContain("our own character");
-  });
-
-  it("dates the sighting when there is no window to quote", () => {
-    const embed = buildFaireEmbed(
-      report({ source: "sighting", closesAt: null, opensAt: null, observation: seen(NOW - 7_200_000) }),
-      NOW,
-    );
-    expect(embed.description).toContain("Last seen 2h ago");
+    expect(buildFaireEmbed(known(), NOW).footer?.text).toContain("PizzaWorldBuffs");
+    expect(buildFaireEmbed({ known: false }, NOW).footer?.text).toContain("nothing seen recently");
   });
 });
 
@@ -111,21 +69,20 @@ describe("DarkmoonWidget", () => {
       initialMessageId === null ? null : { messageId: initialMessageId },
     );
     let now = NOW;
-    let current = report();
+    let current: FaireAnswer = known();
     const widget = new DarkmoonWidget({
       channel,
       store,
-      report: () => current,
+      answer: () => current,
       now: () => now,
       logger: silentLogger,
     });
     return {
       widget,
-      channel,
       store,
       created,
       edits,
-      setReport: (next: FaireReport) => {
+      setAnswer: (next: FaireAnswer) => {
         current = next;
       },
       setNow: (at: number) => {
@@ -145,7 +102,7 @@ describe("DarkmoonWidget", () => {
     await h.widget.refresh();
     expect(h.created).toHaveLength(1);
 
-    h.setReport(report({ phase: "travelling" }));
+    h.setAnswer({ known: false });
     await h.widget.refresh();
     expect(h.created).toHaveLength(1);
     expect(h.edits).toEqual([{ messageId: "msg-1" }]);
@@ -168,10 +125,10 @@ describe("DarkmoonWidget", () => {
     expect(h.edits).toHaveLength(0);
   });
 
-  it("edits as soon as the countdown text actually moves", async () => {
+  it("edits as soon as the age text actually moves", async () => {
     const h = harness();
     await h.widget.refresh();
-    h.setNow(NOW + 3_600_000); // "3d12h" -> "3d11h"
+    h.setNow(NOW + 3_600_000); // "4m ago" -> "1h ago"
     await h.widget.refresh();
     expect(h.edits).toHaveLength(1);
   });
@@ -179,7 +136,7 @@ describe("DarkmoonWidget", () => {
   it("reposts the board if someone deleted the message", async () => {
     const h = harness();
     await h.widget.refresh();
-    h.setReport(report({ phase: "travelling" }));
+    h.setAnswer({ known: false });
     h.failEdit({ kind: "unreachable", status: 404 });
     h.setNextId("msg-2");
     await h.widget.refresh();
@@ -190,7 +147,7 @@ describe("DarkmoonWidget", () => {
   it("keeps its message id on an ordinary edit failure, rather than posting a duplicate", async () => {
     const h = harness();
     await h.widget.refresh();
-    h.setReport(report({ phase: "travelling" }));
+    h.setAnswer({ known: false });
     h.failEdit({ kind: "error", status: 500 });
     await h.widget.refresh();
     expect(h.created).toHaveLength(1);

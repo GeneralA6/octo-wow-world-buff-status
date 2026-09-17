@@ -930,16 +930,6 @@ async function runListener(
             interactTimer.unref?.();
           }
         },
-        // The Darkmoon heralds wander a capital the week before the faire arrives — exactly where
-        // these listeners are parked. Fed from the wider monster-chat feed rather than the yell
-        // hook below because whether they yell or merely say is unconfirmed on this realm, and a
-        // yell-only hook would silently never fire. Note only Orgrimmar's herald is ever in
-        // earshot: his Alliance counterpart stands in IRONFORGE, not Stormwind.
-        onMonsterChat: (chat) => {
-          void faire
-            .observeMonsterChat(chat.senderName, chat.text, Date.now())
-            .catch((error) => logger.error(`darkmoon: herald observe failed (${describeError(error)})`));
-        },
         onMonsterYell: (senderName, text) => {
           const faction = matchBuffYell(text);
           // Log EVERY yell heard so a real buff yell that doesn't match the pattern is
@@ -1254,11 +1244,6 @@ async function main(): Promise<void> {
       logger.error(`darkmoon: MongoDB connect failed (${describeError(error)}); remembering in memory`);
     }
   }
-  // A schedule mismatch cannot be fixed by the bot, so it is logged sparingly rather than on every
-  // rebroadcast the realm makes.
-  const SCHEDULE_CONFLICT_LOG_MS = 3_600_000;
-  let lastScheduleConflictLoggedAt = 0;
-
   // Which message the Darkmoon board owns. Its own tiny document: losing it would orphan the board
   // and post a second one on every redeploy.
   let darkmoonWidgetStore: DarkmoonWidgetStore = new InMemoryDarkmoonWidgetStore();
@@ -1270,7 +1255,7 @@ async function main(): Promise<void> {
     }
   }
   const faire = new FaireService({
-    schedule: config.darkmoon,
+
     store: knowledgeStore,
     corroboration: config.darkmoonCorroboration,
     onObservation: (observation) => {
@@ -1282,30 +1267,14 @@ async function main(): Promise<void> {
       // would sit on the old answer until the next timer tick.
       void darkmoonWidget?.refresh();
     },
-    // A wrong zone heals itself — it flips the alternation for good. A sighting outside every
-    // calendar week cannot: it means this realm runs the faire on a different cadence, and only
-    // the DARKMOON_* schedule config fixes that.
-    // Throttled: the realm rebroadcasts sightings every few seconds, so an unfixable mismatch would
-    // otherwise fill the log with the same line forever. Once an hour is enough to notice it, and
-    // the zone is included because knowing the rule is wrong is only half of what a human needs.
-    onScheduleConflict: (conflict) => {
-      const now = Date.now();
-      if (now - lastScheduleConflictLoggedAt < SCHEDULE_CONFLICT_LOG_MS) return;
-      lastScheduleConflictLoggedAt = now;
-      logger.warn(
-        `darkmoon: faire seen in ${conflict.location} (${conflict.source}, ${conflict.witness}) at ` +
-          `${new Date(conflict.seenAt).toISOString()}, when the schedule says it is away — the ` +
-          `DARKMOON_SETUP_WEEKDAY/_OCCURRENCE/_SETUP_DAYS/_DURATION_DAYS rule does not match this realm`,
-      );
-    },
   });
   await faire.load().catch((error) => logger.error(`darkmoon: load failed (${describeError(error)})`));
-  const known = faire.knowledge.herald ?? faire.knowledge.sighting;
+  const lastSeen = faire.answer(Date.now());
   logger.info(
-    known
-      ? `darkmoon: alternation pinned by ${known.source} (${known.location}, ` +
-          `${new Date(known.observedAt).toISOString()})`
-      : "darkmoon: nothing observed yet — answering from the calendar until a herald or sighting lands",
+    lastSeen.known
+      ? `darkmoon: last seen in ${lastSeen.location} by ${lastSeen.source} ` +
+          `(${new Date(lastSeen.observedAt).toISOString()})`
+      : "darkmoon: nowhere seen recently — waiting on our own character or the LFT channel",
   );
 
   // Player-submitted feedback/suggestions — kept for review, posted to the feedback channel.
@@ -1467,7 +1436,7 @@ async function main(): Promise<void> {
     guildName: config.guildName,
     community: config.community,
     discordInvite: config.discordServerInvite,
-    faireReport: () => faire.report(Date.now()),
+    faireAnswer: () => faire.answer(Date.now()),
     onFeedback,
     onSubscribe: (name) =>
       void userLedger.record(name).catch((error) => logger.debug(`users: record failed (${describeError(error)})`)),
@@ -1720,7 +1689,7 @@ async function main(): Promise<void> {
         edit: (messageId, message) => dm.editChannelMessage(darkmoonChannelId, messageId, message),
       },
       store: darkmoonWidgetStore,
-      report: (now) => faire.report(now),
+      answer: (now) => faire.answer(now),
       logger: prefixed(logger, "darkmoon"),
     });
     await darkmoonWidget.load();

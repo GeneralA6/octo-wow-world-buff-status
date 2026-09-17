@@ -218,46 +218,27 @@ alerts to players in-game. Whisper the character:
 | `confirm <code>` / `<code>` | confirm a flow-B code in-game |
 | `discord off` | unlink |
 | `mode both` \| `mode offline` | DM always, or only when your character is offline |
-| `darkmoon` (`dmf`, `faire`) | where the Darkmoon Faire is this month |
+| `darkmoon` (`dmf`, `faire`) | where the Darkmoon Faire was last seen |
 | `status` / `me` / `help` | current raid state / your settings / commands |
 
-`darkmoon` answers from three sources, ranked by what each can actually prove:
+`darkmoon` never predicts. It reports where the faire was last **seen**, and how long ago —
+because Turtle does not run the vanilla calendar (it alternates weekly and is up almost every
+day), and any schedule hardcoded here would be one server patch away from being confidently
+wrong for a month before anyone noticed. An observation cannot rot like that; it just gets old,
+and says so. [PizzaWorldBuffs](https://github.com/Pizzahawaiii/PizzaWorldBuffs) reached the same
+conclusion — it has no schedule logic at all.
 
-| source | proves | can it be faked? |
+Two sources, both things the bot already receives:
+
+| source | covers | can it be faked? |
 |---|---|---|
-| **on-site** — the bot's own character parked at the faire site, recognising the staff standing beside it | where the faire is **now**, *and the setup day* | no — it's our own client |
-| **herald** — `Kruban Darkblade` in Orgrimmar, `Melnan Darkstone` in Ironforge, announcing in NPC chat the week before the faire arrives | which zone is **next** | no — the server speaks it |
-| **sighting** — a [PizzaWorldBuffs](https://github.com/Pizzahawaiii/PizzaWorldBuffs) `PWB_DMF:` broadcast on the hidden `LFT` channel the bot already reads for head warnings | where the tents are **right now** | yes — it is text a player typed |
-| **calendar** — `src/darkmoon/schedule.ts` | exactly **when**, and where only as far as its anchor is right | n/a |
+| **on-site** — our own character parked at a faire site, recognising the staff beside it | only the zone it is parked in | no — it is our own client |
+| **sighting** — a `PWB_DMF:` broadcast on the hidden `LFT` channel the bot already reads for head warnings | both zones | yes — it is text a player typed |
 
-They are not one ranking, because they answer different questions. A herald outranks a
-sighting on the zone *alternation* (nobody can fake one). A sighting outranks both on
-whether the faire is physically in a zone this minute — a computed week cannot argue with
-a player standing in the tents. Every observation is pinned to a specific faire *window*,
-which is what makes the correction permanent: knowing one real window's zone fixes every
-other month, forwards and backwards, so one herald or one corroborated sighting fixes the
-shipped anchor for good. Until that happens the bot hedges — "probably up in Elwynn".
-
-**On-site detection** (`DARKMOON_WATCH_LOCATION=elwynn|mulgore`, off by default) is how you
-*calibrate*. Park the watcher within sight of the faire field and the bot asks the server what
-the units around it are called (`CMSG_CREATURE_QUERY`, one query per NPC entry per session) and
-matches the faire's roster by **name** — not entry id, because a wrong id fails silently and
-looks exactly like an absent faire, while a wrong name shows up in the log. `Darkmoon Faire
-Carnie` is deliberately excluded: carnies stand in the capitals all month, which is the very bug
-that made PWB 1.4.0 report faires that weren't there.
-
-You only need it to work **once**. Confirming a single window pins the alternation for every
-month afterwards, in both directions — including the zone that character can never see — so
-after one faire week you can move it back and unset the variable. It is also the only source
-that can confirm the *setup day*, i.e. the one thing no sighting can ever fix.
-
-**The week rule is not the obvious one.** The carnies set up on the first **Friday** and
-the faire opens the **Monday after** — which is *not* "the first Monday of the month",
-and differs by a whole week about two months in five. Blizzard's own Classic schedule ran
-10–16 Feb and 9–15 Mar 2020; the first-Monday rule would have said the 3rd and the 2nd.
-The three setup days are modelled too, since the tents are physically there (and
-sightable) before the faire will take anyone's tickets — `/darkmoon` says "setting up"
-rather than "up" for those days.
+The **newer** look wins, because the faire really does move; a tie goes to our own eyes. A look
+within a few hours is stated plainly ("is in Elwynn Forest — seen 4m ago"); an older one is
+dated and hedged ("was last seen … it moves weekly, so it may have moved on"); past a week it
+says it does not know rather than name a zone.
 
 **The sighting feed is hardened, because it is public text.** Anyone can paste a
 `PWB_DMF:` line naming the wrong zone. So a sighting is a *vote*, counted per distinct
@@ -267,8 +248,17 @@ behaves: each client stores one sighting and rebroadcasts it, so honest traffic 
 senders repeating one witness*, a shape a single troll cannot produce. A location needs a
 quorum of senders (`DARKMOON_QUORUM`, default 3) and the majority within the window wins;
 on top of that a settled zone cannot move for `DARKMOON_CHANGE_COOLDOWN_HOURS` (default
-12), so it cannot flap. The real monthly move arrives after ~3 weeks of silence and is
-never what the cooldown blocks. Heralds skip all of it — one is proof.
+12), so it cannot flap. The faire really moves about a week apart, so the cooldown never blocks it. What our own character sees skips all of it — nobody can forge our own object stream.
+
+**On-site detection** (`DARKMOON_WATCH_LOCATION=elwynn|mulgore`, off by default) is the stronger
+half. Park the watcher within sight of the faire field and the bot asks the server what the units
+around it are called (`CMSG_CREATURE_QUERY`, one query per NPC entry per session) and matches the
+faire roster by **name** — not entry id, because a wrong id fails silently and looks exactly like
+an absent faire, while a wrong name shows up in the log. `Darkmoon Faire Carnie` is deliberately
+excluded: carnies stand in the capitals permanently, which is the very bug that made PWB 1.4.0
+report faires that were not there. The zone is configuration, not detection — an object update
+says what is nearby, never which zone you are in — so setting it while the character is elsewhere
+makes the bot confidently wrong.
 
 A whisper's packet carries only the sender's **GUID**, so the bot name-queries to
 resolve who whispered (and to reply). Outgoing whispers are **throttled** so a raid

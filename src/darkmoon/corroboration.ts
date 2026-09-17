@@ -1,4 +1,4 @@
-import type { FaireLocation } from "./schedule.js";
+import type { FaireLocation } from "./location.js";
 
 /**
  * Tamper resistance for the LFT sighting feed.

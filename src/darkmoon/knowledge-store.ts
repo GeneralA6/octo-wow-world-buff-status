@@ -1,6 +1,6 @@
 import { MongoClient } from "mongodb";
-import { isFaireLocation } from "./schedule.js";
-import { NO_KNOWLEDGE, type FaireKnowledge, type FaireObservation, type ObservationSource } from "./resolve.js";
+import { isFaireLocation } from "./location.js";
+import { NO_KNOWLEDGE, type FaireKnowledge, type FaireObservation, type ObservationSource } from "./observation.js";
 
 /**
  * Persists what the bot has been told about the Darkmoon Faire: the newest herald announcement and
@@ -44,7 +44,6 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
 
 interface ObservationDoc {
   readonly location: string;
-  readonly windowSetupAt: number;
   readonly observedAt: number;
   readonly source: string;
   readonly witness: string;
@@ -53,7 +52,6 @@ interface ObservationDoc {
 interface KnowledgeDoc {
   readonly _id: string;
   readonly onsite?: ObservationDoc | null;
-  readonly herald: ObservationDoc | null;
   readonly sighting: ObservationDoc | null;
 }
 
@@ -71,7 +69,6 @@ const DOC_ID = "knowledge";
 export function observationToDoc(observation: FaireObservation): ObservationDoc {
   return {
     location: observation.location,
-    windowSetupAt: observation.windowSetupAt,
     observedAt: observation.observedAt,
     source: observation.source,
     witness: observation.witness,
@@ -79,7 +76,7 @@ export function observationToDoc(observation: FaireObservation): ObservationDoc 
 }
 
 function isObservationSource(value: string): value is ObservationSource {
-  return value === "onsite" || value === "herald" || value === "sighting";
+  return value === "onsite" || value === "sighting";
 }
 
 /**
@@ -92,10 +89,9 @@ export function docToObservation(doc: ObservationDoc | null | undefined): FaireO
   if (!doc) return null;
   if (!isFaireLocation(doc.location)) return null;
   if (!isObservationSource(doc.source)) return null;
-  if (!Number.isFinite(doc.windowSetupAt) || !Number.isFinite(doc.observedAt)) return null;
+  if (!Number.isFinite(doc.observedAt)) return null;
   return {
     location: doc.location,
-    windowSetupAt: doc.windowSetupAt,
     observedAt: doc.observedAt,
     source: doc.source,
     witness: doc.witness,
@@ -105,7 +101,6 @@ export function docToObservation(doc: ObservationDoc | null | undefined): FaireO
 export function docToKnowledge(doc: KnowledgeDoc): FaireKnowledge {
   return {
     onsite: docToObservation(doc.onsite),
-    herald: docToObservation(doc.herald),
     sighting: docToObservation(doc.sighting),
   };
 }
@@ -131,7 +126,6 @@ export class MongoKnowledgeStore implements KnowledgeStore {
             {
               $set: {
                 onsite: knowledge.onsite ? observationToDoc(knowledge.onsite) : null,
-                herald: knowledge.herald ? observationToDoc(knowledge.herald) : null,
                 sighting: knowledge.sighting ? observationToDoc(knowledge.sighting) : null,
               },
             },

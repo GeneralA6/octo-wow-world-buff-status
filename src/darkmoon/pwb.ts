@@ -1,4 +1,4 @@
-import type { FaireLocation } from "./schedule.js";
+import type { FaireLocation } from "./location.js";
 
 /**
  * Decoder for the Darkmoon Faire location that PizzaWorldBuffs gossips on Turtle's hidden

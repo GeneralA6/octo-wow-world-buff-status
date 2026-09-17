@@ -4,13 +4,7 @@ import { CLIENT_BUILD } from "./protocol/opcodes.js";
 import { OCTOWOW_CDN } from "./net/client-resolver.js";
 import type { GroupingMode } from "./watcher/raid-events.js";
 import type { Faction } from "./watcher/buff-store.js";
-import {
-  isFaireLocation,
-  parseFaireAnchor,
-  VANILLA_SCHEDULE,
-  type FaireLocation,
-  type FaireSchedule,
-} from "./darkmoon/schedule.js";
+import { isFaireLocation, type FaireLocation } from "./darkmoon/location.js";
 import { DEFAULT_CORROBORATION, type CorroborationPolicy } from "./darkmoon/corroboration.js";
 
 const GROUPING_MODES: readonly GroupingMode[] = ["auto", "guild", "lair"];
@@ -68,8 +62,6 @@ export interface BotConfig {
   readonly autoResolve: boolean;
   /** OctoWoW client CDN base used for auto-resolve. */
   readonly clientCdn: string;
-  /** The Darkmoon Faire schedule the `darkmoon` command computes from. */
-  readonly darkmoon: FaireSchedule;
   /** How much agreement a player-broadcast faire sighting needs before the bot believes it. */
   readonly darkmoonCorroboration: CorroborationPolicy;
   /** Which faire site the watcher character is parked at, enabling first-hand detection of the
@@ -496,36 +488,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   if (discordDarkmoonChannelId && !/^\d+$/.test(discordDarkmoonChannelId)) {
     errors.push("DISCORD_DARKMOON_CHANNEL_ID must be a numeric Discord channel id");
   }
-  // Darkmoon Faire schedule. Every field of the vanilla rule is exposed, so a Turtle deviation is
-  // a config change rather than a patch — and the WEEK is the part config has to cover, because it
-  // is the one thing a sighting cannot teach us (see darkmoon/resolve.ts). The anchor LOCATION is
-  // only a starting guess: one real sighting corrects the alternation for good.
-  const darkmoonUtcOffsetMinutes = intWithDefault(
-    "DARKMOON_UTC_OFFSET_MINUTES",
-    VANILLA_SCHEDULE.utcOffsetMinutes,
-    -840,
-  );
-  if (darkmoonUtcOffsetMinutes > 840) {
-    errors.push("DARKMOON_UTC_OFFSET_MINUTES must be between -840 and 840");
-  }
-  const darkmoonSetupWeekday = intWithDefault("DARKMOON_SETUP_WEEKDAY", VANILLA_SCHEDULE.setupWeekday, 0);
-  if (darkmoonSetupWeekday > 6) errors.push("DARKMOON_SETUP_WEEKDAY must be 0 (Sunday) to 6 (Saturday)");
-  const darkmoonSetupToOpenDays = intWithDefault("DARKMOON_SETUP_DAYS", VANILLA_SCHEDULE.setupToOpenDays, 0);
-  if (darkmoonSetupToOpenDays > 14) errors.push("DARKMOON_SETUP_DAYS must be 0-14");
-  const darkmoonOccurrence = intWithDefault("DARKMOON_OCCURRENCE", VANILLA_SCHEDULE.occurrence, 1);
-  if (darkmoonOccurrence > 4) errors.push("DARKMOON_OCCURRENCE must be 1-4");
-  const darkmoonDurationDays = intWithDefault("DARKMOON_DURATION_DAYS", VANILLA_SCHEDULE.durationDays, 1);
-  if (darkmoonDurationDays > 28) errors.push("DARKMOON_DURATION_DAYS must be 1-28");
-  const darkmoonAnchorRaw = env.DARKMOON_ANCHOR?.trim();
-  const darkmoonAnchor = darkmoonAnchorRaw ? parseFaireAnchor(darkmoonAnchorRaw) : VANILLA_SCHEDULE.anchor;
-  if (darkmoonAnchor === null) errors.push(`DARKMOON_ANCHOR must look like "2020-02:mulgore"`);
+
   // Where the watcher's character is parked, when it is parked at a faire site. Set it and the bot
-  // detects the faire first-hand from the NPCs standing next to it — the strongest signal there is,
-  // and the only one that can confirm the SETUP DAY. Unset (the default) = the character is not at
-  // a faire site and on-site detection is off. It is configuration rather than something detected
-  // because a unit update says what is nearby, never which zone we are standing in.
+  // sees the faire first-hand from the NPCs standing next to it. Unset (the default) = not at a
+  // faire site, and on-site detection is off. Configuration rather than something detected, because
+  // a unit update says what is NEARBY, never which zone we are standing in.
   const darkmoonWatchRaw = env.DARKMOON_WATCH_LOCATION?.trim().toLowerCase();
-  const darkmoonWatchLocation = darkmoonWatchRaw ? (isFaireLocation(darkmoonWatchRaw) ? darkmoonWatchRaw : null) : null;
+  const darkmoonWatchLocation =
+    darkmoonWatchRaw && isFaireLocation(darkmoonWatchRaw) ? darkmoonWatchRaw : null;
   if (darkmoonWatchRaw && darkmoonWatchLocation === null) {
     errors.push(`DARKMOON_WATCH_LOCATION must be "elwynn" or "mulgore"`);
   }
@@ -540,22 +510,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     DEFAULT_CORROBORATION.changeCooldownMs / 3_600_000,
     0,
   );
-  // Shorter than the gap between faires, or the real monthly move would be the thing it blocks.
-  if (darkmoonChangeCooldownHours > 20 * 24) {
-    errors.push("DARKMOON_CHANGE_COOLDOWN_HOURS must be 0-480 (under the gap between faires)");
+  // Shorter than the gap between visits, or the faire's real weekly move would be what it blocks.
+  if (darkmoonChangeCooldownHours > 72) {
+    errors.push("DARKMOON_CHANGE_COOLDOWN_HOURS must be 0-72 (well under the weekly move)");
   }
   const darkmoonCorroboration: CorroborationPolicy = {
     quorum: darkmoonQuorum,
     changeCooldownMs: darkmoonChangeCooldownHours * 3_600_000,
-  };
-
-  const darkmoon: FaireSchedule = {
-    setupWeekday: darkmoonSetupWeekday,
-    occurrence: darkmoonOccurrence,
-    setupToOpenDays: darkmoonSetupToOpenDays,
-    durationDays: darkmoonDurationDays,
-    utcOffsetMinutes: darkmoonUtcOffsetMinutes,
-    anchor: darkmoonAnchor ?? VANILLA_SCHEDULE.anchor,
   };
 
   const mongodbUri = env.MONGODB_URI?.trim() || null;
@@ -605,7 +566,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     worldBuild,
     autoResolve,
     clientCdn,
-    darkmoon,
     darkmoonCorroboration,
     darkmoonWatchLocation,
     watchAreaId,

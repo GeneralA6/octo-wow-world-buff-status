@@ -9,7 +9,7 @@ import type { ActiveRaid } from "../watcher/raid-events.js";
 import { CITY_FOR, humanClock } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
 import { formatFaire } from "../darkmoon/format.js";
-import type { FaireReport } from "../darkmoon/resolve.js";
+import type { FaireAnswer } from "../darkmoon/observation.js";
 
 /** The exact words that subscribe a caller (also handled in `handle`'s switch). */
 const SUBSCRIBE_COMMANDS = new Set(["subscribe", "sub", "start"]);
@@ -54,7 +54,7 @@ export function factionLabel(factions: readonly Faction[]): string {
  *   invite | join                   — guild-invite the caller
  *   feedback | suggest              — send a message to the team
  *   discord                         — share the community Discord invite link
- *   darkmoon | dmf | faire          — where the Darkmoon Faire is this month
+ *   darkmoon | dmf | faire          — where the Darkmoon Faire was last seen
  *   status | profile | help
  */
 export interface CommandDeps {
@@ -84,8 +84,8 @@ export interface CommandDeps {
   readonly buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
   /** Where the Darkmoon Faire is, for the "darkmoon" command. Undefined = the tracker isn't
    *  wired and the command says so instead of answering from a guess. */
-  readonly faireReport?: () => FaireReport;
-  /** Injectable clock, so the faire's "closes in ~3d" is testable. Defaults to Date.now. */
+  readonly faireAnswer?: () => FaireAnswer;
+  /** Injectable clock, so the faire answer's "seen 4m ago" is testable. Defaults to Date.now. */
   readonly now?: () => number;
 }
 
@@ -191,7 +191,7 @@ export class CommandRouter {
           `status - what's raiding Onyxia now, and when the buff last dropped`,
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
           `discord - our Discord invite link`,
-          `darkmoon - where the Darkmoon Faire is this month`,
+          `darkmoon - where the Darkmoon Faire was last seen`,
           `feedback <message> - send a suggestion or bug report`,
           `invite - join <${this.#deps.guildName}>`,
         ];
@@ -302,9 +302,9 @@ export class CommandRouter {
 
   /** Where the Darkmoon Faire is. Unwired = say so, rather than guess at a zone. */
   #darkmoon(): string[] {
-    const { faireReport, now } = this.#deps;
-    if (!faireReport) return [`I'm not tracking the Darkmoon Faire right now - sorry!`];
-    return [formatFaire(faireReport(), (now ?? Date.now)())];
+    const { faireAnswer, now } = this.#deps;
+    if (!faireAnswer) return [`I'm not tracking the Darkmoon Faire right now - sorry!`];
+    return [formatFaire(faireAnswer(), (now ?? Date.now)())];
   }
 
   /** Share the Discord invite link, with a one-line note on what it's for. Null = unconfigured. */

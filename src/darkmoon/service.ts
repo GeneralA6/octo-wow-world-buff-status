@@ -6,43 +6,29 @@ import {
   type CorroborationPolicy,
   type SettledSighting,
 } from "./corroboration.js";
-import { matchHerald } from "./herald.js";
-import { isFaireNpc } from "./npcs.js";
+import type { FaireLocation } from "./location.js";
 import type { KnowledgeStore } from "./knowledge-store.js";
-import { isTrustedBroadcast, parseDmfBroadcast, sightedAt } from "./pwb.js";
+import { isFaireNpc } from "./npcs.js";
 import {
-  anchorHerald,
-  anchorOnsite,
-  anchorSighting,
-  contradictsSchedule,
+  answerFaire,
   NO_KNOWLEDGE,
-  resolveFaire,
+  type FaireAnswer,
   type FaireKnowledge,
   type FaireObservation,
-  type FaireReport,
-} from "./resolve.js";
-import type { FaireLocation, FaireSchedule } from "./schedule.js";
-
-/** How often standing in the faire is worth re-recording. The staff re-enters visibility all day;
- *  the observation only needs to stay fresh enough to read as live, not to log every refresh. */
-const ONSITE_REFRESH_MS = 30 * 60_000;
+} from "./observation.js";
+import { isTrustedBroadcast, parseDmfBroadcast, sightedAt } from "./pwb.js";
 
 /**
- * Holds what the bot knows about the Darkmoon Faire, fed by three things: what our own parked
- * character can see standing next to it, and the two it overhears —
- * NPC chat in the capitals (a herald announcing the faire is coming) and the LFT channel (a
- * PizzaWorldBuffs sighting). Kept in memory for the answer path and in Mongo so a redeploy does
- * not forget it.
+ * Holds where the Darkmoon Faire was last seen, fed by the two things the bot can actually
+ * observe: its own parked character, and the PizzaWorldBuffs traffic on the LFT channel.
  *
- * The two are stored side by side rather than as one "latest observation", because they are not
- * interchangeable: a herald is server-authored and cannot be faked, so it must never be displaced
- * by a `PWB_DMF:` line a player typed.
+ * The two are kept side by side rather than as one "latest observation" so the weaker source can
+ * never quietly erase the stronger one's record — but when answering, the NEWEST wins, because the
+ * faire moves and the fresher look is the more current one. Our own character is parked in exactly
+ * one zone, so it goes quiet for the weeks the faire spends in the other; the channel covers that.
  *
- * Within the channel feed, newest-wins is PWB's own rule and keeping it means the bot and the
- * addon every player runs never disagree — but PWB is a client trusting its own user, and this is
- * a bot answering strangers, so newest-wins alone would let one troll move the answer and rewrite
- * the alternation for months. A sighting therefore has to clear `corroboration.ts` before it
- * counts, and only the herald path skips that, because the server is the one speaking.
+ * Only the channel feed needs guarding. A `PWB_DMF:` line is text a player typed, so it has to
+ * clear `corroboration.ts` before it counts. What our own client sees needs no such thing.
  */
 
 /** What a line on the LFT channel did. Reported rather than reduced to a boolean so the caller can
@@ -58,33 +44,24 @@ export type ObserveOutcome =
   /** A faire broadcast with no usable sender — it cannot vote, and a silent feed would follow. */
   | "unidentified";
 
-/** The faire was seen when the schedule says it is away. Carries the ZONE too: the rule being
- *  wrong is only half the story, and which zone it was actually in is what a human needs to fix it. */
-export interface ScheduleConflict {
-  readonly seenAt: number;
-  readonly location: FaireLocation;
-  readonly source: "onsite" | "sighting";
-  readonly witness: string;
+export interface FaireServiceDeps {
+  readonly store: KnowledgeStore;
+  /** Fired when an observation is accepted, so the caller can log it and redraw. */
+  readonly onObservation?: (observation: FaireObservation) => void;
+  /** How much agreement a channel sighting needs. Defaults to DEFAULT_CORROBORATION. */
+  readonly corroboration?: CorroborationPolicy;
 }
 
-export interface FaireServiceDeps {
-  readonly schedule: FaireSchedule;
-  readonly store: KnowledgeStore;
-  /** Fired when an observation is accepted, so the caller can log it. */
-  readonly onObservation?: (observation: FaireObservation) => void;
-  /** How much agreement a sighting needs before it is believed. Defaults to DEFAULT_CORROBORATION. */
-  readonly corroboration?: CorroborationPolicy;
-  /** Fired when the faire is seen at a moment the schedule says it is away — the rule is wrong
-   *  and only a human can fix it. Carries the instant it was seen. */
-  readonly onScheduleConflict?: (conflict: ScheduleConflict) => void;
-}
+/** How often standing in the faire is worth re-recording. The staff re-enters visibility all day;
+ *  the observation only needs to stay fresh enough to read as current, not to log every refresh. */
+const ONSITE_REFRESH_MS = 30 * 60_000;
 
 export class FaireService {
   readonly #deps: FaireServiceDeps;
   #knowledge: FaireKnowledge = NO_KNOWLEDGE;
   /** Live corroboration window over the LFT feed — deliberately not persisted. */
   readonly #tally = new SightingTally(CORROBORATION_WINDOW_MS);
-  /** The zone currently settled on, for the change cooldown. */
+  /** The zone the channel feed has settled on, for the change cooldown. */
   #settled: SettledSighting | null = null;
 
   constructor(deps: FaireServiceDeps) {
@@ -131,21 +108,12 @@ export class FaireService {
     const current = this.#knowledge.sighting;
     if (current !== null && seenAt <= current.observedAt) return "counted";
 
-    const observation = anchorSighting(this.#deps.schedule, broadcast.location, seenAt, broadcast.witness);
-    if (observation === null) {
-      // The faire was seen when the calendar says it is nowhere. Nothing can be anchored to a
-      // window the schedule does not believe exists, so this teaches us only that the rule needs
-      // a human. Only reported once corroborated, so one troll line cannot raise the alarm.
-      if (contradictsSchedule(this.#deps.schedule, seenAt)) {
-        this.#deps.onScheduleConflict?.({
-          seenAt,
-          location: broadcast.location,
-          source: "sighting",
-          witness: broadcast.witness,
-        });
-      }
-      return "counted";
-    }
+    const observation: FaireObservation = {
+      location: broadcast.location,
+      observedAt: seenAt,
+      source: "sighting",
+      witness: broadcast.witness,
+    };
     this.#settled = { location: observation.location, acceptedAt: receivedAt };
     await this.#accept({ ...this.#knowledge, sighting: observation }, observation);
     return "accepted";
@@ -154,59 +122,26 @@ export class FaireService {
   /**
    * Offer the name of an NPC standing next to our own parked character.
    *
-   * This is the strongest signal the bot can get and it needs no corroboration: it is our own
-   * client's object stream, not something a player typed. `location` is where the character is
-   * parked — configuration, not a guess, because a unit update says what is nearby and never which
-   * zone we are in. Returns true when it became the on-site observation.
+   * Needs no corroboration: this is our own client's object stream, not something a player typed.
+   * `location` is where the character is parked — configuration, not a guess, because a unit
+   * update says what is nearby and never which zone we are in.
    */
-  async observeNearbyNpc(
-    npc: string,
-    location: FaireLocation,
-    seenAt: number,
-  ): Promise<boolean> {
+  async observeNearbyNpc(npc: string, location: FaireLocation, seenAt: number): Promise<boolean> {
     if (!isFaireNpc(npc)) return false;
 
-    const observation = anchorOnsite(this.#deps.schedule, location, seenAt, npc);
-    if (observation === null) {
-      // We are looking straight at the faire on a day the rule says it is away. Coming from our
-      // own client this is as close to proof as the bot gets that the schedule config is wrong.
-      if (contradictsSchedule(this.#deps.schedule, seenAt)) {
-        this.#deps.onScheduleConflict?.({ seenAt, location, source: "onsite", witness: npc });
-      }
+    const current = this.#knowledge.onsite;
+    // The faire's staff is re-seen every time visibility refreshes. Re-recording the same zone is
+    // only worth a write once the last look has aged; a MOVE is always worth one immediately.
+    if (current !== null && current.location === location && seenAt - current.observedAt < ONSITE_REFRESH_MS) {
       return false;
     }
-    const current = this.#knowledge.onsite;
-    // The faire's staff is re-seen every time the character's visibility refreshes; only a new
-    // window, or a fresher look at the one we are already in, is worth a write.
-    if (current !== null && observation.windowSetupAt === current.windowSetupAt) {
-      if (seenAt - current.observedAt < ONSITE_REFRESH_MS) return false;
-    }
+    const observation: FaireObservation = { location, observedAt: seenAt, source: "onsite", witness: npc };
     return this.#accept({ ...this.#knowledge, onsite: observation }, observation);
   }
 
-  /**
-   * Offer an NPC chat line heard in a capital. Returns true when it was a herald announcement we
-   * had not already heard for this window.
-   */
-  async observeMonsterChat(senderName: string, text: string, heardAt: number): Promise<boolean> {
-    const announcement = matchHerald(senderName, text);
-    if (announcement === null) return false;
-
-    const observation = anchorHerald(
-      this.#deps.schedule,
-      announcement.location,
-      heardAt,
-      announcement.herald,
-    );
-    const current = this.#knowledge.herald;
-    // Heralds repeat themselves every few minutes for a week; only a NEW window is news.
-    if (current !== null && observation.windowSetupAt <= current.windowSetupAt) return false;
-    return this.#accept({ ...this.#knowledge, herald: observation }, observation);
-  }
-
-  /** What to tell a player asking where the faire is. */
-  report(now: number): FaireReport {
-    return resolveFaire(this.#deps.schedule, this.#knowledge, now);
+  /** Where the faire is, as far as anyone has actually looked. */
+  answer(now: number): FaireAnswer {
+    return answerFaire(this.#knowledge, now);
   }
 
   async #accept(knowledge: FaireKnowledge, accepted: FaireObservation): Promise<boolean> {

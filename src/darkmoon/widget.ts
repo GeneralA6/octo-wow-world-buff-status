@@ -2,12 +2,11 @@ import type {
   ChannelMessage,
   CreateResult,
   DiscordEmbed,
-  DiscordEmbedField,
   DmResult,
 } from "../notify/discord-dm.js";
 import { humanSpan } from "../notify/format.js";
 import type { Logger } from "../logger.js";
-import type { FaireReport } from "./resolve.js";
+import type { FaireAnswer } from "./observation.js";
 import type { DarkmoonWidgetStore } from "./widget-store.js";
 
 /**
@@ -19,87 +18,48 @@ import type { DarkmoonWidgetStore } from "./widget-store.js";
  * the same message.
  *
  * The other half of keeping this channel quiet is that a render only reaches Discord when the
- * rendered TEXT changes. The faire moves four times a month and the countdown is coarse (~hourly
- * at day scale), so a five-minute refresh timer produces roughly one edit an hour while a faire is
- * running and none at all in between — instead of 288 a day.
+ * rendered TEXT changes. The board reports a look and its age, and at day scale that age barely
+ * moves — so a five-minute tick produces roughly one edit an hour, not 288 a day.
  */
 
-/** Discord embed colours: open, arriving, away. */
-const COLOUR_UP = 0x57f287;
-const COLOUR_SETTING_UP = 0xfee75c;
-const COLOUR_TRAVELLING = 0x5865f2;
+/** Discord embed colours: a current look, and one old enough to doubt. */
+const COLOUR_FRESH = 0x57f287;
+const COLOUR_STALE = 0xfee75c;
+const COLOUR_UNKNOWN = 0x4f545c;
 
 /** Where the answer came from, said plainly — the reader gets to judge it for themselves. */
-function provenance(report: FaireReport): string {
-  if (report.source === "onsite") return "seen by our own character, standing in it";
-  if (report.source === "sighting") return "seen by players in-game (PizzaWorldBuffs)";
-  switch (report.confirmedBy) {
-    case "onsite":
-      return "from the schedule — zone confirmed by our own character";
-    case "herald":
-      return "from the schedule — zone confirmed by a Darkmoon herald";
-    case "sighting":
-      return "from the schedule — zone confirmed by in-game sightings";
-    default:
-      return "from the vanilla schedule — zone not yet confirmed on this realm";
-  }
+function provenance(answer: FaireAnswer): string {
+  if (!answer.known) return "nothing seen recently on the LFT channel or by our own character";
+  return answer.source === "onsite"
+    ? `seen by our own character, standing in it (${answer.witness})`
+    : `seen in-game by players (PizzaWorldBuffs · ${answer.witness})`;
 }
 
-/** A date a player can act on, in realm-neutral terms: "Mon 5 Oct". */
-function shortDate(at: number): string {
-  return new Date(at).toLocaleDateString("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    timeZone: "UTC",
-  });
-}
-
-export function buildFaireEmbed(report: FaireReport, now: number): DiscordEmbed {
-  const where = `${report.site.zone} (${report.site.landmark})`;
-  const unsure = report.source === "calendar" && report.confirmedBy === null;
-
-  const fields: DiscordEmbedField[] = [];
-  let description: string;
-  let color: number;
-
-  if (report.phase === "up") {
-    color = COLOUR_UP;
-    const closes =
-      report.closesAt !== null
-        ? `Closes in ${humanSpan(report.closesAt - now)}`
-        : report.observation !== null
-          ? `Last seen ${humanSpan(now - report.observation.observedAt)} ago`
-          : "Open now";
-    description = `**${where}**\n${unsure ? "Should be open" : "Open now"} · ${closes}`;
-  } else if (report.phase === "setting-up") {
-    color = COLOUR_SETTING_UP;
-    const opens = report.opensAt !== null ? ` · Opens in ${humanSpan(report.opensAt - now)}` : "";
-    // Worth its own wording: the tents are there but nobody will take your tickets yet.
-    description = `**${where}**\nSetting up — not open for business yet${opens}`;
-  } else {
-    color = COLOUR_TRAVELLING;
-    const opens = report.opensAt !== null ? ` · Opens in ${humanSpan(report.opensAt - now)}` : "";
-    description = `Travelling — not in Azeroth right now.\nNext stop **${where}**${opens}`;
+export function buildFaireEmbed(answer: FaireAnswer, now: number): DiscordEmbed {
+  if (!answer.known) {
+    return {
+      title: "🎪 Darkmoon Faire",
+      description:
+        "**Location unknown**\nNobody has spotted it recently. It'll show up here as soon as anyone does.",
+      color: COLOUR_UNKNOWN,
+      footer: { text: provenance(answer) },
+      timestamp: new Date(now).toISOString(),
+    };
   }
 
-  if (report.opensAt !== null && report.closesAt !== null) {
-    fields.push({
-      name: report.phase === "travelling" ? "Next visit" : "This visit",
-      value: `${shortDate(report.opensAt)} – ${shortDate(report.closesAt - 1)}`,
-      inline: true,
-    });
-  }
-  if (report.setupAt !== null && report.phase === "travelling") {
-    fields.push({ name: "Tents go up", value: shortDate(report.setupAt), inline: true });
-  }
+  const where = `${answer.site.zone} (${answer.site.landmark})`;
+  const ago = humanSpan(now - answer.observedAt);
+  // Never predicts, so it never claims the present tense on an old look — on a realm where the
+  // faire moves weekly that is the difference between a fact and a guess.
+  const description = answer.fresh
+    ? `**${where}**\nSeen ${ago} ago`
+    : `**${where}**\nLast seen ${ago} ago — it moves weekly, so it may have moved on`;
 
   return {
     title: "🎪 Darkmoon Faire",
     description,
-    color,
-    fields,
-    footer: { text: provenance(report) },
+    color: answer.fresh ? COLOUR_FRESH : COLOUR_STALE,
+    footer: { text: provenance(answer) },
     timestamp: new Date(now).toISOString(),
   };
 }
@@ -114,7 +74,7 @@ export interface DarkmoonWidgetDeps {
   readonly channel: FaireChannel;
   readonly store: DarkmoonWidgetStore;
   /** Reads the current answer at render time. */
-  readonly report: (now: number) => FaireReport;
+  readonly answer: (now: number) => FaireAnswer;
   readonly now?: () => number;
   readonly logger: Logger;
 }
@@ -155,7 +115,7 @@ export class DarkmoonWidget {
 
   async #render(): Promise<void> {
     const now = (this.#deps.now ?? Date.now)();
-    const embed = buildFaireEmbed(this.#deps.report(now), now);
+    const embed = buildFaireEmbed(this.#deps.answer(now), now);
     // The timestamp moves every render by design, so it is excluded from the comparison — otherwise
     // nothing would ever match and the "only edit on change" saving would be zero.
     const signature = JSON.stringify({ ...embed, timestamp: undefined });

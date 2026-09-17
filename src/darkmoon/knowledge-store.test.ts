@@ -7,25 +7,23 @@ import {
   observationToDoc,
   type KnowledgeDb,
 } from "./knowledge-store.js";
-import { NO_KNOWLEDGE, type FaireKnowledge, type FaireObservation } from "./resolve.js";
+import { NO_KNOWLEDGE, type FaireKnowledge, type FaireObservation } from "./observation.js";
 
 const sighting: FaireObservation = {
   location: "mulgore",
-  windowSetupAt: Date.parse("2026-09-04T00:00:00Z"),
-  observedAt: Date.parse("2026-09-10T12:00:00Z"),
+  observedAt: Date.parse("2026-09-17T12:00:00Z"),
   source: "sighting",
   witness: "Someplayer",
 };
 
-const herald: FaireObservation = {
+const onsite: FaireObservation = {
   location: "elwynn",
-  windowSetupAt: Date.parse("2026-10-02T00:00:00Z"),
-  observedAt: Date.parse("2026-09-28T12:00:00Z"),
-  source: "herald",
-  witness: "Melnan Darkstone",
+  observedAt: Date.parse("2026-09-16T09:00:00Z"),
+  source: "onsite",
+  witness: "Silas Darkmoon",
 };
 
-const knowledge: FaireKnowledge = { onsite: null, herald, sighting };
+const knowledge: FaireKnowledge = { onsite, sighting };
 
 describe("InMemoryKnowledgeStore", () => {
   it("starts empty and returns what was saved", async () => {
@@ -41,19 +39,14 @@ describe("InMemoryKnowledgeStore", () => {
 });
 
 describe("document round-trip", () => {
-  it("survives a save/load unchanged, both halves", () => {
-    const doc = {
-      _id: "knowledge",
-      herald: observationToDoc(herald),
-      sighting: observationToDoc(sighting),
-    };
+  it("survives a save/load unchanged, both sources", () => {
+    const doc = { _id: "knowledge", onsite: observationToDoc(onsite), sighting: observationToDoc(sighting) };
     expect(docToKnowledge(doc)).toEqual(knowledge);
   });
 
-  it("reads a document with only one half recorded", () => {
-    expect(docToKnowledge({ _id: "knowledge", herald: null, sighting: observationToDoc(sighting) })).toEqual({
+  it("reads a document with only one source recorded", () => {
+    expect(docToKnowledge({ _id: "knowledge", onsite: null, sighting: observationToDoc(sighting) })).toEqual({
       onsite: null,
-      herald: null,
       sighting,
     });
   });
@@ -63,14 +56,14 @@ describe("document round-trip", () => {
     expect(docToObservation({ ...observationToDoc(sighting), location: "" })).toBeNull();
   });
 
-  it("drops an observation claiming a rank that does not exist", () => {
-    // The source decides which observation outranks which, so a forged one must not be honoured.
+  it("drops an observation claiming a source that does not exist", () => {
+    // The source decides which look is believed on a tie, so a forged one must not be honoured.
+    expect(docToObservation({ ...observationToDoc(sighting), source: "herald" })).toBeNull();
     expect(docToObservation({ ...observationToDoc(sighting), source: "gossip" })).toBeNull();
   });
 
-  it("drops an observation with unusable timestamps", () => {
+  it("drops an observation with an unusable timestamp", () => {
     expect(docToObservation({ ...observationToDoc(sighting), observedAt: NaN })).toBeNull();
-    expect(docToObservation({ ...observationToDoc(sighting), windowSetupAt: NaN })).toBeNull();
   });
 
   it("reads a missing observation as nothing known", () => {
