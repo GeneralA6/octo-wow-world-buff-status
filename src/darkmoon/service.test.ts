@@ -265,3 +265,39 @@ describe("FaireService move trail", () => {
     expect(service.answer(NOW + 1000)).toMatchObject({ location: "elwynn" });
   });
 });
+
+describe("FaireService channel write churn", () => {
+  it("does not re-record the same sighting as its age rounding drifts", async () => {
+    // Seen in production: PWB reports whole-second ages, so the same look arrives with millisecond
+    // jitter every ~10s and used to count as strictly newer each time — a Mongo write per rebroadcast.
+    const store = new InMemoryKnowledgeStore();
+    const save = vi.spyOn(store, "save");
+    const service = makeService(store);
+
+    expect(await flood(service, "PWB_DMF:10401:M-470-Jardiance", NOW)).toBe("accepted");
+    for (let i = 1; i <= 30; i += 1) {
+      const at = NOW + i * 11_000;
+      const age = Math.round((at - (NOW - 470_000)) / 1000);
+      await flood(service, `PWB_DMF:10401:M-${age}-Jardiance`, at);
+    }
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("still takes a genuinely fresher look from the same witness", async () => {
+    const service = makeService();
+    await flood(service, "PWB_DMF:10401:M-470-Jardiance", NOW);
+    expect(await flood(service, "PWB_DMF:10401:M-10-Jardiance", NOW + 60_000)).toBe("accepted");
+  });
+
+  it("always takes a new witness, and always takes a new zone", async () => {
+    const byWitness = makeService();
+    await flood(byWitness, "PWB_DMF:10401:M-60-First", NOW);
+    expect(await flood(byWitness, "PWB_DMF:10401:M-59-Second", NOW)).toBe("accepted");
+
+    const byZone = makeService(new InMemoryKnowledgeStore(), {
+      corroboration: { quorum: 3, changeCooldownMs: 0 },
+    });
+    await flood(byZone, "PWB_DMF:10401:M-60-First", NOW);
+    expect(await flood(byZone, "PWB_DMF:10401:E-59-First", NOW)).toBe("accepted");
+  });
+});

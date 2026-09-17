@@ -68,6 +68,32 @@ export interface FaireServiceDeps {
  *  the observation only needs to stay fresh enough to read as current, not to log every refresh. */
 const ONSITE_REFRESH_MS = 30 * 60_000;
 
+/**
+ * How much fresher a channel sighting must be before it is worth recording again.
+ *
+ * PizzaWorldBuffs reports an AGE in whole seconds, so `seenAt = receivedAt - age` jitters by
+ * milliseconds as the same sighting is rebroadcast — enough to look strictly newer every time, and
+ * to write the same fact to Mongo every ten seconds forever. A genuinely fresher look (someone
+ * walked past the tents again) moves it by minutes, so anything under this is the same look with
+ * rounding noise on it. A different ZONE or a different WITNESS is always taken, whatever the gap.
+ */
+const SIGHTING_REFRESH_MS = 60_000;
+
+/** Whether a channel sighting says anything the stored one does not. */
+function isWorthRecording(
+  current: FaireObservation,
+  location: FaireLocation,
+  witness: string,
+  seenAt: number,
+): boolean {
+  // Never walk the record backwards: an older look is an older look, whoever made it.
+  if (seenAt <= current.observedAt) return false;
+  // A different zone or a different pair of eyes is new information, however small the gap.
+  if (location !== current.location || witness !== current.witness) return true;
+  // Same zone, same witness: only a real gap distinguishes a fresher look from rounding noise.
+  return seenAt - current.observedAt >= SIGHTING_REFRESH_MS;
+}
+
 export class FaireService {
   readonly #deps: FaireServiceDeps;
   #knowledge: FaireKnowledge = NO_KNOWLEDGE;
@@ -118,7 +144,9 @@ export class FaireService {
 
     const seenAt = sightedAt(broadcast, receivedAt);
     const current = this.#knowledge.sighting;
-    if (current !== null && seenAt <= current.observedAt) return "counted";
+    if (current !== null && !isWorthRecording(current, broadcast.location, broadcast.witness, seenAt)) {
+      return "counted";
+    }
 
     const observation: FaireObservation = {
       location: broadcast.location,
