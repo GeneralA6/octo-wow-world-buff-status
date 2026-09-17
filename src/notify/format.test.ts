@@ -12,6 +12,7 @@ import {
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
+  humanSpan,
   formatHeadIncoming,
   humanClock,
 } from "./format.js";
@@ -240,5 +241,27 @@ describe("formatFeedbackPost", () => {
 
   it("omits the brackets when no server is given", () => {
     expect(formatFeedbackPost("Raider", "hi")).not.toContain("(");
+  });
+});
+
+describe("humanSpan", () => {
+  it("falls back to the clock below a day", () => {
+    expect(humanSpan(40 * 60_000)).toBe("40m");
+    expect(humanSpan(5 * 3_600_000)).toBe("5h");
+    expect(humanSpan(23 * 3_600_000)).toBe("23h");
+  });
+
+  it("counts whole days, with hours only when there are some", () => {
+    expect(humanSpan(86_400_000)).toBe("1d");
+    expect(humanSpan(3 * 86_400_000 + 6 * 3_600_000)).toBe("3d6h");
+    expect(humanSpan(18 * 86_400_000)).toBe("18d");
+  });
+
+  it("carries a remainder that rounds up to a full day instead of printing 24h", () => {
+    expect(humanSpan(3 * 86_400_000 + 23.9 * 3_600_000)).toBe("4d");
+  });
+
+  it("never renders a past deadline as negative", () => {
+    expect(humanSpan(-5_000)).toBe("0m");
   });
 });

@@ -14,6 +14,19 @@ export function humanClock(ms: number): string {
   return rem === 0 ? `${h}h` : `${h}h${rem}m`;
 }
 
+/**
+ * Compact duration at DAY scale: "18d", "3d6h", "5h", "40m" — for waits too long for
+ * `humanClock`, which tops out in hours and would render a fortnight as "432h".
+ */
+export function humanSpan(ms: number): string {
+  const days = Math.floor(Math.max(0, ms) / 86_400_000);
+  if (days < 1) return humanClock(ms);
+  const hours = Math.round((Math.max(0, ms) - days * 86_400_000) / 3_600_000);
+  // A remainder that rounds up to a full day belongs on the day count, not as "3d24h".
+  if (hours >= 24) return `${days + 1}d`;
+  return hours === 0 ? `${days}d` : `${days}d${hours}h`;
+}
+
 /** Human list of the capitals a fresh buff could drop in ("Stormwind or Orgrimmar"). */
 function cityList(cities: readonly Faction[]): string {
   const names = cities.map((faction) => CITY_FOR[faction]);
