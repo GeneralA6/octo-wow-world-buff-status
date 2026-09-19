@@ -142,3 +142,37 @@ describe("WhisperQueue", () => {
     expect(metrics.some((m) => /dropped stale whisper to Park/.test(m))).toBe(true);
   });
 });
+
+describe("WhisperQueue delay note", () => {
+  it("tells a subscriber their alert was late, and how late", () => {
+    vi.useFakeTimers();
+    const sent: { target: string; message: string }[] = [];
+    const queue = new WhisperQueue((target, message) => sent.push({ target, message }), 1000);
+    queue.enqueue("Raider", "Onyxia raid cleared. Buff may drop in Stormwind.", undefined, 20 * 60_000);
+    queue.enqueue("Latecomer", "Onyxia raid cleared. Buff may drop in Stormwind.", undefined, 20 * 60_000);
+    // The first goes out immediately. The realm then spam-mutes us repeatedly — 110 throttle
+    // events in 19h of production — and THAT is what stretches a broadcast to minutes.
+    for (let i = 0; i < 12; i += 1) {
+      queue.notifyThrottled();
+      vi.advanceTimersByTime(29_000);
+    }
+    vi.advanceTimersByTime(60_000);
+
+    expect(sent[0]?.message).not.toContain("late");
+    expect(sent[1]?.message).toContain("late");
+    expect(sent[1]?.message).toContain('Whisper "discord" for instant alerts.');
+    vi.useRealTimers();
+  });
+
+  it("leaves a command reply alone, however long the queue was", () => {
+    vi.useFakeTimers();
+    const sent: string[] = [];
+    const queue = new WhisperQueue((_t, m) => sent.push(m), 1000);
+    // No maxAge = not time-sensitive. "Here is the Discord link" is not wrong for being late.
+    queue.enqueue("Raider", "You're subscribed!");
+    queue.enqueue("Other", "You're subscribed!");
+    vi.advanceTimersByTime(6 * 60_000);
+    expect(sent.every((m) => !m.includes("late"))).toBe(true);
+    vi.useRealTimers();
+  });
+});

@@ -27,6 +27,22 @@ export function humanSpan(ms: number): string {
   return hours === 0 ? `${days}d` : `${days}d${hours}h`;
 }
 
+/**
+ * A note appended to a time-sensitive whisper that sat in the queue.
+ *
+ * The realm spam-mutes a burst of whispers, so the bot backs off and a broadcast to a few hundred
+ * subscribers can take minutes to drain — measured at 6-14s per whisper once the mute engages,
+ * against a configured 1.2s. A player receiving "park now" six minutes after the raid cleared
+ * deserves to know it was late and that there is a delivery route that is not rate-limited.
+ *
+ * Null under the threshold: most whispers arrive in seconds, and a note on those is noise that
+ * eats the whisper length limit for nothing.
+ */
+export function formatWhisperDelayNote(delayMs: number, thresholdMs = 60_000): string | null {
+  if (delayMs < thresholdMs) return null;
+  return ` (sent ${humanClock(delayMs)} late - lots of subscribers online. Whisper "discord" for instant alerts.)`;
+}
+
 /** Human list of the capitals a fresh buff could drop in ("Stormwind or Orgrimmar"). */
 function cityList(cities: readonly Faction[]): string {
   const names = cities.map((faction) => CITY_FOR[faction]);

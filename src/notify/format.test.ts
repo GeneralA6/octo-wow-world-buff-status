@@ -12,6 +12,7 @@ import {
   formatCapitalStatusYell,
   formatFeedbackPost,
   formatGuildWelcome,
+  formatWhisperDelayNote,
   humanSpan,
   formatHeadIncoming,
   humanClock,
@@ -284,5 +285,27 @@ describe("formatCapitalStatusYell darkmoon line", () => {
   it("keeps the raid status first — that is what the yell is for", () => {
     const yell = formatCapitalStatusYell("alliance", { number: 7, elapsedMs: 1_800_000 }, "30-50m", "Elwynn Forest");
     expect(yell.indexOf("Onyxia raid in progress")).toBeLessThan(yell.indexOf("Darkmoon"));
+  });
+});
+
+describe("formatWhisperDelayNote", () => {
+  it("says nothing for a whisper that arrived promptly", () => {
+    expect(formatWhisperDelayNote(0)).toBeNull();
+    expect(formatWhisperDelayNote(59_000)).toBeNull();
+  });
+
+  it("owns up to the delay and points at the route that is not rate-limited", () => {
+    const note = formatWhisperDelayNote(6 * 60_000);
+    expect(note).toBe(' (sent 6m late - lots of subscribers online. Whisper "discord" for instant alerts.)');
+  });
+
+  it("stays inside the whisper length limit on the longest alert it can follow", () => {
+    // Vanilla caps a whisper at 255 characters; the note is appended to an already-written alert.
+    const longest = formatBuffWhisper(
+      { kind: "raid-left", number: 42, killConfirmed: true } as never,
+      ["alliance", "horde"],
+      "30-50m",
+    );
+    expect(longest.length + (formatWhisperDelayNote(9 * 60_000) ?? "").length).toBeLessThan(255);
   });
 });

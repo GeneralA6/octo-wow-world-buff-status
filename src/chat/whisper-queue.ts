@@ -17,6 +17,7 @@
  */
 
 import type { Faction } from "../subscribers/store.js";
+import { formatWhisperDelayNote } from "../notify/format.js";
 
 export type WhisperSend = (target: string, message: string) => void;
 export type WhisperError = (error: unknown, target: string, message: string) => void;
@@ -154,7 +155,10 @@ export class WhisperQueue {
       return;
     }
     try {
-      this.#send(next.target, next.message);
+      // Time-sensitive whispers carry a maxAge; those are the alerts, and the only ones where
+      // lateness changes what the message means. A command reply is answered when it is answered.
+      const late = next.maxAgeMs !== undefined ? formatWhisperDelayNote(now - next.enqueuedAt) : null;
+      this.#send(next.target, late === null ? next.message : `${next.message}${late}`);
       this.#sentSinceActive++;
       this.#sentSinceThrottle++;
     } catch (error) {
