@@ -67,6 +67,9 @@ export interface BotConfig {
   /** Which faire site the watcher character is parked at, enabling first-hand detection of the
    *  faire from the NPCs beside it. Null = not parked at one, and the feature is off. */
   readonly darkmoonWatchLocation: FaireLocation | null;
+  /** Silence this long from a parked listener means it cannot hear the capital it is meant to
+   *  be standing in — the one failure that produces no symptom of its own. */
+  readonly listenerSilenceMs: number;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   /** Members a cohort must reach for a raid to count as forming ("about to start") — when the
@@ -413,6 +416,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
   const raidLockoutMs = intWithDefault("WOW_RAID_LOCKOUT_HOURS", 2, 1) * 60 * 60_000;
   const raidFormConfirmMs = intWithDefault("WOW_RAID_FORM_CONFIRM_MINUTES", 0, 0) * 60_000;
+  // How long a parked listener may hear NO npc chat before it is reported as deaf. Capitals are
+  // never really silent — criers and roaming vendors yell through the day — so a listener that
+  // hears nothing for hours is not where it needs to be. Generous by default: the quietest
+  // correctly-parked character measured here heard roughly one yell an hour.
+  const listenerSilenceMs = intWithDefault("WOW_LISTENER_SILENCE_HOURS", 6, 1) * 60 * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
   // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
@@ -568,6 +576,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     clientCdn,
     darkmoonCorroboration,
     darkmoonWatchLocation,
+    listenerSilenceMs,
     watchAreaId,
     watchAreaName,
     minRaidSize,

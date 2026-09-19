@@ -41,6 +41,7 @@ import {
   type Faction,
 } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
+import { SilenceWatch } from "./watcher/listener-silence.js";
 import { FaireService } from "./darkmoon/service.js";
 import { NpcWatch } from "./darkmoon/npc-watch.js";
 import { DarkmoonWidget } from "./darkmoon/widget.js";
@@ -55,6 +56,7 @@ import {
   MongoKnowledgeStore,
   type KnowledgeStore,
 } from "./darkmoon/knowledge-store.js";
+import { humanSpan } from "./notify/format.js";
 import { formatHeartbeat } from "./watcher/heartbeat.js";
 import {
   InMemoryDurationStore,
@@ -145,6 +147,10 @@ const HEAL_CHECK_COOLDOWN_MS = 5 * 60_000;
 
 /** Suppress a repeat LFT head-incoming alert for the same turn-in within this window — the channel
  *  relays/retransmits the same OB_INC many times, and a turn-in is a momentary event. */
+/** How often each listener is checked for deafness — the condition lasts hours, so this is cheap. */
+const LISTENER_SILENCE_CHECK_MS = 10 * 60_000;
+/** Quiet allowed right after logging in, before silence counts as a fault. */
+const LISTENER_SILENCE_GRACE_MS = 15 * 60_000;
 const HEAD_INCOMING_DEDUP_MS = 15 * 60_000;
 
 /** Collapse a buff yell heard by more than one same-city listener into one drop. A faction's buff
@@ -794,6 +800,8 @@ async function runListener(
   whisperPool: WhisperPool,
   /** Hears the Darkmoon heralds, who wander the capitals these listeners are parked in. */
   faire: FaireService,
+  /** Raise the alarm that a parked listener has gone deaf — it cannot report this itself. */
+  onListenerSilent: (character: string, quietFor: string) => Promise<void>,
   // Fired once this listener reaches in-world — the realm-recovery signal (see runConnection).
   onConnected: () => void,
 ): Promise<void> {
@@ -812,6 +820,12 @@ async function runListener(
   await new Promise<void>((resolve, reject) => {
     let readyTimer: NodeJS.Timeout | null = null;
     let interactTimer: NodeJS.Timeout | null = null;
+    let silenceTimer: NodeJS.Timeout | null = null;
+    // Deafness has no symptom of its own, so it gets its own watch. See watcher/listener-silence.ts.
+    const silence = new SilenceWatch(Date.now(), {
+      silenceMs: config.listenerSilenceMs,
+      graceMs: LISTENER_SILENCE_GRACE_MS,
+    });
     let settled = false;
     // "interact": accumulate the login object burst, then use the closest GameObject.
     const nearby: WorldGameObject[] = [];
@@ -825,6 +839,7 @@ async function runListener(
       settled = true;
       if (readyTimer) clearTimeout(readyTimer);
       if (interactTimer) clearTimeout(interactTimer);
+      if (silenceTimer) clearInterval(silenceTimer);
       listenerWho.unregister(listener.characterName); // stop offering this socket once it's gone
       whisperPool.unregister(listener.characterName); // and stop routing broadcasts through it
       listenerWhispers.stop();
@@ -884,6 +899,18 @@ async function runListener(
             yellSink[listener.faction] = registeredYell;
             logger.info(`${listener.characterName}: registered as ${listener.faction} yell mouthpiece`);
           }
+          // A listener that hears nothing is doing nothing, and looks perfectly healthy doing it.
+          silenceTimer = setInterval(() => {
+            const now = Date.now();
+            if (!silence.shouldReport(now)) return;
+            const quiet = humanSpan(silence.silentFor(now));
+            logger.warn(
+              `${listener.characterName}: heard no NPC chat for ${quiet} — it cannot hear the buff ` +
+                `yell from where it is standing (dead and released, or parked out of earshot)`,
+            );
+            void onListenerSilent(listener.characterName, quiet);
+          }, LISTENER_SILENCE_CHECK_MS);
+          silenceTimer.unref?.();
           if (listener.onLogin === "sit") world.sit();
           else if (listener.onLogin === "interact") {
             // The object burst trickles in over several seconds, so we WAIT for it to settle
@@ -936,6 +963,11 @@ async function runListener(
             interactTimer.unref?.();
           }
         },
+        // Any monster chat — say, yell or whisper — proves this listener is in earshot of the
+        // world. That is the only ongoing evidence a parked listener produces about the thing it
+        // exists for, since the buff yell it waits for comes once a month; watching for THAT
+        // instead could never tell a deaf listener from a quiet realm.
+        onMonsterChat: () => silence.heard(Date.now()),
         onMonsterYell: (senderName, text) => {
           const faction = matchBuffYell(text);
           // Log EVERY yell heard so a real buff yell that doesn't match the pattern is
@@ -958,9 +990,14 @@ async function runListener(
             .catch((error) => logger.error(`outreach: ${describeError(error)}`));
         },
         onSystemMessage: (text) => {
+          if (!text) return;
+          // Logged like the watcher's, which they were not: the server answers a refused action
+          // here ("you are dead", "you can't do that yet"), and a listener that silently swallows
+          // those hides the only explanation it will ever be given for why it is doing nothing.
+          logger.info(`system: ${JSON.stringify(text)}`);
           // This listener whispers too now, so the server can throttle it — back its own queue off
           // and retry, exactly as Bufftracker does.
-          if (text && isWhisperThrottle(text)) listenerWhispers.notifyThrottled();
+          if (isWhisperThrottle(text)) listenerWhispers.notifyThrottled();
         },
         onWorldObjects:
           listener.onLogin === "interact"
@@ -1767,8 +1804,25 @@ async function main(): Promise<void> {
     let backoffMs = 5_000;
     while (!shuttingDown) {
       try {
-        await runListener(config, listener, log, client, onBuff, outreach, yellSink, listenerWho, whisperPool, faire, () =>
-          announceRealmUp(listener.characterName),
+        await runListener(
+          config,
+          listener,
+          log,
+          client,
+          onBuff,
+          outreach,
+          yellSink,
+          listenerWho,
+          whisperPool,
+          faire,
+          (character, quietFor) =>
+            notifyAdmin(
+              "🔇 Listener has gone deaf",
+              `${character} has heard no NPC chat for ${quietFor}. It is still logged in, but it ` +
+                `cannot hear the buff yell from where it is standing — check whether it died and ` +
+                `released, or is parked out of earshot of the capital criers.`,
+            ),
+          () => announceRealmUp(listener.characterName),
         );
         log.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;

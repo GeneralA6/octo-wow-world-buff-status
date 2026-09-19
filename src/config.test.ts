@@ -502,3 +502,15 @@ describe("loadConfig darkmoon board channel", () => {
     );
   });
 });
+
+describe("loadConfig listener silence", () => {
+  it("defaults to reporting a listener that has heard nothing for six hours", () => {
+    expect(loadConfig({ ...minimalEnv }).listenerSilenceMs).toBe(6 * 60 * 60_000);
+  });
+
+  it("takes an override in hours", () => {
+    expect(loadConfig({ ...minimalEnv, WOW_LISTENER_SILENCE_HOURS: "2" }).listenerSilenceMs).toBe(
+      2 * 60 * 60_000,
+    );
+  });
+});
