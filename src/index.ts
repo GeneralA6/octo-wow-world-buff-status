@@ -42,6 +42,7 @@ import {
 } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
 import { SilenceWatch } from "./watcher/listener-silence.js";
+import { isSpiritHealer } from "./watcher/spirit-healer.js";
 import { FaireService } from "./darkmoon/service.js";
 import { NpcWatch } from "./darkmoon/npc-watch.js";
 import { DarkmoonWidget } from "./darkmoon/widget.js";
@@ -802,6 +803,8 @@ async function runListener(
   faire: FaireService,
   /** Raise the alarm that a parked listener has gone deaf — it cannot report this itself. */
   onListenerSilent: (character: string, quietFor: string) => Promise<void>,
+  /** Raise the alarm that a parked listener is dead at a graveyard. */
+  onListenerDead: (character: string) => Promise<void>,
   // Fired once this listener reaches in-world — the realm-recovery signal (see runConnection).
   onConnected: () => void,
 ): Promise<void> {
@@ -821,6 +824,10 @@ async function runListener(
     let readyTimer: NodeJS.Timeout | null = null;
     let interactTimer: NodeJS.Timeout | null = null;
     let silenceTimer: NodeJS.Timeout | null = null;
+    // One creature query per NPC entry for this connection; a reconnect starts fresh.
+    const npcWatch = new NpcWatch();
+    // A corpse stays a corpse until someone moves it, so the death is reported once.
+    let deadReported = false;
     // Deafness has no symptom of its own, so it gets its own watch. See watcher/listener-silence.ts.
     const silence = new SilenceWatch(Date.now(), {
       silenceMs: config.listenerSilenceMs,
@@ -968,6 +975,18 @@ async function runListener(
         // exists for, since the buff yell it waits for comes once a month; watching for THAT
         // instead could never tell a deaf listener from a quiet realm.
         onMonsterChat: () => silence.heard(Date.now()),
+        onCreatureName: (_entry, name) => {
+          if (name === null || !isSpiritHealer(name) || deadReported) return;
+          // A Spirit Healer only stands at a graveyard, and this character only reaches one by
+          // dying and releasing. Reported immediately rather than waiting out the silence window:
+          // we already know the answer, and a dead listener can neither hear nor yell.
+          deadReported = true;
+          logger.error(
+            `${listener.characterName}: a Spirit Healer is standing next to it — the character is ` +
+              `DEAD and released at a graveyard, so it can neither hear the buff yell nor yell itself`,
+          );
+          void onListenerDead(listener.characterName);
+        },
         onMonsterYell: (senderName, text) => {
           const faction = matchBuffYell(text);
           // Log EVERY yell heard so a real buff yell that doesn't match the pattern is
@@ -1000,17 +1019,24 @@ async function runListener(
           if (isWhisperThrottle(text)) listenerWhispers.notifyThrottled();
         },
         onWorldObjects:
-          listener.onLogin === "interact"
-            ? (raw) => {
-                if (interacted) return;
-                // parseUpdateObject returns partial results (never throws) on a shape
-                // it can't decode, so we keep whatever GameObjects it read. Pass our own
-                // GUID so `self` is OUR position, never a bystander's in the same packet.
-                const parsed = parseUpdateObject(raw, world.selfGuid ?? undefined);
-                for (const go of parsed.gameObjects) nearby.push(go);
-                if (parsed.self) selfPos = parsed.self;
-              }
-            : undefined,
+          (raw) => {
+            // parseUpdateObject returns partial results (never throws) on a shape it cannot
+            // decode, so we keep whatever it read. Pass our own GUID so `self` is OUR position,
+            // never a bystander's in the same packet.
+            const parsed = parseUpdateObject(raw, world.selfGuid ?? undefined);
+            if (listener.onLogin === "interact" && !interacted) {
+              for (const go of parsed.gameObjects) nearby.push(go);
+              if (parsed.self) selfPos = parsed.self;
+            }
+            // Ask what the unfamiliar neighbours are called. One query per entry for the whole
+            // session, so a settled character soon asks nothing — but a Spirit Healer turning up
+            // beside it is the fastest proof available that it has died and released.
+            const byEntry = new Map(parsed.units.map((unit) => [unit.entry, unit.guid]));
+            for (const entry of npcWatch.take(byEntry.keys())) {
+              const guid = byEntry.get(entry);
+              if (guid !== undefined) world.queryCreature(entry, guid);
+            }
+          },
         onError: (error) => {
           world.close();
           settle(error);
@@ -1821,6 +1847,13 @@ async function main(): Promise<void> {
               `${character} has heard no NPC chat for ${quietFor}. It is still logged in, but it ` +
                 `cannot hear the buff yell from where it is standing — check whether it died and ` +
                 `released, or is parked out of earshot of the capital criers.`,
+            ),
+          (character) =>
+            notifyAdmin(
+              "💀 Listener is dead",
+              `${character} is standing at a graveyard next to a Spirit Healer. It died and ` +
+                `released, so it can neither hear the buff yell nor yell the status board. ` +
+                `Resurrect it and walk it back to where the head hangs.`,
             ),
           () => announceRealmUp(listener.characterName),
         );
