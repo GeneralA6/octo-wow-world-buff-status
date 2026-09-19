@@ -269,7 +269,7 @@ describe("humanSpan", () => {
 describe("formatCapitalStatusYell darkmoon line", () => {
   it("promotes the faire when it has been seen recently", () => {
     const yell = formatCapitalStatusYell("horde", null, undefined, "Mulgore");
-    expect(yell).toContain("Darkmoon Faire is in Mulgore.");
+    expect(yell).toContain("[Darkmoon Faire] is in Mulgore.");
     // Slotted before the call to action, so the yell still ends on what to whisper.
     expect(yell.indexOf("Darkmoon Faire")).toBeLessThan(yell.indexOf("Whisper"));
   });

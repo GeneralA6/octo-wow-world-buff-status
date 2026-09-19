@@ -226,7 +226,9 @@ export function formatCapitalStatusYell(
   } else {
     parts.push(`No Onyxia raid right now. The Rallying Cry buff drops when a raid clears.`);
   }
-  if (faireZone) parts.push(`Darkmoon Faire is in ${faireZone}.`);
+  // Bracketed like the [Onyxia] tag: in a busy capital the yell scrolls past, and the tag is what
+  // a reader picks out. A second topic in the same yell needs the same handle.
+  if (faireZone) parts.push(`[Darkmoon Faire] is in ${faireZone}.`);
   parts.push(`Whisper "subscribe" for pings, "discord" for discord notifications.`);
   return `[Onyxia] ${parts.join(" ")}`;
 }
