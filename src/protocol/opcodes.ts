@@ -63,6 +63,17 @@ export enum WorldOpcode {
   SMSG_UPDATE_OBJECT = 0xa9,
   /** Same, zlib-compressed (u32 uncompressed length + deflate); common on login. */
   SMSG_COMPRESSED_UPDATE_OBJECT = 0x1f6,
+  // The combat log — every hit a nearby unit takes. Stock 1.12 values; layouts in combat-log.ts.
+  /** A unit started swinging at another (u64 attacker, u64 victim). */
+  SMSG_ATTACKSTART = 0x143,
+  /** One melee swing landed (or missed). */
+  SMSG_ATTACKERSTATEUPDATE = 0x14a,
+  /** Damage from the world rather than a unit: falling, lava, drowning, fatigue. */
+  SMSG_ENVIRONMENTALDAMAGELOG = 0x1fc,
+  /** One tick of a damage-over-time aura. */
+  SMSG_PERIODICAURALOG = 0x24e,
+  /** A direct spell hit. */
+  SMSG_SPELLNONMELEEDAMAGELOG = 0x250,
   /** Use/interact with a GameObject (e.g. sit on a bench); body is the u64 guid. */
   CMSG_GAMEOBJ_USE = 0xb1,
   /** Change stand state (the /sit, /stand emotes); body is a u32 state. */
