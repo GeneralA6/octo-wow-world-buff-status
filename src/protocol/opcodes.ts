@@ -61,6 +61,8 @@ export enum WorldOpcode {
   CMSG_JOIN_CHANNEL = 0x97,
   /** Nearby object create/update stream — where a GameObject's guid+entry arrive. */
   SMSG_UPDATE_OBJECT = 0xa9,
+  /** An object left the world — a despawn, a dismissed pet (body: u64 guid). */
+  SMSG_DESTROY_OBJECT = 0xaa,
   /** Same, zlib-compressed (u32 uncompressed length + deflate); common on login. */
   SMSG_COMPRESSED_UPDATE_OBJECT = 0x1f6,
   // The combat log — every hit a nearby unit takes. Stock 1.12 values; layouts in combat-log.ts.

@@ -711,6 +711,34 @@ describe("WorldClient (against a scripted mock server)", () => {
       client.close();
     });
 
+    it("routes a destroyed object's guid to onObjectDestroyed", async () => {
+      const destroyed: bigint[] = [];
+      const { socket, client } = await connect({ onObjectDestroyed: (guid) => destroyed.push(guid) });
+
+      socket.pushPacket(WorldOpcode.SMSG_DESTROY_OBJECT, new PacketWriter().u64LE(0xf130_0000_5900_0abcn).toBuffer());
+      await settle();
+      expect(destroyed).toEqual([0xf130_0000_5900_0abcn]);
+
+      client.close();
+    });
+
+    it("drops a destroy it cannot read without ending the session", async () => {
+      const destroyed: bigint[] = [];
+      const errors: Error[] = [];
+      const { socket, client } = await connect({
+        onObjectDestroyed: (guid) => destroyed.push(guid),
+        onError: (error) => errors.push(error),
+      });
+
+      socket.pushPacket(WorldOpcode.SMSG_DESTROY_OBJECT, Buffer.from([0x01, 0x02]));
+      await settle();
+      expect(destroyed).toEqual([]);
+      expect(errors).toEqual([]);
+      expect(client.isReady).toBe(true);
+
+      client.close();
+    });
+
     it("drops a combat log line it cannot read without ending the session", async () => {
       const events: CombatEvent[] = [];
       const errors: Error[] = [];

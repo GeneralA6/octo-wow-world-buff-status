@@ -34,6 +34,7 @@ import {
 } from "../protocol/combat-log.js";
 import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.js";
 import { buildCreatureQuery, parseCreatureQueryResponse } from "../protocol/creature-query.js";
+import { parseDestroyObject } from "../protocol/update-object.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
 import {
@@ -98,6 +99,8 @@ export interface WorldClientHandlers {
   onCombat?: (event: CombatEvent) => void;
   /** A decompressed nearby-object update block, for parsing GameObjects (e.g. a bench). */
   onWorldObjects?: (body: Buffer) => void;
+  /** An object nearby was removed from the world (despawned, dismissed) rather than walking out of view. */
+  onObjectDestroyed?: (guid: bigint) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
   /** Server sent warden data — anticheat is active and unhandled. */
@@ -395,6 +398,9 @@ export class WorldClient {
         case WorldOpcode.SMSG_COMPRESSED_UPDATE_OBJECT:
           this.#handleWorldObjects(body, true);
           break;
+        case WorldOpcode.SMSG_DESTROY_OBJECT:
+          this.#handleDestroyObject(body);
+          break;
         case WorldOpcode.SMSG_CREATURE_QUERY_RESPONSE:
           this.#handleCreatureQueryResponse(body);
           break;
@@ -586,6 +592,14 @@ export class WorldClient {
       this.#handlers.onWorldObjects?.(raw);
     } catch (error) {
       this.#logger.debug(`world: could not read object update: ${(error as Error).message}`);
+    }
+  }
+
+  #handleDestroyObject(body: Buffer): void {
+    try {
+      this.#handlers.onObjectDestroyed?.(parseDestroyObject(body));
+    } catch (error) {
+      this.#logger.debug(`world: could not read object destroy: ${(error as Error).message}`);
     }
   }
 
