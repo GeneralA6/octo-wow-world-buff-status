@@ -43,6 +43,7 @@ import {
 import { matchBuffYell } from "./watcher/buff-yell.js";
 import { SilenceWatch } from "./watcher/listener-silence.js";
 import { isSpiritHealer } from "./watcher/spirit-healer.js";
+import { ListenerDeathWatch } from "./watcher/listener-death-watch.js";
 import { FaireService } from "./darkmoon/service.js";
 import { NpcWatch } from "./darkmoon/npc-watch.js";
 import { DarkmoonWidget } from "./darkmoon/widget.js";
@@ -152,6 +153,10 @@ const HEAL_CHECK_COOLDOWN_MS = 5 * 60_000;
 const LISTENER_SILENCE_CHECK_MS = 10 * 60_000;
 /** Quiet allowed right after logging in, before silence counts as a fault. */
 const LISTENER_SILENCE_GRACE_MS = 15 * 60_000;
+/** How much of the lead-up to a listener's death its report covers. */
+const LISTENER_DEATH_WINDOW_MS = 30_000;
+/** Wait this long after a death before reporting it, so attackers' names can resolve. */
+const LISTENER_DEATH_REPORT_DELAY_MS = 2_000;
 const HEAD_INCOMING_DEDUP_MS = 15 * 60_000;
 
 /** Collapse a buff yell heard by more than one same-city listener into one drop. A faction's buff
@@ -833,6 +838,22 @@ async function runListener(
       silenceMs: config.listenerSilenceMs,
       graceMs: LISTENER_SILENCE_GRACE_MS,
     });
+    // What killed it, if it dies while we are watching. Its callbacks reach `world`, created below —
+    // they only run once packets arrive. Nothing is logged unless the character dies.
+    const deathWatch = new ListenerDeathWatch(
+      {
+        selfGuid: () => world.selfGuid,
+        playerName: (guid) => world.playerName(guid),
+        queryName: (guid) => world.queryName(guid),
+        queryCreature: (entry, guid) => {
+          for (const fresh of npcWatch.take([entry])) world.queryCreature(fresh, guid);
+        },
+        report: (lines) => {
+          for (const line of lines) logger.error(`${listener.characterName}: ${line}`);
+        },
+      },
+      { windowMs: LISTENER_DEATH_WINDOW_MS, reportDelayMs: LISTENER_DEATH_REPORT_DELAY_MS },
+    );
     let settled = false;
     // "interact": accumulate the login object burst, then use the closest GameObject.
     const nearby: WorldGameObject[] = [];
@@ -847,6 +868,7 @@ async function runListener(
       if (readyTimer) clearTimeout(readyTimer);
       if (interactTimer) clearTimeout(interactTimer);
       if (silenceTimer) clearInterval(silenceTimer);
+      deathWatch.dispose();
       listenerWho.unregister(listener.characterName); // stop offering this socket once it's gone
       whisperPool.unregister(listener.characterName); // and stop routing broadcasts through it
       listenerWhispers.stop();
@@ -975,7 +997,8 @@ async function runListener(
         // exists for, since the buff yell it waits for comes once a month; watching for THAT
         // instead could never tell a deaf listener from a quiet realm.
         onMonsterChat: () => silence.heard(Date.now()),
-        onCreatureName: (_entry, name) => {
+        onCreatureName: (entry, name) => {
+          deathWatch.creatureName(entry, name);
           if (name === null || !isSpiritHealer(name) || deadReported) return;
           // A Spirit Healer only stands at a graveyard, and this character only reaches one by
           // dying and releasing. Reported immediately rather than waiting out the silence window:
@@ -1008,6 +1031,8 @@ async function runListener(
             .onListenerContact(sender, text, listener.faction)
             .catch((error) => logger.error(`outreach: ${describeError(error)}`));
         },
+        onCombat: (event) => deathWatch.combat(event),
+        onPlayerChat: (chat) => deathWatch.chat(chat),
         onSystemMessage: (text) => {
           if (!text) return;
           // Logged like the watcher's, which they were not: the server answers a refused action
@@ -1024,6 +1049,7 @@ async function runListener(
             // decode, so we keep whatever it read. Pass our own GUID so `self` is OUR position,
             // never a bystander's in the same packet.
             const parsed = parseUpdateObject(raw, world.selfGuid ?? undefined);
+            if (parsed.selfHealth !== null) deathWatch.health(parsed.selfHealth);
             if (listener.onLogin === "interact" && !interacted) {
               for (const go of parsed.gameObjects) nearby.push(go);
               if (parsed.self) selfPos = parsed.self;
