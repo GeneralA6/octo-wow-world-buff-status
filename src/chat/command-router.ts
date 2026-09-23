@@ -2,6 +2,7 @@ import {
   DEFAULT_FACTIONS,
   isFaction,
   needsFactionResolution,
+  subscriberKey,
   type Faction,
   type SubscriberStore,
 } from "../subscribers/store.js";
@@ -87,7 +88,18 @@ export interface CommandDeps {
   readonly faireAnswer?: () => FaireAnswer;
   /** Injectable clock, so the faire answer's "seen 4m ago" is testable. Defaults to Date.now. */
   readonly now?: () => number;
+  /** Whether a player is on the wall of shame for killing a bot listener. The bot does nothing for
+   *  them — no command, no subscription — and only tells them why. Undefined = nobody is. */
+  readonly isShunned?: (name: string) => boolean;
 }
+
+/** What a player on the wall of shame is told, instead of an answer. */
+export const SHUNNED_REPLY =
+  "You killed one of my listeners, so you're on the wall of shame. I won't answer you or send you buff alerts anymore.";
+
+/** A shunned player hears the refusal at most this often — however much they whisper, the bot
+ *  does not keep talking to them. */
+const SHUNNED_REPLY_INTERVAL_MS = 24 * 60 * 60_000;
 
 export class CommandRouter {
   readonly #deps: CommandDeps;
@@ -100,6 +112,8 @@ export class CommandRouter {
   // The watcher registers a /who that RESOLVES a player's faction — used to tailor the
   // status to a non-subscriber's side. Null = detection unavailable (falls back to both).
   #factionDetect: ((name: string) => Promise<Faction | null>) | null = null;
+  /** When each shunned player was last told why (by name key), so the refusal is not repeated. */
+  readonly #refusedAt = new Map<string, number>();
 
   constructor(deps: CommandDeps) {
     this.#deps = deps;
@@ -128,6 +142,8 @@ export class CommandRouter {
    * skip the /who; null means fall back to a lookup.
    */
   async handle(sender: string, text: string, sourceFaction: Faction | null = null): Promise<string[]> {
+    // Before anything else — a player who killed a listener gets nothing done for them.
+    if (this.#deps.isShunned?.(sender)) return this.#refuse(sender);
     // Retroactively resolve a both-faction subscriber's side from the listener they came through,
     // before answering — so the reply (and any alerts) reflect their real side from now on.
     await this.#reResolveFaction(sender, sourceFaction);
@@ -206,6 +222,16 @@ export class CommandRouter {
         return [...(await this.#status(sender, sourceFaction)), `"help" for more.`];
       }
     }
+  }
+
+  /** A player on the wall of shame: told why once a day, and otherwise met with silence. */
+  #refuse(sender: string): string[] {
+    const now = (this.#deps.now ?? Date.now)();
+    const key = subscriberKey(sender);
+    const last = this.#refusedAt.get(key);
+    if (last !== undefined && now - last < SHUNNED_REPLY_INTERVAL_MS) return [];
+    this.#refusedAt.set(key, now);
+    return [SHUNNED_REPLY];
   }
 
   /** Live-state query for a player: what's raiding the lair now (and how long), and when the

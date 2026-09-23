@@ -55,15 +55,17 @@ describe("recruitingLine", () => {
 });
 
 describe("Outreach", () => {
-  function make(cfg = config, subscribed: string[] = []) {
+  function make(cfg = config, subscribed: string[] = [], shunned: string[] = []) {
     const whispers: { to: string; msg: string }[] = [];
     const invites: string[] = [];
     const routed: { sender: string; text: string }[] = [];
     const hints: (Faction | null)[] = [];
     const subs = new Set(subscribed.map((n) => n.toLowerCase()));
+    const outcasts = new Set(shunned.map((n) => n.toLowerCase()));
     const outreach = new Outreach(
       cfg,
       async (name) => subs.has(name.toLowerCase()),
+      (name) => outcasts.has(name.toLowerCase()),
       new InMemoryIntroStore(),
       silentLogger,
     );
@@ -151,7 +153,7 @@ describe("Outreach", () => {
   it("does nothing while the watcher channel is unavailable, then works once it is", async () => {
     const whispers: string[] = [];
     const routed: string[] = [];
-    const outreach = new Outreach(config, async () => false, new InMemoryIntroStore(), silentLogger);
+    const outreach = new Outreach(config, async () => false, () => false, new InMemoryIntroStore(), silentLogger);
     outreach.setHandler(async (_s, t) => {
       routed.push(t);
       return ["ok"];
@@ -183,6 +185,14 @@ describe("Outreach", () => {
   it("does not invite when disabled", async () => {
     const { outreach, invites } = make({ ...config, guildInviteEnabled: false });
     await outreach.onListenerContact("Raider", "hi");
+    expect(invites).toEqual([]);
+  });
+
+  it("never greets or invites a player on the wall of shame — only the engine's answer goes back", async () => {
+    const { outreach, whispers, invites, routed } = make({ ...config, guildInviteEnabled: true }, [], ["Ganker"]);
+    await outreach.onListenerContact("Ganker", "subscribe", "horde");
+    expect(routed).toEqual([{ sender: "Ganker", text: "subscribe" }]); // the engine refuses them
+    expect(whispers.map((w) => w.msg)).toEqual(["reply to subscribe"]); // no intro, no recruiting line
     expect(invites).toEqual([]);
   });
 });

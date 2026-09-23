@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
 import type { ActiveRaid } from "../watcher/raid-events.js";
-import { CommandRouter, isSubscribeRequest, type BuffCooldown } from "./command-router.js";
+import { CommandRouter, isSubscribeRequest, SHUNNED_REPLY, type BuffCooldown } from "./command-router.js";
 import { FAIRE_SITES } from "../darkmoon/location.js";
 import type { FaireAnswer } from "../darkmoon/observation.js";
 
@@ -13,6 +13,7 @@ function deps(
     buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
     faireAnswer?: () => FaireAnswer;
     now?: () => number;
+    isShunned?: (name: string) => boolean;
   } = {},
 ) {
   const store = new InMemorySubscriberStore();
@@ -27,6 +28,7 @@ function deps(
     buffCooldowns: opts.buffCooldowns,
     faireAnswer: opts.faireAnswer,
     now: opts.now,
+    isShunned: opts.isShunned,
     areaName: "Onyxia's Lair",
     guildName: "Rage Quit",
     community: "OctoWoW",
@@ -462,5 +464,40 @@ describe("CommandRouter darkmoon", () => {
   it("admits it does not know, rather than naming a zone", async () => {
     const { router } = faireDeps({ known: false });
     expect((await router.handle("Raider", "darkmoon"))[0]).toMatch(/don.t know where/);
+  });
+});
+
+describe("CommandRouter and a player on the wall of shame", () => {
+  const shunned = (name: string): boolean => name.toLowerCase() === "ganker";
+
+  it("refuses every command, and says why", async () => {
+    for (const text of ["subscribe", "sign me up", "discord", "status", "help", "invite", "feedback let me back", "hi"]) {
+      const { router, store, subscribed, feedback } = deps({ isShunned: shunned, now: () => 0 });
+      expect(await router.handle("Ganker", text)).toEqual([SHUNNED_REPLY]);
+      expect(await store.has("Ganker")).toBe(false);
+      expect(subscribed).toEqual([]);
+      expect(feedback).toEqual([]);
+    }
+  });
+
+  it("says it once a day, and nothing in between", async () => {
+    let now = 0;
+    const { router } = deps({ isShunned: shunned, now: () => now });
+    expect(await router.handle("Ganker", "subscribe")).toEqual([SHUNNED_REPLY]);
+    now += 60_000;
+    expect(await router.handle("Ganker", "subscribe")).toEqual([]);
+    expect(await router.handle("Ganker", "status")).toEqual([]);
+    now += 24 * 60 * 60_000;
+    expect(await router.handle("Ganker", "status")).toEqual([SHUNNED_REPLY]);
+  });
+
+  it("serves everyone else as before", async () => {
+    const { router, store } = deps({ isShunned: shunned, now: () => 0 });
+    expect((await router.handle("Raider", "subscribe"))[0]).toMatch(/subscribed/i);
+    expect(await store.has("Raider")).toBe(true);
+  });
+
+  it("fits the refusal in one whisper", () => {
+    expect(SHUNNED_REPLY.length).toBeLessThanOrEqual(255);
   });
 });

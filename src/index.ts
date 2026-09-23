@@ -1612,6 +1612,8 @@ async function main(): Promise<void> {
     onFeedback,
     onSubscribe: (name) =>
       void userLedger.record(name).catch((error) => logger.debug(`users: record failed (${describeError(error)})`)),
+    // A player who killed a listener is refused everything, whether they whisper Bufftracker or a listener.
+    isShunned: (name) => shameList.has(name),
   });
   const outreach = new Outreach(
     {
@@ -1623,6 +1625,8 @@ async function main(): Promise<void> {
     },
     // Introduce Bufftracker to anyone who isn't a subscriber yet — once per player (introStore).
     (name) => store.has(name),
+    // ...unless they killed a listener: no greeting, no guild invite.
+    (name) => shameList.has(name),
     introStore,
     logger,
   );
@@ -1912,6 +1916,12 @@ async function main(): Promise<void> {
     if (!added) return;
     logger.warn(`shame list: ${culprit.name} killed ${character} and is now on the wall of shame`);
     void wallOfShame?.show(shameList.names);
+    // No more buff alerts either: the subscription goes, and the router refuses a new one.
+    const unsubscribed = await store.remove(culprit.name).catch((error: unknown) => {
+      logger.error(`shame list: could not unsubscribe ${culprit.name} (${describeError(error)})`);
+      return false;
+    });
+    if (unsubscribed) logger.info(`shame list: unsubscribed ${culprit.name}`);
   };
 
   const watcherLog = prefixed(logger, config.characterName);

@@ -23,6 +23,8 @@ export type GuildInviteFn = (target: string) => void;
 export type HandleFn = (sender: string, text: string, sourceFaction: Faction | null) => Promise<string[]>;
 /** Whether a player is already a subscriber — subscribers are onboarded, so they skip the intro. */
 export type IsSubscribedFn = (name: string) => Promise<boolean>;
+/** Whether a player is on the wall of shame for killing a bot listener — never greeted or invited. */
+export type IsShunnedFn = (name: string) => boolean;
 
 /** Bufftracker's one-time self-introduction to a player who first contacts a listener: who
  *  it is, who runs it (the guild, for the community), that the guild is recruiting, and how to
@@ -58,7 +60,8 @@ export function recruitingLine(config: OutreachConfig): string {
  * and it works, and a player is never left without a reply. The FIRST time a not-yet-subscribed
  * player reaches a listener, Bufftracker also introduces itself (identity + attribution +
  * recruiting) and, if guild invites are enabled, sends a guild invite — both once, tracked in
- * the `IntroStore`. Only acts while the watcher is available.
+ * the `IntroStore`. A player on the wall of shame gets neither. Only acts while the watcher is
+ * available.
  */
 export class Outreach {
   #whisper: WhisperFn | null = null;
@@ -66,12 +69,20 @@ export class Outreach {
   #handle: HandleFn | null = null;
   readonly #config: OutreachConfig;
   readonly #isSubscribed: IsSubscribedFn;
+  readonly #isShunned: IsShunnedFn;
   readonly #introStore: IntroStore;
   readonly #logger: Logger;
 
-  constructor(config: OutreachConfig, isSubscribed: IsSubscribedFn, introStore: IntroStore, logger: Logger) {
+  constructor(
+    config: OutreachConfig,
+    isSubscribed: IsSubscribedFn,
+    isShunned: IsShunnedFn,
+    introStore: IntroStore,
+    logger: Logger,
+  ) {
     this.#config = config;
     this.#isSubscribed = isSubscribed;
+    this.#isShunned = isShunned;
     this.#introStore = introStore;
     this.#logger = logger;
   }
@@ -99,8 +110,12 @@ export class Outreach {
       return;
     }
     // The FIRST time a not-yet-subscribed player reaches us (once, not every message —
-    // `introduceOnce` is atomic so back-to-back whispers can't double-send):
-    const firstContact = !(await this.#isSubscribed(playerName)) && (await this.#introStore.introduceOnce(playerName));
+    // `introduceOnce` is atomic so back-to-back whispers can't double-send). A player on the wall of
+    // shame is never greeted or invited; the command engine tells them why.
+    const firstContact =
+      !this.#isShunned(playerName) &&
+      !(await this.#isSubscribed(playerName)) &&
+      (await this.#introStore.introduceOnce(playerName));
     const subscribing = isSubscribeRequest(text);
 
     // ANSWER FIRST. Their message goes to the command engine and the reply is whispered before any
