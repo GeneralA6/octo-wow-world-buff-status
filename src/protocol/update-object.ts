@@ -1,4 +1,5 @@
 import { PacketReader } from "../net/byte-buffer.js";
+import { unitRef } from "./guid.js";
 
 /**
  * Parse an SMSG_UPDATE_OBJECT block (already decompressed) far enough to pull out
@@ -11,6 +12,8 @@ import { PacketReader } from "../net/byte-buffer.js";
  *       CREATE(2)/CREATE2(3): u8 objectType, u8 updateFlags, movementBlock, valuesBlock
  *       VALUES(0): valuesBlock ;  MOVEMENT(1): movementBlock
  *       OUT_OF_RANGE(4)/NEAR(5): u32 n, n packedGuids
+ *
+ * Units also report who they answer to (see unit-owner.ts), and which of them left view.
  *
  * We decode only what we need. A MOVING unit (LIVING with non-zero movement flags) has
  * a variable-length block we don't decode, so hitting one throws — and the caller keeps
@@ -44,11 +47,34 @@ export interface WorldObjects {
   /** Our own current health, when this block carried it (a create, or a values update after a
    *  hit). Only reported when the caller names our GUID. Zero means we just died. */
   readonly selfHealth: number | null;
+  /** What each unit block said about the unit's owner, and which units left view — in block order,
+   *  for a `UnitOwnerTable` to apply. */
+  readonly ownerChanges: UnitOwnerChange[];
 }
+
+/** A unit block's word on who the unit answers to, or a unit leaving view. */
+export type UnitOwnerChange =
+  | {
+      /** A create block carries every non-zero field, so an owner field it lacks is zero; a values
+       *  block carries only what changed. */
+      readonly kind: "create" | "values";
+      readonly guid: bigint;
+      /** The owner-field words the block carried, by field index. */
+      readonly words: ReadonlyMap<number, number>;
+    }
+  | { readonly kind: "out-of-range"; readonly guid: bigint };
 
 // Values-block field indices (1.12).
 const OBJECT_FIELD_ENTRY = 3;
 const UNIT_FIELD_HEALTH = 22;
+// A unit's owners — each a 64-bit GUID over two words, low word first.
+/** Who holds it by a charm: Mind Control, Enslave Demon, a warlock's hold on its Inferno. */
+export const UNIT_FIELD_CHARMEDBY = 10;
+/** Whose pet or totem it is. */
+export const UNIT_FIELD_SUMMONEDBY = 12;
+/** Who made it: a guardian's caster. */
+export const UNIT_FIELD_CREATEDBY = 14;
+const OWNER_FIELDS_END = UNIT_FIELD_CREATEDBY + 2;
 
 const OBJTYPE_UNIT = 3;
 const OBJTYPE_PLAYER = 4;
@@ -92,6 +118,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   const units: WorldUnit[] = [];
   let self: WorldPoint | null = null;
   let selfHealth: number | null = null;
+  const ownerChanges: UnitOwnerChange[] = [];
   const isSelf = (guid: bigint): boolean => selfGuid !== undefined && guid === selfGuid;
 
   // If a block turns out to be a shape we don't decode (or the packet is truncated),
@@ -101,7 +128,12 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
       const updateType = reader.u8();
       if (updateType === UPDATETYPE_OUT_OF_RANGE || updateType === UPDATETYPE_NEAR) {
         const n = reader.u32LE();
-        for (let j = 0; j < n; j += 1) reader.packedGuid();
+        for (let j = 0; j < n; j += 1) {
+          const guid = reader.packedGuid();
+          if (updateType === UPDATETYPE_OUT_OF_RANGE && isUnitGuid(guid)) {
+            ownerChanges.push({ kind: "out-of-range", guid });
+          }
+        }
         continue;
       }
       const guid = reader.packedGuid();
@@ -109,14 +141,21 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         const objType = reader.u8();
         const flags = reader.u8();
         const pos = readMovement(reader, flags);
-        const { entry, health } = readValues(reader);
+        const { entry, health, ownerWords } = readValues(reader);
         if (isSelf(guid) && health !== null) selfHealth = health;
         if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
         if (objType === OBJTYPE_UNIT && entry > 0) units.push({ guid, entry });
         if (objType === OBJTYPE_PLAYER && pos && (selfGuid === undefined || guid === selfGuid)) self = pos;
+        // Every unit's create goes through, owner or not: it also clears whatever an earlier sighting left.
+        if (objType === OBJTYPE_UNIT || objType === OBJTYPE_PLAYER) {
+          ownerChanges.push({ kind: "create", guid, words: ownerWords });
+        }
       } else if (updateType === UPDATETYPE_VALUES) {
-        const { health } = readValues(reader);
+        const { health, ownerWords } = readValues(reader);
         if (isSelf(guid) && health !== null) selfHealth = health;
+        // A values block does not say what it updates, and a GameObject's same indices hold its
+        // rotation — so only a unit's GUID makes these words owners.
+        if (ownerWords.size > 0 && isUnitGuid(guid)) ownerChanges.push({ kind: "values", guid, words: ownerWords });
       } else if (updateType === UPDATETYPE_MOVEMENT) {
         readMovement(reader, reader.u8());
       } else {
@@ -126,7 +165,17 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   } catch {
     // reader ran off the end of a block we mis-sized — keep the objects read so far.
   }
-  return { gameObjects, units, self, selfHealth };
+  return { gameObjects, units, self, selfHealth, ownerChanges };
+}
+
+/** Whether a GUID names a unit — a player, creature or pet — rather than a GameObject or item. */
+function isUnitGuid(guid: bigint): boolean {
+  return unitRef(guid).kind !== "other";
+}
+
+/** The GUID an SMSG_DESTROY_OBJECT removes from view (body: u64 guid, not packed). */
+export function parseDestroyObject(body: Buffer): bigint {
+  return new PacketReader(body).u64LE();
 }
 
 function readMovement(reader: PacketReader, flags: number): WorldPoint | null {
@@ -180,6 +229,8 @@ interface ValueFields {
   readonly entry: number;
   /** UNIT_FIELD_HEALTH, or null when the block did not carry it. */
   readonly health: number | null;
+  /** The words at the unit owner indices, by index — meaningful only when the block is a unit's. */
+  readonly ownerWords: Map<number, number>;
 }
 
 /** Read a values block, keeping the few fields we act on. */
@@ -189,14 +240,16 @@ function readValues(reader: PacketReader): ValueFields {
   for (let i = 0; i < blockCount; i += 1) mask.push(reader.u32LE());
   let entry = 0;
   let health: number | null = null;
+  const ownerWords = new Map<number, number>();
   for (let idx = 0; idx < blockCount * 32; idx += 1) {
     if (((mask[idx >>> 5] ?? 0) >>> (idx & 31)) & 1) {
       const value = reader.u32LE();
       if (idx === OBJECT_FIELD_ENTRY) entry = value;
       else if (idx === UNIT_FIELD_HEALTH) health = value;
+      else if (idx >= UNIT_FIELD_CHARMEDBY && idx < OWNER_FIELDS_END) ownerWords.set(idx, value);
     }
   }
-  return { entry, health };
+  return { entry, health, ownerWords };
 }
 
 /** The GameObject nearest a point (by squared distance), or null if there are none. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PacketWriter } from "../net/byte-buffer.js";
-import { nearestGameObject, parseUpdateObject, type WorldGameObject } from "./update-object.js";
+import { nearestGameObject, parseDestroyObject, parseUpdateObject, type WorldGameObject } from "./update-object.js";
 
 function packGuid(w: PacketWriter, guid: bigint): void {
   let mask = 0;
@@ -135,6 +135,79 @@ describe("parseUpdateObject self health", () => {
   it("reports nothing without our guid, or when no block carried our health", () => {
     expect(parseUpdateObject(packet((w) => healthUpdate(w, 7n, 0), 1)).selfHealth).toBeNull();
     expect(parseUpdateObject(packet((w) => healthUpdate(w, 9n, 0), 1), 7n).selfHealth).toBeNull();
+  });
+});
+
+describe("parseUpdateObject unit owners", () => {
+  const WARLOCK = 0x1234n;
+  const INFERNAL = 0xf130_0000_5900_0abcn; // creature entry 89
+  const BENCH = 0xf110_0000_5f4d_0001n; // a GameObject
+
+  /** A values block carrying the given fields, which must all sit in the first 32. */
+  function values(w: PacketWriter, fields: readonly (readonly [number, number])[]): void {
+    let mask = 0;
+    for (const [index] of fields) mask |= 1 << index;
+    w.u8(1).u32LE(mask >>> 0);
+    for (const [, value] of [...fields].sort(([a], [b]) => a - b)) w.u32LE(value);
+  }
+
+  function packet(count: number, write: (w: PacketWriter) => void): Buffer {
+    const w = new PacketWriter().u32LE(count).u8(0);
+    write(w);
+    return w.toBuffer();
+  }
+
+  it("reads who holds a unit from the block that creates it", () => {
+    const body = packet(1, (w) => {
+      w.u8(2).packedGuid(INFERNAL).u8(3).u8(0x40).f32LE(1).f32LE(2).f32LE(3).f32LE(0);
+      values(w, [[3, 89], [10, 0x1234], [22, 3000]]); // entry, CHARMEDBY low word, health
+    });
+    expect(parseUpdateObject(body).ownerChanges).toEqual([
+      { kind: "create", guid: INFERNAL, words: new Map([[10, 0x1234]]) },
+    ]);
+  });
+
+  it("passes on every unit's create, owned or not, but no GameObject's", () => {
+    const body = packet(2, (w) => {
+      w.u8(2).packedGuid(WARLOCK).u8(4).u8(0x40).f32LE(1).f32LE(2).f32LE(3).f32LE(0);
+      values(w, [[22, 3000]]);
+      w.u8(2).packedGuid(BENCH).u8(5).u8(0x40).f32LE(1).f32LE(2).f32LE(3).f32LE(0);
+      values(w, [[3, 24397], [10, 0x3f800000]]); // a GameObject's rotation sits at the same index
+    });
+    expect(parseUpdateObject(body).ownerChanges).toEqual([{ kind: "create", guid: WARLOCK, words: new Map() }]);
+  });
+
+  it("reads an owner change from a unit's values update, and ignores a GameObject's", () => {
+    const body = packet(3, (w) => {
+      w.u8(0).packedGuid(INFERNAL);
+      values(w, [[10, 0], [11, 0]]); // the charm breaks
+      w.u8(0).packedGuid(BENCH);
+      values(w, [[10, 0x3f800000]]);
+      w.u8(0).packedGuid(WARLOCK);
+      values(w, [[22, 2500]]); // no owner words: nothing to pass on
+    });
+    expect(parseUpdateObject(body).ownerChanges).toEqual([
+      { kind: "values", guid: INFERNAL, words: new Map([[10, 0], [11, 0]]) },
+    ]);
+  });
+
+  it("reports units that left view, in block order with the rest", () => {
+    const body = packet(2, (w) => {
+      w.u8(4).u32LE(2).packedGuid(INFERNAL).packedGuid(BENCH); // OUT_OF_RANGE
+      w.u8(0).packedGuid(INFERNAL);
+      values(w, [[14, 0x1234]]);
+    });
+    expect(parseUpdateObject(body).ownerChanges).toEqual([
+      { kind: "out-of-range", guid: INFERNAL },
+      { kind: "values", guid: INFERNAL, words: new Map([[14, 0x1234]]) },
+    ]);
+  });
+});
+
+describe("parseDestroyObject", () => {
+  it("reads the full GUID of the object removed", () => {
+    const body = new PacketWriter().u64LE(0xf130_0000_5900_0abcn).toBuffer();
+    expect(parseDestroyObject(body)).toBe(0xf130_0000_5900_0abcn);
   });
 });
 
