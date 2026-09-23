@@ -3,19 +3,20 @@ import type { CombatEvent } from "../protocol/combat-log.js";
 import { unitRef } from "../protocol/guid.js";
 import type { UnitOwner } from "../protocol/unit-owner.js";
 import { DeathRecorder, type DeathClue } from "./death-recorder.js";
-import { formatDeathReport } from "./death-report.js";
+import { describeDeath, type DeathAccount } from "./death-report.js";
 
 /**
  * One listener session's account of its own death.
  *
  * Feeds the recorder the combat log lines that hit us, nearby player chat, server system messages
- * and our health. Whoever
- * hits us is named at once (a name query for a player, a creature query for an NPC) — that only
- * happens in a real fight. So is whoever that attacker answers to, as it stood at the hit: the
- * warlock behind an Infernal, the hunter behind a pet. Nearby speakers are NOT: a capital talks
- * all day, and naming every one would be a steady stream of queries and an ever-growing name cache
- * for a report that almost never comes. They are named when a death actually needs them, and the report waits a moment for those
- * answers before it is handed to `report`; one still unanswered by then is shown by its GUID.
+ * and our health. Whoever hits us is named at once (a name query for a player, a creature query for
+ * an NPC) — that only happens in a real fight. So is whoever that attacker answers to, as it stood
+ * at the hit: the warlock behind an Infernal, the hunter behind a pet.
+ *
+ * Nearby speakers are NOT: a capital talks all day, and naming every one would be a steady stream
+ * of queries and an ever-growing name cache for a report that almost never comes. They are named
+ * when a death actually needs them, and the report waits a moment for those answers before it is
+ * handed to `report`; one still unanswered by then is shown by its GUID.
  */
 
 export interface ListenerDeathWatchDeps {
@@ -28,7 +29,8 @@ export interface ListenerDeathWatchDeps {
   readonly queryCreature: (entry: number, guid: bigint) => void;
   /** Who a unit in view answers to — its charmer, summoner or creator — or null for no one. */
   readonly ownerOf: (guid: bigint) => UnitOwner | null;
-  readonly report: (lines: string[]) => void;
+  /** The death, put into words once the names have had their moment. */
+  readonly report: (death: DeathAccount) => void;
 }
 
 export interface ListenerDeathWatchOptions {
@@ -95,7 +97,7 @@ export class ListenerDeathWatch {
         player: this.#deps.playerName,
         creature: (entry: number): string | undefined => this.#creatureNames.get(entry),
       };
-      this.#deps.report(formatDeathReport(report, self, names, this.#options.windowMs));
+      this.#deps.report(describeDeath(report, self, names));
     }, this.#options.reportDelayMs);
     this.#reportTimer.unref?.();
   }

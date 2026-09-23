@@ -93,16 +93,31 @@ export function killingBlow(report: DeathReport, selfGuid: bigint, names: UnitNa
   return null;
 }
 
-/** The report as log lines: a verdict, then every clue timed relative to the death. */
-export function formatDeathReport(report: DeathReport, selfGuid: bigint, names: UnitNames, windowMs: number): string[] {
+/** What a death report says, before it is laid out for the log or for Discord. */
+export interface DeathAccount {
+  /** The killing blow — who, whose, with what — or that no damage was seen. */
+  readonly verdict: string;
+  /** Every clue, oldest first, each timed relative to the death. */
+  readonly timeline: readonly string[];
+}
+
+/** Put the report into words: a verdict, then every clue timed relative to the death. */
+export function describeDeath(report: DeathReport, selfGuid: bigint, names: UnitNames): DeathAccount {
   const blow = killingBlow(report, selfGuid, names);
   const verdict = blow
     ? `killing blow: ${blow}`
     : "no damage was seen before it — not killed by a hit we could see (an instant kill, or the combat log was not sent)";
-  const lines = [`DIED — ${verdict}. Last ${Math.round(windowMs / 1000)}s:`];
-  for (const clue of report.clues) {
+  const timeline = report.clues.map((clue) => {
     const offset = ((clue.at - report.diedAt) / 1000).toFixed(1).padStart(6);
-    lines.push(`  ${offset}s  ${describeClue(clue, selfGuid, names)}`);
-  }
-  return lines;
+    return `${offset}s  ${describeClue(clue, selfGuid, names)}`;
+  });
+  return { verdict, timeline };
+}
+
+/** The account as log lines: the verdict, then the timeline indented under it. */
+export function formatDeathReport(account: DeathAccount, windowMs: number): string[] {
+  return [
+    `DIED — ${account.verdict}. Last ${Math.round(windowMs / 1000)}s:`,
+    ...account.timeline.map((line) => `  ${line}`),
+  ];
 }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatType } from "../protocol/opcodes.js";
 import type { UnitOwner } from "../protocol/unit-owner.js";
+import type { DeathAccount } from "./death-report.js";
 import { ListenerDeathWatch, type ListenerDeathWatchDeps } from "./listener-death-watch.js";
 
 const US = 0x77n;
@@ -17,7 +18,7 @@ function setup(selfGuid: bigint | null = US) {
     queryName: vi.fn<(guid: bigint) => void>(),
     queryCreature: vi.fn<(entry: number, guid: bigint) => void>(),
     ownerOf: vi.fn((guid: bigint): UnitOwner | null => owners.get(guid) ?? null),
-    report: vi.fn<(lines: string[]) => void>(),
+    report: vi.fn<(death: DeathAccount) => void>(),
   } satisfies ListenerDeathWatchDeps;
   const watch = new ListenerDeathWatch(deps, { windowMs: 30_000, reportDelayMs: 2_000 });
   return { watch, deps, names, owners };
@@ -44,9 +45,9 @@ describe("ListenerDeathWatch", () => {
     vi.advanceTimersByTime(2_000);
 
     expect(deps.report).toHaveBeenCalledTimes(1);
-    const lines = deps.report.mock.calls[0]?.[0] ?? [];
-    expect(lines[0]).toBe("DIED — killing blow: Ganker (player) hits us for 3000 with spell 12294. Last 30s:");
-    expect(lines).toContain("     0.0s  health 0 — dead");
+    const death = deps.report.mock.calls[0]?.[0];
+    expect(death?.verdict).toBe("killing blow: Ganker (player) hits us for 3000 with spell 12294");
+    expect(death?.timeline).toContain("   0.0s  health 0 — dead");
   });
 
   it("names a player attacker by name query and an NPC by creature query", () => {
@@ -64,7 +65,7 @@ describe("ListenerDeathWatch", () => {
     watch.creatureName(0x0c93, "Orgrimmar Grunt");
     watch.health(0);
     vi.advanceTimersByTime(2_000);
-    expect(deps.report.mock.calls[0]?.[0][0]).toContain("Orgrimmar Grunt (npc) hits us for 3000 (melee)");
+    expect(deps.report.mock.calls[0]?.[0].verdict).toContain("Orgrimmar Grunt (npc) hits us for 3000 (melee)");
   });
 
   it("names whoever the attacker answered to, asking for their name at the hit", () => {
@@ -79,8 +80,8 @@ describe("ListenerDeathWatch", () => {
     names.set(GANKER, "Ganker");
     watch.health(0);
     vi.advanceTimersByTime(2_000);
-    expect(deps.report.mock.calls[0]?.[0][0]).toBe(
-      "DIED — killing blow: Infernal (npc) formerly controlled by Ganker (player) hits us for 100 with spell 20153. Last 30s:",
+    expect(deps.report.mock.calls[0]?.[0].verdict).toBe(
+      "killing blow: Infernal (npc) formerly controlled by Ganker (player) hits us for 100 with spell 20153",
     );
   });
 
@@ -93,7 +94,7 @@ describe("ListenerDeathWatch", () => {
     owners.delete(INFERNAL); // it despawned before the report was written
     watch.health(0);
     vi.advanceTimersByTime(2_000);
-    expect(deps.report.mock.calls[0]?.[0][0]).toContain("creature #89 (npc) created by Ganker (player) hits us");
+    expect(deps.report.mock.calls[0]?.[0].verdict).toContain("creature #89 (npc) created by Ganker (player) hits us");
   });
 
   it("looks for no owner behind damage from the world", () => {
@@ -109,7 +110,7 @@ describe("ListenerDeathWatch", () => {
     watch.health(0);
     vi.advanceTimersByTime(2_000);
     expect(deps.queryCreature).not.toHaveBeenCalled();
-    expect(deps.report.mock.calls[0]?.[0][0]).toMatch(/^DIED — no damage was seen/);
+    expect(deps.report.mock.calls[0]?.[0].verdict).toMatch(/^no damage was seen/);
   });
 
   it("keeps nearby chat without naming the speaker while we are alive", () => {
@@ -129,7 +130,7 @@ describe("ListenerDeathWatch", () => {
 
     names.set(GANKER, "Ganker"); // answered during the grace period
     vi.advanceTimersByTime(2_000);
-    expect(deps.report.mock.calls[0]?.[0]).toContain('     0.0s  Ganker (player) yells: "die bot"');
+    expect(deps.report.mock.calls[0]?.[0].timeline).toContain('   0.0s  Ganker (player) yells: "die bot"');
   });
 
   it("shows a speaker whose name never came back by guid, keeping the line", () => {
@@ -138,7 +139,7 @@ describe("ListenerDeathWatch", () => {
     watch.chat({ type: ChatType.Say, language: 1, senderGuid: GANKER, text: "hm" });
     watch.health(0);
     vi.advanceTimersByTime(2_000);
-    expect(deps.report.mock.calls[0]?.[0]).toContain('     0.0s  0x555 (player) says: "hm"');
+    expect(deps.report.mock.calls[0]?.[0].timeline).toContain('   0.0s  0x555 (player) says: "hm"');
   });
 
   it("includes system messages in the report", () => {
@@ -148,8 +149,8 @@ describe("ListenerDeathWatch", () => {
     watch.system("You have been kicked from the battleground queue.");
     watch.health(0);
     vi.advanceTimersByTime(2_000);
-    expect(deps.report.mock.calls[0]?.[0]).toContain(
-      '     0.0s  system: "You have been kicked from the battleground queue."',
+    expect(deps.report.mock.calls[0]?.[0].timeline).toContain(
+      '   0.0s  system: "You have been kicked from the battleground queue."',
     );
     expect(deps.queryName).not.toHaveBeenCalled(); // a system message names no one
   });

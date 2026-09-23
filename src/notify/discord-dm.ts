@@ -9,6 +9,9 @@
  * user to join the server / open DMs; 401/429/5xx are "error" (systemic).
  */
 
+/** The most characters Discord accepts in a message's content; a longer one is refused outright. */
+export const DISCORD_MESSAGE_LIMIT = 2_000;
+
 export interface DiscordResponse {
   readonly ok: boolean;
   readonly status: number;

@@ -6,7 +6,7 @@ import { AuthClient } from "./net/auth-client.js";
 import { WorldClient } from "./net/world-client.js";
 import { resolveBuild } from "./net/client-resolver.js";
 import type { NotifyMessage } from "./notify/notifier.js";
-import { DiscordDmSender } from "./notify/discord-dm.js";
+import { DISCORD_MESSAGE_LIMIT, DiscordDmSender } from "./notify/discord-dm.js";
 import {
   formatBuffAlert,
   formatBuffDropped,
@@ -45,6 +45,8 @@ import { matchBuffYell } from "./watcher/buff-yell.js";
 import { SilenceWatch } from "./watcher/listener-silence.js";
 import { isSpiritHealer } from "./watcher/spirit-healer.js";
 import { ListenerDeathWatch } from "./watcher/listener-death-watch.js";
+import { formatDeathReport, type DeathAccount } from "./watcher/death-report.js";
+import { DEATH_ALERT_TITLE, formatDeathAlert } from "./watcher/death-alert.js";
 import { FaireService } from "./darkmoon/service.js";
 import { NpcWatch } from "./darkmoon/npc-watch.js";
 import { DarkmoonWidget } from "./darkmoon/widget.js";
@@ -159,6 +161,8 @@ const LISTENER_SILENCE_GRACE_MS = 15 * 60_000;
 const LISTENER_DEATH_WINDOW_MS = 30_000;
 /** Wait this long after a death before reporting it, so attackers' names can resolve. */
 const LISTENER_DEATH_REPORT_DELAY_MS = 2_000;
+/** Room for a death alert in one Discord post, after the bold title line `notifyAdmin` puts on top. */
+const DEATH_ALERT_MAX_LENGTH = DISCORD_MESSAGE_LIMIT - `**${DEATH_ALERT_TITLE}**\n`.length;
 const HEAD_INCOMING_DEDUP_MS = 15 * 60_000;
 
 /** Collapse a buff yell heard by more than one same-city listener into one drop. A faction's buff
@@ -812,6 +816,8 @@ async function runListener(
   onListenerSilent: (character: string, quietFor: string) => Promise<void>,
   /** Raise the alarm that a parked listener is dead at a graveyard. */
   onListenerDead: (character: string) => Promise<void>,
+  /** Raise the alarm the moment a parked listener is killed, naming who did it. */
+  onListenerKilled: (character: string, death: DeathAccount) => Promise<void>,
   // Fired once this listener reaches in-world — the realm-recovery signal (see runConnection).
   onConnected: () => void,
 ): Promise<void> {
@@ -854,8 +860,11 @@ async function runListener(
           for (const fresh of npcWatch.take([entry])) world.queryCreature(fresh, guid);
         },
         ownerOf: (guid) => unitOwners.ownerOf(guid),
-        report: (lines) => {
-          for (const line of lines) logger.error(`${listener.characterName}: ${line}`);
+        report: (death) => {
+          for (const line of formatDeathReport(death, LISTENER_DEATH_WINDOW_MS)) {
+            logger.error(`${listener.characterName}: ${line}`);
+          }
+          void onListenerKilled(listener.characterName, death);
         },
       },
       { windowMs: LISTENER_DEATH_WINDOW_MS, reportDelayMs: LISTENER_DEATH_REPORT_DELAY_MS },
@@ -1913,6 +1922,8 @@ async function main(): Promise<void> {
                 `released, so it can neither hear the buff yell nor yell the status board. ` +
                 `Resurrect it and walk it back to where the head hangs.`,
             ),
+          (character, death) =>
+            notifyAdmin(DEATH_ALERT_TITLE, formatDeathAlert(character, death, DEATH_ALERT_MAX_LENGTH)),
           () => announceRealmUp(listener.characterName),
         );
         log.warn("connection closed; reconnecting shortly");

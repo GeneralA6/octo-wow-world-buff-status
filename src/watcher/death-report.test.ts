@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ChatType } from "../protocol/opcodes.js";
 import type { UnitOwner } from "../protocol/unit-owner.js";
 import type { DeathReport } from "./death-recorder.js";
-import { describeUnit, formatDeathReport, killingBlow, type UnitNames } from "./death-report.js";
+import { describeDeath, describeUnit, formatDeathReport, killingBlow, type UnitNames } from "./death-report.js";
 
 const US = 0x77n;
 const GANKER = 0x555n;
@@ -102,23 +102,35 @@ describe("killingBlow", () => {
   });
 });
 
-describe("formatDeathReport", () => {
-  it("leads with the verdict and times every clue relative to the death", () => {
-    expect(formatDeathReport(report, US, names, 30_000)).toEqual([
-      "DIED — killing blow: Ganker (player) hits us for 1240 with spell 12294. Last 30s:",
-      '   -29.0s  Ganker (player) says: "nice bot"',
-      "   -28.0s  Ganker (player) starts attacking us",
-      "   -27.5s  Ganker (player) hits us for 400 (melee)",
-      "   -20.0s  health 1200",
-      '   -15.0s  system: "You are now PvP flagged."',
-      "    -0.1s  Ganker (player) hits us for 1240 with spell 12294",
-      "    -0.1s  Orgrimmar Grunt (npc) hits Ganker (player) for 90 (melee)",
-      "     0.0s  health 0 — dead",
-    ]);
+describe("describeDeath", () => {
+  it("names the killing blow and times every clue relative to the death", () => {
+    expect(describeDeath(report, US, names)).toEqual({
+      verdict: "killing blow: Ganker (player) hits us for 1240 with spell 12294",
+      timeline: [
+        ' -29.0s  Ganker (player) says: "nice bot"',
+        " -28.0s  Ganker (player) starts attacking us",
+        " -27.5s  Ganker (player) hits us for 400 (melee)",
+        " -20.0s  health 1200",
+        ' -15.0s  system: "You are now PvP flagged."',
+        "  -0.1s  Ganker (player) hits us for 1240 with spell 12294",
+        "  -0.1s  Orgrimmar Grunt (npc) hits Ganker (player) for 90 (melee)",
+        "   0.0s  health 0 — dead",
+      ],
+    });
   });
 
   it("says so when the death came without any damage we saw", () => {
     const quiet: DeathReport = { diedAt: 5, clues: [{ at: 5, kind: "health", health: 0 }] };
-    expect(formatDeathReport(quiet, US, names, 30_000)[0]).toMatch(/^DIED — no damage was seen/);
+    expect(describeDeath(quiet, US, names).verdict).toMatch(/^no damage was seen/);
+  });
+});
+
+describe("formatDeathReport", () => {
+  it("leads the log with the verdict and indents the timeline under it", () => {
+    const account = { verdict: "killing blow: Ganker (player) hits us for 3000 (melee)", timeline: ["   0.0s  health 0 — dead"] };
+    expect(formatDeathReport(account, 30_000)).toEqual([
+      "DIED — killing blow: Ganker (player) hits us for 3000 (melee). Last 30s:",
+      "     0.0s  health 0 — dead",
+    ]);
   });
 });
