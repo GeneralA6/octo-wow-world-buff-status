@@ -10,8 +10,8 @@ describe("InMemoryWallOfShameStore", () => {
   it("starts empty and returns what was saved", async () => {
     const store = new InMemoryWallOfShameStore();
     expect(await store.load()).toBeNull();
-    await store.save({ messageId: "msg-1", names: ["Ganker"] });
-    expect(await store.load()).toEqual({ messageId: "msg-1", names: ["Ganker"] });
+    await store.save({ messageId: "msg-1" });
+    expect(await store.load()).toEqual({ messageId: "msg-1" });
   });
 });
 
@@ -28,13 +28,13 @@ describe("MongoWallOfShameStore", () => {
     return db;
   };
 
-  it("round-trips the players and the message id through the collection", async () => {
+  it("round-trips the message id through the collection", async () => {
     const db = fakeDb();
     const store = new MongoWallOfShameStore(db);
     expect(await store.load()).toBeNull();
-    await store.save({ messageId: "msg-1", names: ["Ganker", "Warlockz"] });
-    expect(db.set).toHaveBeenCalledWith({ messageId: "msg-1", names: ["Ganker", "Warlockz"] });
-    expect(await store.load()).toEqual({ messageId: "msg-1", names: ["Ganker", "Warlockz"] });
+    await store.save({ messageId: "msg-1" });
+    expect(db.set).toHaveBeenCalledWith({ messageId: "msg-1" });
+    expect(await store.load()).toEqual({ messageId: "msg-1" });
   });
 
   it("releases the client on close", async () => {

@@ -2,19 +2,16 @@ import type { Db } from "mongodb";
 import { releaseSharedClient } from "../mongo-connection.js";
 
 /**
- * Remembers the wall of shame: every player who has killed a bot listener, and which Discord
- * message lists them.
+ * Remembers which Discord message the wall of shame owns.
  *
- * Both have to survive a redeploy. The names are the whole point of the wall, and they are learned
- * one death at a time — nothing could rebuild them. Without the message id, every restart would post
- * and pin a second wall and orphan the first.
+ * One string, but it has to survive a redeploy: without it every restart would post and pin a
+ * second wall and orphan the first. The players it lists are kept separately (see
+ * shame-list-store.ts) — they are what the bot knows, this is only where it shows them.
  */
 
 export interface WallOfShameState {
   /** The pinned message the wall edits in place, or null before it has ever been posted. */
   readonly messageId: string | null;
-  /** Every player who has killed a listener, in the order they first did. */
-  readonly names: readonly string[];
 }
 
 export interface WallOfShameStore {
@@ -23,7 +20,7 @@ export interface WallOfShameStore {
   close(): Promise<void>;
 }
 
-/** In-memory store — local/test fallback. Forgets the wall on restart. */
+/** In-memory store — local/test fallback. Resets on restart, so the wall reposts once. */
 export class InMemoryWallOfShameStore implements WallOfShameStore {
   #state: WallOfShameState | null;
 
@@ -47,7 +44,6 @@ export class InMemoryWallOfShameStore implements WallOfShameStore {
 interface WallDoc {
   readonly _id: string;
   readonly messageId: string | null;
-  readonly names: string[];
 }
 
 /** Narrow port over the Mongo collection, so the store's logic is unit-tested with a fake. */
@@ -71,16 +67,10 @@ export class MongoWallOfShameStore implements WallOfShameStore {
     const collection = database.collection<WallDoc>(COLLECTION);
     const db: WallOfShameDb = {
       get: () =>
-        collection
-          .findOne({ _id: DOC_ID })
-          .then((doc) => (doc ? { messageId: doc.messageId, names: doc.names } : null)),
+        collection.findOne({ _id: DOC_ID }).then((doc) => (doc ? { messageId: doc.messageId } : null)),
       set: (state) =>
         collection
-          .updateOne(
-            { _id: DOC_ID },
-            { $set: { messageId: state.messageId, names: [...state.names] } },
-            { upsert: true },
-          )
+          .updateOne({ _id: DOC_ID }, { $set: { messageId: state.messageId } }, { upsert: true })
           .then(() => undefined),
       close: releaseSharedClient,
     };

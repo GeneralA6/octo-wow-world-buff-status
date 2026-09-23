@@ -8,13 +8,12 @@ import {
 import type { WallOfShameStore } from "./wall-of-shame-store.js";
 
 /**
- * The wall of shame: ONE pinned message listing every player who has killed a bot listener, a
- * "- Name" line each, in the order they first did it.
+ * The wall of shame: ONE pinned message showing the shame list (see shame-list.ts) — every player
+ * who has killed a bot listener, a "- Name" line each, in the order they first did it.
  *
  * Edited in place, never reposted, for the reason the other boards are: the message id is kept, so
- * a redeploy edits the same message instead of orphaning it and pinning a second. A player already
- * on the wall is not added twice. A message someone deleted is posted and pinned afresh; one merely
- * unpinned is left alone.
+ * a redeploy edits the same message instead of orphaning it and pinning a second. A message someone
+ * deleted is posted and pinned afresh; one merely unpinned is left alone.
  *
  * Discord refuses a message over its length limit, so a wall too long for one message shows the
  * players who fit — the earliest — and says so in the log. That is over a hundred names.
@@ -57,55 +56,38 @@ function describe(result: DmResult | CreateResult): string {
 export class WallOfShame {
   readonly #deps: WallOfShameDeps;
   #messageId: string | null = null;
-  #names: string[] = [];
   /** The message this session posted but could not pin — tried again on the next change. */
   #unpinned: string | null = null;
-  /** Serialises changes, so two deaths at once cannot race into two posted walls. */
+  /** Serialises paints, so two deaths at once cannot race into two posted walls. */
   #queue: Promise<void> = Promise.resolve();
 
   constructor(deps: WallOfShameDeps) {
     this.#deps = deps;
   }
 
-  /** Load the players and the message id. Call once on boot, before anything else. */
+  /** Load the message id. Call once on boot, before the first paint. */
   async load(): Promise<void> {
     const state = await this.#deps.store.load();
     this.#messageId = state?.messageId ?? null;
-    this.#names = [...(state?.names ?? [])];
   }
 
-  /** Put a player on the wall. One already on it changes nothing. */
-  add(name: string): Promise<void> {
-    return this.#enqueue(async () => {
-      if (this.#names.includes(name)) return;
-      this.#names.push(name);
-      await this.#save();
-      await this.#render();
-    });
-  }
-
-  /** Repaint the wall — on boot, so a message deleted while the bot was down comes back. */
-  refresh(): Promise<void> {
-    return this.#enqueue(() => this.#render());
-  }
-
-  #enqueue(task: () => Promise<void>): Promise<void> {
-    this.#queue = this.#queue.then(task).catch((error) =>
+  /**
+   * Show these players on the wall — after one is added, and on boot, so a message deleted while
+   * the bot was down comes back.
+   */
+  show(names: readonly string[]): Promise<void> {
+    this.#queue = this.#queue.then(() => this.#render(names)).catch((error) =>
       this.#deps.logger.error(`wall of shame threw: ${error instanceof Error ? error.message : String(error)}`),
     );
     return this.#queue;
   }
 
-  async #save(): Promise<void> {
-    await this.#deps.store.save({ messageId: this.#messageId, names: [...this.#names] });
-  }
-
-  async #render(): Promise<void> {
+  async #render(names: readonly string[]): Promise<void> {
     // Nobody to name yet, and Discord refuses an empty message: the wall goes up with its first name.
-    if (this.#names.length === 0) return;
-    const { content, shown } = renderWall(this.#names);
-    if (shown < this.#names.length) {
-      this.#deps.logger.warn(`wall of shame: ${this.#names.length - shown} players do not fit in one message`);
+    if (names.length === 0) return;
+    const { content, shown } = renderWall(names);
+    if (shown < names.length) {
+      this.#deps.logger.warn(`wall of shame: ${names.length - shown} players do not fit in one message`);
     }
     const message: ChannelMessage = { content };
 
@@ -129,7 +111,7 @@ export class WallOfShame {
       return;
     }
     this.#messageId = created.messageId;
-    await this.#save();
+    await this.#deps.store.save({ messageId: created.messageId });
     await this.#pin(created.messageId);
   }
 

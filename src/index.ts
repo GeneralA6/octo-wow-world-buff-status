@@ -47,6 +47,8 @@ import { isSpiritHealer } from "./watcher/spirit-healer.js";
 import { ListenerDeathWatch } from "./watcher/listener-death-watch.js";
 import { formatDeathReport, type DeathAccount } from "./watcher/death-report.js";
 import { DEATH_ALERT_TITLE, formatDeathAlert } from "./watcher/death-alert.js";
+import { ShameList } from "./watcher/shame-list.js";
+import { InMemoryShameListStore, MongoShameListStore, type ShameListStore } from "./watcher/shame-list-store.js";
 import { WallOfShame } from "./watcher/wall-of-shame.js";
 import {
   InMemoryWallOfShameStore,
@@ -1395,8 +1397,20 @@ async function main(): Promise<void> {
       logger.error(`darkmoon: board state MongoDB connect failed (${describeError(error)}); in memory`);
     }
   }
-  // Every player who has killed a listener, and which message lists them. Learned one death at a
-  // time, so it lives in MongoDB — in memory only when there is none, and then lost on restart.
+  // Every player who has killed a listener. Learned one death at a time, so it lives in MongoDB — in
+  // memory only when there is none, and then lost on restart. Kept whether or not the Discord wall
+  // is on: it is also who the bot no longer deals with.
+  let shameListStore: ShameListStore = new InMemoryShameListStore();
+  if (mongo) {
+    try {
+      shameListStore = await MongoShameListStore.open(mongo.db);
+    } catch (error) {
+      logger.error(`shame list: MongoDB connect failed (${describeError(error)}); in memory`);
+    }
+  }
+  const shameList = new ShameList(shameListStore);
+  await shameList.load();
+  // Which message the wall of shame owns — its own tiny document, like the other boards'.
   let wallOfShameStore: WallOfShameStore = new InMemoryWallOfShameStore();
   if (mongo && config.discordWallOfShameChannelId) {
     try {
@@ -1677,6 +1691,7 @@ async function main(): Promise<void> {
       durationStore.close(),
       knowledgeStore.close(),
       darkmoonWidgetStore.close(),
+      shameListStore.close(),
       wallOfShameStore.close(),
       feedbackStore.close(),
       introStore.close(),
@@ -1876,20 +1891,27 @@ async function main(): Promise<void> {
       logger: prefixed(logger, "wall of shame"),
     });
     await wallOfShame.load();
-    void wallOfShame.refresh();
+    void wallOfShame.show(shameList.names);
   } else if (wallChannelId && !dm.isConfigured) {
     logger.warn("DISCORD_WALL_OF_SHAME_CHANNEL_ID is set but no DISCORD_BOT_TOKEN — the wall of shame is off");
   }
-  /** Put the player behind a listener's death on the wall. The report waited for names to resolve;
-   *  one that still has none cannot be written up, so it is only logged. */
-  const shameCulprit = (character: string, death: DeathAccount): void => {
+  /** Put the player behind a listener's death on the shame list, and the wall. The report waited for
+   *  names to resolve; one that still has none cannot be listed, so it is only logged. */
+  const shameCulprit = async (character: string, death: DeathAccount): Promise<void> => {
     const culprit = death.culprit;
-    if (!culprit || !wallOfShame) return;
+    if (!culprit) return;
     if (culprit.name === null) {
-      logger.warn(`wall of shame: ${character}'s killer 0x${culprit.guid.toString(16)} never resolved to a name`);
+      logger.warn(`shame list: ${character}'s killer 0x${culprit.guid.toString(16)} never resolved to a name`);
       return;
     }
-    void wallOfShame.add(culprit.name);
+    const added = await shameList.add(culprit.name).catch((error: unknown) => {
+      // Still listed for this run — only the save failed, so it would be forgotten on restart.
+      logger.error(`shame list: could not save ${culprit.name} (${describeError(error)})`);
+      return true;
+    });
+    if (!added) return;
+    logger.warn(`shame list: ${culprit.name} killed ${character} and is now on the wall of shame`);
+    void wallOfShame?.show(shameList.names);
   };
 
   const watcherLog = prefixed(logger, config.characterName);
@@ -1972,7 +1994,7 @@ async function main(): Promise<void> {
                 `Resurrect it and walk it back to where the head hangs.`,
             ),
           (character, death) => {
-            shameCulprit(character, death);
+            void shameCulprit(character, death);
             return notifyAdmin(DEATH_ALERT_TITLE, formatDeathAlert(character, death, DEATH_ALERT_MAX_LENGTH));
           },
           () => announceRealmUp(listener.characterName),
