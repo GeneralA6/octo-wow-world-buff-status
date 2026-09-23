@@ -47,6 +47,12 @@ import { isSpiritHealer } from "./watcher/spirit-healer.js";
 import { ListenerDeathWatch } from "./watcher/listener-death-watch.js";
 import { formatDeathReport, type DeathAccount } from "./watcher/death-report.js";
 import { DEATH_ALERT_TITLE, formatDeathAlert } from "./watcher/death-alert.js";
+import { WallOfShame } from "./watcher/wall-of-shame.js";
+import {
+  InMemoryWallOfShameStore,
+  MongoWallOfShameStore,
+  type WallOfShameStore,
+} from "./watcher/wall-of-shame-store.js";
 import { FaireService } from "./darkmoon/service.js";
 import { NpcWatch } from "./darkmoon/npc-watch.js";
 import { DarkmoonWidget } from "./darkmoon/widget.js";
@@ -1234,6 +1240,7 @@ async function main(): Promise<void> {
   let statusRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let darkmoonWidget: DarkmoonWidget | null = null;
   let darkmoonRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  let wallOfShame: WallOfShame | null = null;
 
   const watchOptions: RaidTrackerOptions = {
     minRaidSize: config.minRaidSize,
@@ -1386,6 +1393,16 @@ async function main(): Promise<void> {
       darkmoonWidgetStore = await MongoDarkmoonWidgetStore.open(mongo.db);
     } catch (error) {
       logger.error(`darkmoon: board state MongoDB connect failed (${describeError(error)}); in memory`);
+    }
+  }
+  // Every player who has killed a listener, and which message lists them. Learned one death at a
+  // time, so it lives in MongoDB — in memory only when there is none, and then lost on restart.
+  let wallOfShameStore: WallOfShameStore = new InMemoryWallOfShameStore();
+  if (mongo && config.discordWallOfShameChannelId) {
+    try {
+      wallOfShameStore = await MongoWallOfShameStore.open(mongo.db);
+    } catch (error) {
+      logger.error(`wall of shame: MongoDB connect failed (${describeError(error)}); in memory`);
     }
   }
   const faire = new FaireService({
@@ -1660,6 +1677,7 @@ async function main(): Promise<void> {
       durationStore.close(),
       knowledgeStore.close(),
       darkmoonWidgetStore.close(),
+      wallOfShameStore.close(),
       feedbackStore.close(),
       introStore.close(),
       userLedger.close(),
@@ -1843,6 +1861,37 @@ async function main(): Promise<void> {
     logger.warn("DISCORD_DARKMOON_CHANNEL_ID is set but no DISCORD_BOT_TOKEN — the Darkmoon board is off");
   }
 
+  // The wall of shame: one pinned message naming every player who has killed a listener. It only
+  // changes when a listener dies to a player's hand, so there is no timer — just a paint on boot, to
+  // bring back a wall deleted while the bot was down.
+  const wallChannelId = config.discordWallOfShameChannelId;
+  if (wallChannelId && dm.isConfigured) {
+    wallOfShame = new WallOfShame({
+      channel: {
+        create: (message) => dm.createChannelMessage(wallChannelId, message),
+        edit: (messageId, message) => dm.editChannelMessage(wallChannelId, messageId, message),
+        pin: (messageId) => dm.pinChannelMessage(wallChannelId, messageId),
+      },
+      store: wallOfShameStore,
+      logger: prefixed(logger, "wall of shame"),
+    });
+    await wallOfShame.load();
+    void wallOfShame.refresh();
+  } else if (wallChannelId && !dm.isConfigured) {
+    logger.warn("DISCORD_WALL_OF_SHAME_CHANNEL_ID is set but no DISCORD_BOT_TOKEN — the wall of shame is off");
+  }
+  /** Put the player behind a listener's death on the wall. The report waited for names to resolve;
+   *  one that still has none cannot be written up, so it is only logged. */
+  const shameCulprit = (character: string, death: DeathAccount): void => {
+    const culprit = death.culprit;
+    if (!culprit || !wallOfShame) return;
+    if (culprit.name === null) {
+      logger.warn(`wall of shame: ${character}'s killer 0x${culprit.guid.toString(16)} never resolved to a name`);
+      return;
+    }
+    void wallOfShame.add(culprit.name);
+  };
+
   const watcherLog = prefixed(logger, config.characterName);
   const runWatcher = async (): Promise<void> => {
     const heal: HealState = { lastCheckMs: 0, alertedStuck: false };
@@ -1922,8 +1971,10 @@ async function main(): Promise<void> {
                 `released, so it can neither hear the buff yell nor yell the status board. ` +
                 `Resurrect it and walk it back to where the head hangs.`,
             ),
-          (character, death) =>
-            notifyAdmin(DEATH_ALERT_TITLE, formatDeathAlert(character, death, DEATH_ALERT_MAX_LENGTH)),
+          (character, death) => {
+            shameCulprit(character, death);
+            return notifyAdmin(DEATH_ALERT_TITLE, formatDeathAlert(character, death, DEATH_ALERT_MAX_LENGTH));
+          },
           () => announceRealmUp(listener.characterName),
         );
         log.warn("connection closed; reconnecting shortly");

@@ -484,6 +484,25 @@ describe("loadConfig darkmoon on-site watch", () => {
   });
 });
 
+describe("loadConfig wall of shame channel", () => {
+  it("is off unless a channel is given", () => {
+    expect(loadConfig({ ...minimalEnv }).discordWallOfShameChannelId).toBeNull();
+  });
+
+  it("takes the channel id", () => {
+    expect(
+      loadConfig({ ...minimalEnv, DISCORD_WALL_OF_SHAME_CHANNEL_ID: "1552341406356611206" })
+        .discordWallOfShameChannelId,
+    ).toBe("1552341406356611206");
+  });
+
+  it("rejects anything that is not a Discord snowflake", () => {
+    expect(() => loadConfig({ ...minimalEnv, DISCORD_WALL_OF_SHAME_CHANNEL_ID: "#wall-of-shame" })).toThrow(
+      /DISCORD_WALL_OF_SHAME_CHANNEL_ID must be a numeric Discord channel id/,
+    );
+  });
+});
+
 describe("loadConfig darkmoon board channel", () => {
   it("is off unless a channel is given", () => {
     expect(loadConfig({ ...minimalEnv }).discordDarkmoonChannelId).toBeNull();

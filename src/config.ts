@@ -196,6 +196,8 @@ export interface BotConfig {
   readonly discordServerStatusChannelId: string | null;
   /** Channel holding the live Darkmoon Faire board, edited in place. Null = no board. */
   readonly discordDarkmoonChannelId: string | null;
+  /** Channel holding the pinned wall of shame: every player who killed a bot listener. Null = no wall. */
+  readonly discordWallOfShameChannelId: string | null;
   /** How often the live server-status widget re-renders (to keep uptime/latency fresh), in ms. The
    *  realm up/down transitions refresh it immediately; this is the idle cadence between them. */
   readonly statusWidgetRefreshMs: number;
@@ -480,6 +482,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordTestsChannelId = env.DISCORD_TESTS_CHANNEL_ID?.trim() || null;
   const discordServerStatusChannelId = env.DISCORD_SERVER_STATUS_CHANNEL_ID?.trim() || null;
   const discordDarkmoonChannelId = env.DISCORD_DARKMOON_CHANNEL_ID?.trim() || null;
+  const discordWallOfShameChannelId = env.DISCORD_WALL_OF_SHAME_CHANNEL_ID?.trim() || null;
   const statusWidgetRefreshMs = intWithDefault("WOW_STATUS_REFRESH_SECONDS", 300, 30) * 1000;
   const statusNoticeLingerMs = intWithDefault("WOW_STATUS_NOTICE_LINGER_SECONDS", 5, 0) * 1000;
   const statusRenameRaw = env.WOW_STATUS_CHANNEL_RENAME?.trim().toLowerCase();
@@ -495,6 +498,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   }
   if (discordDarkmoonChannelId && !/^\d+$/.test(discordDarkmoonChannelId)) {
     errors.push("DISCORD_DARKMOON_CHANNEL_ID must be a numeric Discord channel id");
+  }
+  if (discordWallOfShameChannelId && !/^\d+$/.test(discordWallOfShameChannelId)) {
+    errors.push("DISCORD_WALL_OF_SHAME_CHANNEL_ID must be a numeric Discord channel id");
   }
 
   // Where the watcher's character is parked, when it is parked at a faire site. Set it and the bot
@@ -620,6 +626,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordTestsChannelId,
     discordServerStatusChannelId,
     discordDarkmoonChannelId,
+    discordWallOfShameChannelId,
     statusWidgetRefreshMs,
     statusNoticeLingerMs,
     statusChannelRenameEnabled,
