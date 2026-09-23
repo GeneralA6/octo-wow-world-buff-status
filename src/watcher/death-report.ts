@@ -82,15 +82,39 @@ function describeClue(clue: DeathClue, selfGuid: bigint, names: UnitNames): stri
   }
 }
 
-/** Where the last damage before the death came from, or null when none was seen. */
-export function killingBlow(report: DeathReport, selfGuid: bigint, names: UnitNames): string | null {
+/** The last damage we took before the death, or null when none was seen. */
+function killingBlowClue(report: DeathReport, selfGuid: bigint): CombatClue | null {
   for (let i = report.clues.length - 1; i >= 0; i -= 1) {
     const clue = report.clues[i];
     if (clue?.kind !== "combat" || clue.event.kind === "attack-start") continue;
     if (clue.event.target !== selfGuid) continue;
-    return describeCombat(clue, selfGuid, names);
+    return clue;
   }
   return null;
+}
+
+/** Where the last damage before the death came from, or null when none was seen. */
+export function killingBlow(report: DeathReport, selfGuid: bigint, names: UnitNames): string | null {
+  const clue = killingBlowClue(report, selfGuid);
+  return clue ? describeCombat(clue, selfGuid, names) : null;
+}
+
+/**
+ * The player to blame for a blow: whoever held, summoned or made the attacker, or the attacker
+ * itself when it answers to no one. A unit whose owner is not a player — an NPC's add, a player
+ * mind-controlled by an NPC — puts no player to blame.
+ */
+function blamedPlayer({ event, attackerOwner }: CombatClue): bigint | null {
+  if (event.kind === "environmental") return null;
+  const blamed = attackerOwner ? attackerOwner.guid : event.attacker;
+  return unitRef(blamed).kind === "player" ? blamed : null;
+}
+
+/** The player behind a death. */
+export interface Culprit {
+  readonly guid: bigint;
+  /** Null when the name query had not answered by the time the report was written. */
+  readonly name: string | null;
 }
 
 /** What a death report says, before it is laid out for the log or for Discord. */
@@ -99,19 +123,23 @@ export interface DeathAccount {
   readonly verdict: string;
   /** Every clue, oldest first, each timed relative to the death. */
   readonly timeline: readonly string[];
+  /** The player the killing blow comes back to, or null when it was no player's doing. */
+  readonly culprit: Culprit | null;
 }
 
 /** Put the report into words: a verdict, then every clue timed relative to the death. */
 export function describeDeath(report: DeathReport, selfGuid: bigint, names: UnitNames): DeathAccount {
-  const blow = killingBlow(report, selfGuid, names);
+  const blow = killingBlowClue(report, selfGuid);
   const verdict = blow
-    ? `killing blow: ${blow}`
+    ? `killing blow: ${describeCombat(blow, selfGuid, names)}`
     : "no damage was seen before it — not killed by a hit we could see (an instant kill, or the combat log was not sent)";
   const timeline = report.clues.map((clue) => {
     const offset = ((clue.at - report.diedAt) / 1000).toFixed(1).padStart(6);
     return `${offset}s  ${describeClue(clue, selfGuid, names)}`;
   });
-  return { verdict, timeline };
+  const blamed = blow ? blamedPlayer(blow) : null;
+  const culprit = blamed === null ? null : { guid: blamed, name: names.player(blamed) ?? null };
+  return { verdict, timeline, culprit };
 }
 
 /** The account as log lines: the verdict, then the timeline indented under it. */

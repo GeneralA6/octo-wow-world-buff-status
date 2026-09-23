@@ -116,18 +116,61 @@ describe("describeDeath", () => {
         "  -0.1s  Orgrimmar Grunt (npc) hits Ganker (player) for 90 (melee)",
         "   0.0s  health 0 — dead",
       ],
+      culprit: { guid: GANKER, name: "Ganker" },
     });
   });
 
   it("says so when the death came without any damage we saw", () => {
     const quiet: DeathReport = { diedAt: 5, clues: [{ at: 5, kind: "health", health: 0 }] };
     expect(describeDeath(quiet, US, names).verdict).toMatch(/^no damage was seen/);
+    expect(describeDeath(quiet, US, names).culprit).toBeNull();
+  });
+
+  /** A death by one blow from `attacker`, answering to `attackerOwner`. */
+  function slain(attacker: bigint, attackerOwner: UnitOwner | null): DeathReport {
+    return {
+      diedAt: 1_000,
+      clues: [
+        { at: 1_000, kind: "combat", event: { kind: "melee", attacker, target: US, damage: 99 }, attackerOwner },
+        { at: 1_000, kind: "health", health: 0 },
+      ],
+    };
+  }
+
+  it("blames the player behind a pet, summon or charmed unit rather than the unit", () => {
+    const owner: UnitOwner = { relation: "controlled", guid: GANKER, current: false };
+    expect(describeDeath(slain(INFERNAL, owner), US, names).culprit).toEqual({ guid: GANKER, name: "Ganker" });
+  });
+
+  it("blames no player for an NPC acting on its own, or on another NPC's behalf", () => {
+    expect(describeDeath(slain(GRUNT, null), US, names).culprit).toBeNull();
+    const npcOwner: UnitOwner = { relation: "controlled", guid: GRUNT, current: true };
+    expect(describeDeath(slain(GANKER, npcOwner), US, names).culprit).toBeNull(); // mind-controlled by an NPC
+  });
+
+  it("keeps a culprit whose name had not come back, by guid", () => {
+    expect(describeDeath(slain(STRANGER, null), US, names).culprit).toEqual({ guid: STRANGER, name: null });
+  });
+
+  it("blames only the killing blow, not an earlier attacker", () => {
+    const report: DeathReport = {
+      diedAt: 2_000,
+      clues: [
+        { at: 1_000, kind: "combat", event: { kind: "melee", attacker: GANKER, target: US, damage: 50 }, attackerOwner: null },
+        { at: 2_000, kind: "combat", event: { kind: "melee", attacker: GRUNT, target: US, damage: 50 }, attackerOwner: null },
+      ],
+    };
+    expect(describeDeath(report, US, names).culprit).toBeNull();
   });
 });
 
 describe("formatDeathReport", () => {
   it("leads the log with the verdict and indents the timeline under it", () => {
-    const account = { verdict: "killing blow: Ganker (player) hits us for 3000 (melee)", timeline: ["   0.0s  health 0 — dead"] };
+    const account = {
+      verdict: "killing blow: Ganker (player) hits us for 3000 (melee)",
+      timeline: ["   0.0s  health 0 — dead"],
+      culprit: { guid: GANKER, name: "Ganker" },
+    };
     expect(formatDeathReport(account, 30_000)).toEqual([
       "DIED — killing blow: Ganker (player) hits us for 3000 (melee). Last 30s:",
       "     0.0s  health 0 — dead",

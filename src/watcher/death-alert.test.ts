@@ -10,6 +10,7 @@ const burned: DeathAccount = {
     "   0.0s  Infernal (npc) formerly controlled by Ganker (player) hits us for 28 with spell 20153",
     "   0.0s  health 0 — dead",
   ],
+  culprit: { guid: 0x555n, name: "Ganker" },
 };
 
 describe("formatDeathAlert", () => {
@@ -37,6 +38,7 @@ describe("formatDeathAlert", () => {
     const busy: DeathAccount = {
       verdict: burned.verdict,
       timeline: Array.from({ length: 200 }, (_, i) => `${(-i / 10).toFixed(1).padStart(6)}s  some player says: "wts"`),
+      culprit: burned.culprit,
     };
     const alert = formatDeathAlert("Onyxiabuffog", busy, 1_900);
     expect(alert.length).toBeLessThanOrEqual(1_900);
@@ -56,6 +58,7 @@ describe("formatDeathAlert", () => {
     const taunted: DeathAccount = {
       verdict: burned.verdict,
       timeline: ['   0.0s  Ganker (player) says: "```@everyone```"'],
+      culprit: burned.culprit,
     };
     expect(formatDeathAlert("Onyxiabuffog", taunted, 2_000)).toContain(`says: "'''@everyone'''"`);
   });
