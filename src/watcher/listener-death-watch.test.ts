@@ -73,15 +73,33 @@ describe("ListenerDeathWatch", () => {
     expect(deps.report.mock.calls[0]?.[0][0]).toMatch(/^DIED — no damage was seen/);
   });
 
-  it("keeps nearby chat and asks who said it", () => {
+  it("keeps nearby chat without naming the speaker while we are alive", () => {
+    const { watch, deps } = setup();
+    watch.health(3000);
+    watch.chat({ type: ChatType.Say, language: 1, senderGuid: GANKER, text: "hello" });
+    watch.chat({ type: ChatType.Yell, language: 1, senderGuid: 0x999n, text: "wts" });
+    expect(deps.queryName).not.toHaveBeenCalled();
+  });
+
+  it("names the speakers in the window when we die, before the report is written", () => {
     const { watch, deps, names } = setup();
-    names.set(GANKER, "Ganker");
     watch.health(3000);
     watch.chat({ type: ChatType.Yell, language: 1, senderGuid: GANKER, text: "die bot" });
     watch.health(0);
-    vi.advanceTimersByTime(2_000);
     expect(deps.queryName).toHaveBeenCalledWith(GANKER);
+
+    names.set(GANKER, "Ganker"); // answered during the grace period
+    vi.advanceTimersByTime(2_000);
     expect(deps.report.mock.calls[0]?.[0]).toContain('     0.0s  Ganker (player) yells: "die bot"');
+  });
+
+  it("shows a speaker whose name never came back by guid, keeping the line", () => {
+    const { watch, deps } = setup();
+    watch.health(3000);
+    watch.chat({ type: ChatType.Say, language: 1, senderGuid: GANKER, text: "hm" });
+    watch.health(0);
+    vi.advanceTimersByTime(2_000);
+    expect(deps.report.mock.calls[0]?.[0]).toContain('     0.0s  0x555 (player) says: "hm"');
   });
 
   it("records nothing before it knows who we are", () => {

@@ -1,16 +1,18 @@
 import type { IncomingChat } from "../protocol/chat.js";
 import type { CombatEvent } from "../protocol/combat-log.js";
 import { unitRef } from "../protocol/guid.js";
-import { DeathRecorder } from "./death-recorder.js";
+import { DeathRecorder, type DeathClue } from "./death-recorder.js";
 import { formatDeathReport } from "./death-report.js";
 
 /**
  * One listener session's account of its own death.
  *
- * Feeds the recorder the combat log lines that hit us, nearby player chat and our health, and
- * names everyone involved as they appear — a name query for a player, a creature query for an NPC —
- * so the report can say who rather than which GUID. When our health reaches zero it waits a moment
- * for the last names to resolve, then hands the formatted report to `report`.
+ * Feeds the recorder the combat log lines that hit us, nearby player chat and our health. Whoever
+ * hits us is named at once (a name query for a player, a creature query for an NPC) — that only
+ * happens in a real fight. Nearby speakers are NOT: a capital talks all day, and naming every one
+ * would be a steady stream of queries and an ever-growing name cache for a report that almost never
+ * comes. They are named when a death actually needs them, and the report waits a moment for those
+ * answers before it is handed to `report`; one still unanswered by then is shown by its GUID.
  */
 
 export interface ListenerDeathWatchDeps {
@@ -52,7 +54,7 @@ export class ListenerDeathWatch {
     if (event.kind !== "environmental") this.#learnName(event.attacker);
   }
 
-  /** A nearby player spoke. */
+  /** A nearby player spoke. Kept, but not named until a death needs it. */
   chat(chat: IncomingChat): void {
     this.#recorder.record({
       at: Date.now(),
@@ -61,7 +63,6 @@ export class ListenerDeathWatch {
       chatType: chat.type,
       text: chat.text,
     });
-    this.#learnName(chat.senderGuid);
   }
 
   /** A creature query answered. */
@@ -74,6 +75,7 @@ export class ListenerDeathWatch {
     const report = this.#recorder.observeHealth(Date.now(), health);
     const self = this.#deps.selfGuid();
     if (!report || self === null) return;
+    for (const guid of involvedUnits(report.clues)) this.#learnName(guid);
     if (this.#reportTimer) clearTimeout(this.#reportTimer);
     this.#reportTimer = setTimeout(() => {
       this.#reportTimer = null;
@@ -97,4 +99,14 @@ export class ListenerDeathWatch {
     if (ref.kind === "player") this.#deps.queryName(guid);
     else if (ref.kind === "creature" || ref.kind === "pet") this.#deps.queryCreature(ref.entry, guid);
   }
+}
+
+/** Every unit a report mentions by GUID, once each. */
+function involvedUnits(clues: readonly DeathClue[]): Set<bigint> {
+  const units = new Set<bigint>();
+  for (const clue of clues) {
+    if (clue.kind === "chat") units.add(clue.senderGuid);
+    else if (clue.kind === "combat" && clue.event.kind !== "environmental") units.add(clue.event.attacker);
+  }
+  return units;
 }
