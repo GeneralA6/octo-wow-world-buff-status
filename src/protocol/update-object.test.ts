@@ -93,6 +93,51 @@ describe("parseUpdateObject self-guid filtering", () => {
   });
 });
 
+describe("parseUpdateObject self health", () => {
+  /** A VALUES block carrying only UNIT_FIELD_HEALTH (field 22) — what a hit sends. */
+  function healthUpdate(w: PacketWriter, guid: bigint, health: number): void {
+    w.u8(0); // UPDATETYPE_VALUES
+    w.packedGuid(guid);
+    w.u8(1).u32LE(1 << 22).u32LE(health);
+  }
+
+  /** A CREATE block for a player carrying its entry-less values: health (22) only. */
+  function createPlayer(w: PacketWriter, guid: bigint, health: number): void {
+    w.u8(2).packedGuid(guid).u8(4).u8(0x40);
+    w.f32LE(1).f32LE(2).f32LE(3).f32LE(0);
+    w.u8(1).u32LE(1 << 22).u32LE(health);
+  }
+
+  function packet(write: (w: PacketWriter) => void, count: number): Buffer {
+    const w = new PacketWriter().u32LE(count).u8(0);
+    write(w);
+    return w.toBuffer();
+  }
+
+  it("reads our health from a values update", () => {
+    const body = packet((w) => healthUpdate(w, 7n, 0), 1);
+    expect(parseUpdateObject(body, 7n).selfHealth).toBe(0);
+  });
+
+  it("reads our health from the block that creates us", () => {
+    const body = packet((w) => createPlayer(w, 7n, 3100), 1);
+    expect(parseUpdateObject(body, 7n).selfHealth).toBe(3100);
+  });
+
+  it("ignores a bystander's health, so their death is never taken for ours", () => {
+    const body = packet((w) => {
+      healthUpdate(w, 7n, 2800);
+      healthUpdate(w, 9n, 0);
+    }, 2);
+    expect(parseUpdateObject(body, 7n).selfHealth).toBe(2800);
+  });
+
+  it("reports nothing without our guid, or when no block carried our health", () => {
+    expect(parseUpdateObject(packet((w) => healthUpdate(w, 7n, 0), 1)).selfHealth).toBeNull();
+    expect(parseUpdateObject(packet((w) => healthUpdate(w, 9n, 0), 1), 7n).selfHealth).toBeNull();
+  });
+});
+
 describe("nearestGameObject", () => {
   it("returns the closest object by 3D distance", () => {
     const objects = [

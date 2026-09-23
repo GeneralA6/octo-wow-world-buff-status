@@ -41,7 +41,14 @@ export interface WorldObjects {
   readonly units: WorldUnit[];
   /** Our own player's position, when this block created it. */
   readonly self: WorldPoint | null;
+  /** Our own current health, when this block carried it (a create, or a values update after a
+   *  hit). Only reported when the caller names our GUID. Zero means we just died. */
+  readonly selfHealth: number | null;
 }
+
+// Values-block field indices (1.12).
+const OBJECT_FIELD_ENTRY = 3;
+const UNIT_FIELD_HEALTH = 22;
 
 const OBJTYPE_UNIT = 3;
 const OBJTYPE_PLAYER = 4;
@@ -84,6 +91,8 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   const gameObjects: WorldGameObject[] = [];
   const units: WorldUnit[] = [];
   let self: WorldPoint | null = null;
+  let selfHealth: number | null = null;
+  const isSelf = (guid: bigint): boolean => selfGuid !== undefined && guid === selfGuid;
 
   // If a block turns out to be a shape we don't decode (or the packet is truncated),
   // keep the GameObjects read so far rather than losing the whole packet.
@@ -100,12 +109,14 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         const objType = reader.u8();
         const flags = reader.u8();
         const pos = readMovement(reader, flags);
-        const entry = readValuesEntry(reader);
+        const { entry, health } = readValues(reader);
+        if (isSelf(guid) && health !== null) selfHealth = health;
         if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
         if (objType === OBJTYPE_UNIT && entry > 0) units.push({ guid, entry });
         if (objType === OBJTYPE_PLAYER && pos && (selfGuid === undefined || guid === selfGuid)) self = pos;
       } else if (updateType === UPDATETYPE_VALUES) {
-        readValuesEntry(reader);
+        const { health } = readValues(reader);
+        if (isSelf(guid) && health !== null) selfHealth = health;
       } else if (updateType === UPDATETYPE_MOVEMENT) {
         readMovement(reader, reader.u8());
       } else {
@@ -115,7 +126,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   } catch {
     // reader ran off the end of a block we mis-sized — keep the objects read so far.
   }
-  return { gameObjects, units, self };
+  return { gameObjects, units, self, selfHealth };
 }
 
 function readMovement(reader: PacketReader, flags: number): WorldPoint | null {
@@ -164,19 +175,28 @@ function readSpline(reader: PacketReader): void {
   reader.f32LE(); reader.f32LE(); reader.f32LE(); // final destination
 }
 
-/** Read a values block, returning OBJECT_FIELD_ENTRY (field 3) if present, else 0. */
-function readValuesEntry(reader: PacketReader): number {
+interface ValueFields {
+  /** OBJECT_FIELD_ENTRY, or 0 when the block did not carry it. */
+  readonly entry: number;
+  /** UNIT_FIELD_HEALTH, or null when the block did not carry it. */
+  readonly health: number | null;
+}
+
+/** Read a values block, keeping the few fields we act on. */
+function readValues(reader: PacketReader): ValueFields {
   const blockCount = reader.u8();
   const mask: number[] = [];
   for (let i = 0; i < blockCount; i += 1) mask.push(reader.u32LE());
   let entry = 0;
+  let health: number | null = null;
   for (let idx = 0; idx < blockCount * 32; idx += 1) {
     if (((mask[idx >>> 5] ?? 0) >>> (idx & 31)) & 1) {
       const value = reader.u32LE();
-      if (idx === 3) entry = value; // OBJECT_FIELD_ENTRY
+      if (idx === OBJECT_FIELD_ENTRY) entry = value;
+      else if (idx === UNIT_FIELD_HEALTH) health = value;
     }
   }
-  return entry;
+  return { entry, health };
 }
 
 /** The GameObject nearest a point (by squared distance), or null if there are none. */
