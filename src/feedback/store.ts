@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 
 /**
  * Player-submitted feedback/suggestions (the "feedback" whisper command). Kept so the
@@ -52,7 +53,6 @@ export interface FeedbackDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "feedback";
 const DEFAULT_TTL_DAYS = 365;
 
@@ -63,19 +63,16 @@ export class MongoFeedbackStore implements FeedbackStore {
     this.#db = db;
   }
 
-  static async connect(
-    uri: string,
-    dbName: string = DEFAULT_DB,
+  static async open(
+    database: Db,
     ttlDays: number = DEFAULT_TTL_DAYS,
   ): Promise<MongoFeedbackStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<FeedbackDoc>(COLLECTION);
+    const collection = database.collection<FeedbackDoc>(COLLECTION);
     await collection.createIndex({ at: -1 }, { expireAfterSeconds: ttlDays * 86_400 });
     const db: FeedbackDb = {
       insert: (doc) => collection.insertOne(doc).then(() => undefined),
       latest: (limit) => collection.find({}).sort({ at: -1 }).limit(limit).toArray(),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoFeedbackStore(db);
   }

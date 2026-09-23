@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "./mongo-connection.js";
 import type { ServerMonitorState } from "./server-monitor.js";
 
 /**
@@ -49,7 +50,6 @@ export interface ServerMonitorDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "monitors";
 const DOC_ID = "realm";
 
@@ -60,10 +60,8 @@ export class MongoServerMonitorStore implements ServerMonitorStore {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoServerMonitorStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<MonitorDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoServerMonitorStore> {
+    const collection = database.collection<MonitorDoc>(COLLECTION);
     const db: ServerMonitorDb = {
       get: () =>
         collection
@@ -73,7 +71,7 @@ export class MongoServerMonitorStore implements ServerMonitorStore {
         collection
           .updateOne({ _id: DOC_ID }, { $set: { announced: state.announced, downSince: state.downSince } }, { upsert: true })
           .then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoServerMonitorStore(db);
   }

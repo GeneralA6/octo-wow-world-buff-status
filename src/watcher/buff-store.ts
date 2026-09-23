@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 
 /**
  * Records when the Rallying Cry of the Dragonslayer buff dropped, PER FACTION (a
@@ -74,7 +75,6 @@ export interface BuffDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "buffdrops";
 const DEFAULT_TTL_DAYS = 90;
 
@@ -85,21 +85,18 @@ export class MongoBuffStore implements BuffStore {
     this.#db = db;
   }
 
-  static async connect(
-    uri: string,
-    dbName: string = DEFAULT_DB,
+  static async open(
+    database: Db,
     ttlDays: number = DEFAULT_TTL_DAYS,
   ): Promise<MongoBuffStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<BuffDoc>(COLLECTION);
+    const collection = database.collection<BuffDoc>(COLLECTION);
     await collection.createIndex({ appliedAt: 1 }, { expireAfterSeconds: ttlDays * 86_400 });
     await collection.createIndex({ faction: 1, appliedAt: -1 });
     const db: BuffDb = {
       insert: (doc) => collection.insertOne(doc).then(() => undefined),
       latest: (faction, limit) =>
         collection.find({ faction }).sort({ appliedAt: -1 }).limit(limit).toArray(),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoBuffStore(db);
   }

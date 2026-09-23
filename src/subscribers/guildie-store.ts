@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 import { subscriberKey } from "./store.js";
 
 /**
@@ -55,7 +56,6 @@ export interface GuildieDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "guildies";
 
 export class MongoGuildieStore implements GuildieStore {
@@ -65,10 +65,8 @@ export class MongoGuildieStore implements GuildieStore {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoGuildieStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<GuildieDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoGuildieStore> {
+    const collection = database.collection<GuildieDoc>(COLLECTION);
     await collection.createIndex({ name: 1 }, { unique: true });
     const db: GuildieDb = {
       addKey: async (key, joinedAt) => {
@@ -81,7 +79,7 @@ export class MongoGuildieStore implements GuildieStore {
       },
       removeKey: async (key) => (await collection.deleteOne({ name: key })).deletedCount === 1,
       count: () => collection.countDocuments(),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoGuildieStore(db);
   }

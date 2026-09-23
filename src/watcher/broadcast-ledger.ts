@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 import type { Faction } from "./buff-store.js";
 import type { RaidEvent } from "./raid-events.js";
 
@@ -144,7 +145,6 @@ export interface BroadcastDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "broadcasts";
 
 export class MongoBroadcastLedger implements BroadcastLedger {
@@ -154,10 +154,8 @@ export class MongoBroadcastLedger implements BroadcastLedger {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoBroadcastLedger> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<BroadcastDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoBroadcastLedger> {
+    const collection = database.collection<BroadcastDoc>(COLLECTION);
     await collection.createIndex({ city: 1, kind: 1 }, { unique: true });
     const db: BroadcastDb = {
       get: (city, kind) => collection.findOne({ city, kind }),
@@ -165,7 +163,7 @@ export class MongoBroadcastLedger implements BroadcastLedger {
         collection
           .updateOne({ city: doc.city, kind: doc.kind }, { $set: doc }, { upsert: true })
           .then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoBroadcastLedger(db);
   }

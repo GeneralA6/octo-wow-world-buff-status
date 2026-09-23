@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 
 /**
  * Remembers which Discord message the Darkmoon board owns.
@@ -54,7 +55,6 @@ export interface DarkmoonWidgetDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "darkmoon";
 const DOC_ID = "widget";
 
@@ -65,10 +65,8 @@ export class MongoDarkmoonWidgetStore implements DarkmoonWidgetStore {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoDarkmoonWidgetStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<WidgetDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoDarkmoonWidgetStore> {
+    const collection = database.collection<WidgetDoc>(COLLECTION);
     const db: DarkmoonWidgetDb = {
       get: () =>
         collection.findOne({ _id: DOC_ID }).then((doc) => (doc ? { messageId: doc.messageId } : null)),
@@ -76,7 +74,7 @@ export class MongoDarkmoonWidgetStore implements DarkmoonWidgetStore {
         collection
           .updateOne({ _id: DOC_ID }, { $set: { messageId: state.messageId } }, { upsert: true })
           .then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoDarkmoonWidgetStore(db);
   }

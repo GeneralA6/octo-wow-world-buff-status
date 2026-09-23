@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 
 /**
  * Remembers which Chronicle kills we've already processed and how they reconciled. Chronicle's
@@ -48,7 +49,6 @@ export interface ChronicleDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "chroniclekills";
 const DEFAULT_TTL_DAYS = 90;
 
@@ -59,14 +59,11 @@ export class MongoChronicleStore implements ChronicleStore {
     this.#db = db;
   }
 
-  static async connect(
-    uri: string,
-    dbName: string = DEFAULT_DB,
+  static async open(
+    database: Db,
     ttlDays: number = DEFAULT_TTL_DAYS,
   ): Promise<MongoChronicleStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<StoredKill>(COLLECTION);
+    const collection = database.collection<StoredKill>(COLLECTION);
     await collection.createIndex({ logId: 1 }, { unique: true });
     await collection.createIndex({ processedAt: 1 }, { expireAfterSeconds: ttlDays * 86_400 });
     const db: ChronicleDb = {
@@ -79,7 +76,7 @@ export class MongoChronicleStore implements ChronicleStore {
       // field that's also the query key would be a conflict.
       upsert: ({ logId, ...rest }) =>
         collection.updateOne({ logId }, { $setOnInsert: rest }, { upsert: true }).then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoChronicleStore(db);
   }

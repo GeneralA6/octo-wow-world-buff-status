@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "./mongo-connection.js";
 
 /**
  * Persists the live server-status widget's durable state so it survives a restart:
@@ -77,7 +78,6 @@ export interface ServerStatusWidgetDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "widgets";
 const DOC_ID = "status";
 
@@ -116,17 +116,15 @@ export class MongoServerStatusWidgetStore implements ServerStatusWidgetStore {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoServerStatusWidgetStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<WidgetDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoServerStatusWidgetStore> {
+    const collection = database.collection<WidgetDoc>(COLLECTION);
     const db: ServerStatusWidgetDb = {
       get: () => collection.findOne({ _id: DOC_ID }).then((doc) => (doc ? docToState(doc) : null)),
       set: (state) =>
         collection
           .updateOne({ _id: DOC_ID }, { $set: stateToDoc(state) }, { upsert: true })
           .then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoServerStatusWidgetStore(db);
   }

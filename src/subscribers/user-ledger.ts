@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 import { subscriberKey } from "./store.js";
 
 /**
@@ -50,7 +51,6 @@ export interface UserDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "users";
 
 export class MongoUserLedger implements UserLedger {
@@ -60,14 +60,11 @@ export class MongoUserLedger implements UserLedger {
     this.#db = db;
   }
 
-  static async connect(
-    uri: string,
-    dbName: string = DEFAULT_DB,
+  static async open(
+    database: Db,
     collectionName: string = COLLECTION,
   ): Promise<MongoUserLedger> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<UserDoc>(collectionName);
+    const collection = database.collection<UserDoc>(collectionName);
     await collection.createIndex({ name: 1 }, { unique: true });
     const db: UserDb = {
       upsert: (key, firstSeen) =>
@@ -75,7 +72,7 @@ export class MongoUserLedger implements UserLedger {
           .updateOne({ name: key }, { $setOnInsert: { name: key, firstSeen } }, { upsert: true })
           .then(() => undefined),
       count: () => collection.countDocuments(),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoUserLedger(db);
   }

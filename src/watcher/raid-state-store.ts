@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 import type { ClearTrackerState } from "./clear-tracker.js";
 
 /**
@@ -50,7 +51,6 @@ export interface RaidStateDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "raidstate";
 
 export class MongoRaidStateStore implements RaidStateStore {
@@ -60,16 +60,14 @@ export class MongoRaidStateStore implements RaidStateStore {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoRaidStateStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<RaidStateDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoRaidStateStore> {
+    const collection = database.collection<RaidStateDoc>(COLLECTION);
     const db: RaidStateDb = {
       get: (lane) => collection.findOne({ _id: lane }).then((doc) => doc?.state ?? null),
       set: (lane, state) =>
         collection.updateOne({ _id: lane }, { $set: { state } }, { upsert: true }).then(() => undefined),
       remove: (lane) => collection.deleteOne({ _id: lane }).then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoRaidStateStore(db);
   }

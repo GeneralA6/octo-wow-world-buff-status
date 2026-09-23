@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 
 /**
  * Persists every /who observation so detection can be REPLAYED on real history —
@@ -51,7 +52,6 @@ export interface SnapshotDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "snapshots";
 const DEFAULT_TTL_DAYS = 30;
 
@@ -62,19 +62,16 @@ export class MongoSnapshotStore implements SnapshotStore {
     this.#db = db;
   }
 
-  static async connect(
-    uri: string,
-    dbName: string = DEFAULT_DB,
+  static async open(
+    database: Db,
     ttlDays: number = DEFAULT_TTL_DAYS,
   ): Promise<MongoSnapshotStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<SnapshotDoc>(COLLECTION);
+    const collection = database.collection<SnapshotDoc>(COLLECTION);
     await collection.createIndex({ ts: 1 }, { expireAfterSeconds: ttlDays * 86_400 });
     const db: SnapshotDb = {
       insert: (doc) => collection.insertOne(doc).then(() => undefined),
       latest: (limit) => collection.find().sort({ ts: -1 }).limit(limit).toArray(),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoSnapshotStore(db);
   }

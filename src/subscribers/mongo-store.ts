@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 import {
   DEFAULT_FACTIONS,
   type Faction,
@@ -46,7 +47,6 @@ export interface SubscriberDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "subscribers";
 
 function toSubscriber(doc: SubscriberDoc): Subscriber {
@@ -70,10 +70,8 @@ export class MongoSubscriberStore implements SubscriberStore {
   }
 
   /** Connect to Mongo and return a ready store. Caller must `close()` it. */
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoSubscriberStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<SubscriberDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoSubscriberStore> {
+    const collection = database.collection<SubscriberDoc>(COLLECTION);
     const db: SubscriberDb = {
       upsertNew: ({ _id, ...rest }) =>
         collection.updateOne({ _id }, { $setOnInsert: rest }, { upsert: true }),
@@ -82,7 +80,7 @@ export class MongoSubscriberStore implements SubscriberStore {
       getByKey: (key) => collection.findOne({ _id: key }),
       setFields: (key, fields) => collection.updateOne({ _id: key }, { $set: fields }),
       list: () => collection.find().toArray(),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoSubscriberStore(db);
   }

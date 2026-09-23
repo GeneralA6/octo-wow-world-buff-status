@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 import { isFaireLocation } from "./location.js";
 import { NO_KNOWLEDGE, type FaireKnowledge, type FaireObservation, type ObservationSource } from "./observation.js";
 
@@ -62,7 +63,6 @@ export interface KnowledgeDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "darkmoon";
 const DOC_ID = "knowledge";
 
@@ -112,10 +112,8 @@ export class MongoKnowledgeStore implements KnowledgeStore {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoKnowledgeStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<KnowledgeDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoKnowledgeStore> {
+    const collection = database.collection<KnowledgeDoc>(COLLECTION);
     const db: KnowledgeDb = {
       get: () =>
         collection.findOne({ _id: DOC_ID }).then((doc) => (doc ? docToKnowledge(doc) : NO_KNOWLEDGE)),
@@ -132,7 +130,7 @@ export class MongoKnowledgeStore implements KnowledgeStore {
             { upsert: true },
           )
           .then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoKnowledgeStore(db);
   }

@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 
 /**
  * Persists the per-lane raid LOCKOUT ledger (player name -> epoch ms when last locked to a raid), so
@@ -45,7 +46,6 @@ export interface LockoutDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "lockouts";
 
 export class MongoLockoutStore implements LockoutStore {
@@ -55,15 +55,13 @@ export class MongoLockoutStore implements LockoutStore {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoLockoutStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<LockoutDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoLockoutStore> {
+    const collection = database.collection<LockoutDoc>(COLLECTION);
     const db: LockoutDb = {
       get: (lane) => collection.findOne({ _id: lane }).then((doc) => doc?.entries ?? null),
       set: (lane, entries) =>
         collection.updateOne({ _id: lane }, { $set: { entries } }, { upsert: true }).then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoLockoutStore(db);
   }

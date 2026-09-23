@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 import type { WorldPoint } from "../protocol/update-object.js";
 import type { Anchor } from "./listener-anchor.js";
 
@@ -54,7 +55,6 @@ export interface AnchorDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "listeneranchors";
 const LOGIN_ID = "__login__";
 
@@ -65,14 +65,12 @@ export class MongoAnchorStore implements AnchorStore {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoAnchorStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<AnchorDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoAnchorStore> {
+    const collection = database.collection<AnchorDoc>(COLLECTION);
     const db: AnchorDb = {
       get: (id) => collection.findOne({ _id: id }),
       put: (id, fields) => collection.updateOne({ _id: id }, { $set: fields }, { upsert: true }).then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoAnchorStore(db);
   }

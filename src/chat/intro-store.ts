@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 import { subscriberKey } from "../subscribers/store.js";
 
 /**
@@ -48,7 +49,6 @@ export interface IntroDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "introductions";
 const DEFAULT_TTL_DAYS = 90;
 
@@ -59,14 +59,11 @@ export class MongoIntroStore implements IntroStore {
     this.#db = db;
   }
 
-  static async connect(
-    uri: string,
-    dbName: string = DEFAULT_DB,
+  static async open(
+    database: Db,
     ttlDays: number = DEFAULT_TTL_DAYS,
   ): Promise<MongoIntroStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<IntroDoc>(COLLECTION);
+    const collection = database.collection<IntroDoc>(COLLECTION);
     await collection.createIndex({ name: 1 }, { unique: true });
     await collection.createIndex({ at: 1 }, { expireAfterSeconds: ttlDays * 86_400 });
     const db: IntroDb = {
@@ -78,7 +75,7 @@ export class MongoIntroStore implements IntroStore {
         );
         return res.upsertedCount === 1;
       },
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoIntroStore(db);
   }

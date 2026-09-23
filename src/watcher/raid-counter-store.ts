@@ -1,4 +1,5 @@
-import { MongoClient } from "mongodb";
+import type { Db } from "mongodb";
+import { releaseSharedClient } from "../mongo-connection.js";
 
 /**
  * A monotonic count of raids the bot has detected, so each run gets a stable reference
@@ -48,7 +49,6 @@ export interface RaidCounterDb {
   close(): Promise<void>;
 }
 
-const DEFAULT_DB = "onyxiabot";
 const COLLECTION = "counters";
 const DOC_ID = "raid";
 
@@ -59,15 +59,13 @@ export class MongoRaidCounterStore implements RaidCounterStore {
     this.#db = db;
   }
 
-  static async connect(uri: string, dbName: string = DEFAULT_DB): Promise<MongoRaidCounterStore> {
-    const client = new MongoClient(uri);
-    await client.connect();
-    const collection = client.db(dbName).collection<CounterDoc>(COLLECTION);
+  static async open(database: Db): Promise<MongoRaidCounterStore> {
+    const collection = database.collection<CounterDoc>(COLLECTION);
     const db: RaidCounterDb = {
       get: () => collection.findOne({ _id: DOC_ID }).then((doc) => doc?.value ?? null),
       set: (value) =>
         collection.updateOne({ _id: DOC_ID }, { $set: { value } }, { upsert: true }).then(() => undefined),
-      close: () => client.close(),
+      close: releaseSharedClient,
     };
     return new MongoRaidCounterStore(db);
   }

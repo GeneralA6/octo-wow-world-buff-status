@@ -106,6 +106,7 @@ import { WhisperQueue } from "./chat/whisper-queue.js";
 import { WhisperPool } from "./chat/whisper-pool.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
+import { connectMongo, type MongoConnection } from "./mongo-connection.js";
 import { needsFactionResolution, subscriberKey, type Subscriber, type SubscriberStore } from "./subscribers/store.js";
 import { jitter } from "./schedule.js";
 import { DownTracker } from "./down-tracker.js";
@@ -1081,8 +1082,21 @@ async function runListener(
   });
 }
 
+/** Open the shared MongoDB connection, or null (logged) when it cannot be reached. */
+async function openMongo(uri: string, dbName: string, logger: Logger): Promise<MongoConnection | null> {
+  try {
+    const mongo = await connectMongo(uri, dbName);
+    logger.info(`mongo: connected to db "${dbName}"`);
+    return mongo;
+  } catch (error) {
+    logger.error(`mongo: connect failed (${describeError(error)}); every store falls back to memory`);
+    return null;
+  }
+}
+
 /** Open the subscriber store — Mongo when configured, else in-memory. */
 async function openStore(
+  mongo: MongoConnection | null,
   config: BotConfig,
   logger: Logger,
   notifyAdmin: (title: string, body: string) => Promise<void>,
@@ -1091,17 +1105,21 @@ async function openStore(
     logger.warn("subscribers: no MONGODB_URI — keeping subscribers in memory (lost on restart)");
     return new InMemorySubscriberStore();
   }
-  try {
-    const store = await MongoSubscriberStore.connect(config.mongodbUri, config.mongodbDb);
-    logger.info(`subscribers: connected to MongoDB db "${config.mongodbDb}"`);
-    return store;
-  } catch (error) {
-    logger.error(`subscribers: MongoDB connect failed (${describeError(error)}); using memory`);
+  const offline = async (): Promise<SubscriberStore> => {
     await notifyAdmin(
       "⚠️ Subscriber store offline",
       "MongoDB is unreachable — in-game subscriptions are in memory until restart.",
     );
     return new InMemorySubscriberStore();
+  };
+  if (!mongo) return offline(); // the shared connection already logged why
+  try {
+    const store = await MongoSubscriberStore.open(mongo.db);
+    logger.info(`subscribers: stored in MongoDB db "${config.mongodbDb}"`);
+    return store;
+  } catch (error) {
+    logger.error(`subscribers: MongoDB open failed (${describeError(error)}); using memory`);
+    return offline();
   }
 }
 
@@ -1131,12 +1149,16 @@ async function main(): Promise<void> {
   }
 
 
+  // One MongoDB client shared by every store below (see mongo-connection.ts). Unreachable → every
+  // store falls back to memory, exactly as each did on its own before.
+  const mongo = config.mongodbUri ? await openMongo(config.mongodbUri, config.mongodbDb, logger) : null;
+
   // Monotonic raid reference number (#834) — persisted so it climbs across restarts. Seeded
   // once, bumped in memory when a raid forms, saved as it goes.
   let raidCounterStore: RaidCounterStore = new InMemoryRaidCounterStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      raidCounterStore = await MongoRaidCounterStore.connect(config.mongodbUri, config.mongodbDb);
+      raidCounterStore = await MongoRaidCounterStore.open(mongo.db);
     } catch (error) {
       logger.error(`raid counter: MongoDB connect failed (${describeError(error)}); numbering in memory`);
     }
@@ -1151,9 +1173,9 @@ async function main(): Promise<void> {
   // The raid in progress per lane — persisted so a restart RESUMES it (keeps its number,
   // form time and roster) instead of orphaning it and missing the exit alert/recap.
   let raidStateStore: RaidStateStore = new InMemoryRaidStateStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      raidStateStore = await MongoRaidStateStore.connect(config.mongodbUri, config.mongodbDb);
+      raidStateStore = await MongoRaidStateStore.open(mongo.db);
     } catch (error) {
       logger.error(`raid state: MongoDB connect failed (${describeError(error)}); not resuming across restarts`);
     }
@@ -1162,9 +1184,9 @@ async function main(): Promise<void> {
   // The per-lane raid lockout ledger — persisted so a redeploy (which restarts the bot) doesn't clear
   // the locks and let a just-cleared raid's lingering members re-form a phantom duplicate.
   let lockoutStore: LockoutStore = new InMemoryLockoutStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      lockoutStore = await MongoLockoutStore.connect(config.mongodbUri, config.mongodbDb);
+      lockoutStore = await MongoLockoutStore.open(mongo.db);
     } catch (error) {
       logger.error(`raid lockout: MongoDB connect failed (${describeError(error)}); locks won't survive restarts`);
     }
@@ -1172,9 +1194,9 @@ async function main(): Promise<void> {
 
   // The realm-outage state — persisted so a restart mid-outage doesn't re-announce "server down".
   let serverMonitorStore: ServerMonitorStore = new InMemoryServerMonitorStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      serverMonitorStore = await MongoServerMonitorStore.connect(config.mongodbUri, config.mongodbDb);
+      serverMonitorStore = await MongoServerMonitorStore.open(mongo.db);
     } catch (error) {
       logger.error(`server monitor: MongoDB connect failed (${describeError(error)}); realm status won't survive restarts`);
     }
@@ -1184,9 +1206,9 @@ async function main(): Promise<void> {
   // redeploy edits the existing widget instead of orphaning it. The widget itself is wired further
   // down (it needs the monitor + ping samples); these are declared here so shutdown can release them.
   let statusWidgetStore: ServerStatusWidgetStore = new InMemoryServerStatusWidgetStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      statusWidgetStore = await MongoServerStatusWidgetStore.connect(config.mongodbUri, config.mongodbDb);
+      statusWidgetStore = await MongoServerStatusWidgetStore.open(mongo.db);
     } catch (error) {
       logger.error(`status widget: MongoDB connect failed (${describeError(error)}); the widget will repost after a restart`);
     }
@@ -1282,14 +1304,14 @@ async function main(): Promise<void> {
   };
 
   const store = config.whispersEnabled
-    ? await openStore(config, logger, notifyAdmin)
+    ? await openStore(mongo, config, logger, notifyAdmin)
     : new InMemorySubscriberStore();
 
   // Raw /who snapshots for offline replay/stats — Mongo when configured, else memory.
   let snapshots: SnapshotStore = new InMemorySnapshotStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      snapshots = await MongoSnapshotStore.connect(config.mongodbUri, config.mongodbDb);
+      snapshots = await MongoSnapshotStore.open(mongo.db);
       logger.info("snapshots: recording /who history to MongoDB");
     } catch (error) {
       logger.error(`snapshots: MongoDB connect failed (${describeError(error)}); recording in memory`);
@@ -1298,9 +1320,9 @@ async function main(): Promise<void> {
 
   // Buff-drop times per faction, fed by the city listeners — Mongo when configured.
   let buffStore: BuffStore = new InMemoryBuffStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      buffStore = await MongoBuffStore.connect(config.mongodbUri, config.mongodbDb);
+      buffStore = await MongoBuffStore.open(mongo.db);
       logger.info("buffs: recording drop times to MongoDB");
     } catch (error) {
       logger.error(`buffs: MongoDB connect failed (${describeError(error)}); recording in memory`);
@@ -1309,9 +1331,9 @@ async function main(): Promise<void> {
   // Per-cycle park-alert dedup, so a redeploy/wipe/churn can't re-broadcast — Mongo when
   // configured, else in memory (which resets on restart, i.e. no cross-deploy dedup).
   let broadcasts: BroadcastLedger = new InMemoryBroadcastLedger();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      broadcasts = await MongoBroadcastLedger.connect(config.mongodbUri, config.mongodbDb);
+      broadcasts = await MongoBroadcastLedger.open(mongo.db);
       logger.info("broadcasts: recording park-alert times to MongoDB");
     } catch (error) {
       logger.error(`broadcasts: MongoDB connect failed (${describeError(error)}); deduping in memory`);
@@ -1319,9 +1341,9 @@ async function main(): Promise<void> {
   }
   // Learned raid clear-times for the self-improving forming heads-up.
   let durationStore: DurationStore = new InMemoryDurationStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      durationStore = await MongoDurationStore.connect(config.mongodbUri, config.mongodbDb);
+      durationStore = await MongoDurationStore.open(mongo.db);
       logger.info("durations: recording raid clear-times to MongoDB");
     } catch (error) {
       logger.error(`durations: MongoDB connect failed (${describeError(error)}); recording in memory`);
@@ -1331,9 +1353,9 @@ async function main(): Promise<void> {
   // channel. Worth persisting even though the faire only visits weekly: the sighting also pins the
   // calendar's zone alternation, and that fact stays true long after the faire has left.
   let knowledgeStore: KnowledgeStore = new InMemoryKnowledgeStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      knowledgeStore = await MongoKnowledgeStore.connect(config.mongodbUri, config.mongodbDb);
+      knowledgeStore = await MongoKnowledgeStore.open(mongo.db);
       logger.info("darkmoon: remembering faire observations in MongoDB");
     } catch (error) {
       logger.error(`darkmoon: MongoDB connect failed (${describeError(error)}); remembering in memory`);
@@ -1342,9 +1364,9 @@ async function main(): Promise<void> {
   // Which message the Darkmoon board owns. Its own tiny document: losing it would orphan the board
   // and post a second one on every redeploy.
   let darkmoonWidgetStore: DarkmoonWidgetStore = new InMemoryDarkmoonWidgetStore();
-  if (config.mongodbUri && config.discordDarkmoonChannelId) {
+  if (mongo && config.discordDarkmoonChannelId) {
     try {
-      darkmoonWidgetStore = await MongoDarkmoonWidgetStore.connect(config.mongodbUri, config.mongodbDb);
+      darkmoonWidgetStore = await MongoDarkmoonWidgetStore.open(mongo.db);
     } catch (error) {
       logger.error(`darkmoon: board state MongoDB connect failed (${describeError(error)}); in memory`);
     }
@@ -1381,9 +1403,9 @@ async function main(): Promise<void> {
 
   // Player-submitted feedback/suggestions — kept for review, posted to the feedback channel.
   let feedbackStore: FeedbackStore = new InMemoryFeedbackStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      feedbackStore = await MongoFeedbackStore.connect(config.mongodbUri, config.mongodbDb);
+      feedbackStore = await MongoFeedbackStore.open(mongo.db);
       logger.info("feedback: recording player suggestions to MongoDB");
     } catch (error) {
       logger.error(`feedback: MongoDB connect failed (${describeError(error)}); recording in memory`);
@@ -1392,9 +1414,9 @@ async function main(): Promise<void> {
   // Who Bufftracker has already introduced itself to, so the intro + auto-invite fire once per
   // player rather than every whisper. In memory without Mongo (re-introduces after a redeploy).
   let introStore: IntroStore = new InMemoryIntroStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      introStore = await MongoIntroStore.connect(config.mongodbUri, config.mongodbDb);
+      introStore = await MongoIntroStore.open(mongo.db);
       logger.info("intros: remembering greeted players in MongoDB");
     } catch (error) {
       logger.error(`intros: MongoDB connect failed (${describeError(error)}); remembering in memory`);
@@ -1403,9 +1425,9 @@ async function main(): Promise<void> {
   // Lifetime user count for statistics: every distinct player who has ever subscribed, kept even
   // after they unsubscribe (the subscriber store drops the active row; this ledger never does).
   let userLedger: UserLedger = new InMemoryUserLedger();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      userLedger = await MongoUserLedger.connect(config.mongodbUri, config.mongodbDb);
+      userLedger = await MongoUserLedger.open(mongo.db);
       logger.info("users: counting lifetime subscribers in MongoDB");
     } catch (error) {
       logger.error(`users: MongoDB connect failed (${describeError(error)}); counting in memory`);
@@ -1421,9 +1443,9 @@ async function main(): Promise<void> {
   // Lifetime count of distinct players we've guild-invited — the same shape as the user ledger,
   // in its own `invites` collection.
   let inviteLedger: UserLedger = new InMemoryUserLedger();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      inviteLedger = await MongoUserLedger.connect(config.mongodbUri, config.mongodbDb, "invites");
+      inviteLedger = await MongoUserLedger.open(mongo.db, "invites");
       logger.info("invites: counting lifetime guild invites in MongoDB");
     } catch (error) {
       logger.error(`invites: MongoDB connect failed (${describeError(error)}); counting in memory`);
@@ -1432,9 +1454,9 @@ async function main(): Promise<void> {
   // Players CURRENTLY in the guild who joined via our invite — the "active subscribers" equivalent.
   // Rises on an invited join, falls on a guild leave.
   let guildieStore: GuildieStore = new InMemoryGuildieStore();
-  if (config.mongodbUri) {
+  if (mongo) {
     try {
-      guildieStore = await MongoGuildieStore.connect(config.mongodbUri, config.mongodbDb);
+      guildieStore = await MongoGuildieStore.open(mongo.db);
       logger.info("guildies: tracking active bot-invited guild members in MongoDB");
     } catch (error) {
       logger.error(`guildies: MongoDB connect failed (${describeError(error)}); tracking in memory`);
@@ -1448,9 +1470,9 @@ async function main(): Promise<void> {
   const CHRONICLE_MATCH_WINDOW_MS = 30 * 60_000;
   let chronicleStore: ChronicleStore | null = null;
   let chronicle: LaneChronicle | null = null;
-  if (config.chronicleEnabled && config.mongodbUri) {
+  if (config.chronicleEnabled && mongo) {
     try {
-      chronicleStore = await MongoChronicleStore.connect(config.mongodbUri, config.mongodbDb);
+      chronicleStore = await MongoChronicleStore.open(mongo.db);
       chronicle = {
         client: new HttpChronicleClient(),
         store: chronicleStore,
@@ -1632,7 +1654,9 @@ async function main(): Promise<void> {
       serverMonitorStore.close(),
       statusWidgetStore.close(),
       chronicleStore ? chronicleStore.close() : Promise.resolve(),
-    ]).finally(() => process.exit(0));
+    ])
+      .then(() => mongo?.close())
+      .finally(() => process.exit(0));
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
