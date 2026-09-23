@@ -92,10 +92,10 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
       const updateType = reader.u8();
       if (updateType === UPDATETYPE_OUT_OF_RANGE || updateType === UPDATETYPE_NEAR) {
         const n = reader.u32LE();
-        for (let j = 0; j < n; j += 1) readPackedGuid(reader);
+        for (let j = 0; j < n; j += 1) reader.packedGuid();
         continue;
       }
-      const guid = readPackedGuid(reader);
+      const guid = reader.packedGuid();
       if (updateType === UPDATETYPE_CREATE || updateType === UPDATETYPE_CREATE2) {
         const objType = reader.u8();
         const flags = reader.u8();
@@ -118,15 +118,6 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   return { gameObjects, units, self };
 }
 
-function readPackedGuid(reader: PacketReader): bigint {
-  const mask = reader.u8();
-  let guid = 0n;
-  for (let i = 0; i < 8; i += 1) {
-    if (mask & (1 << i)) guid |= BigInt(reader.u8()) << BigInt(i * 8);
-  }
-  return guid;
-}
-
 function readMovement(reader: PacketReader, flags: number): WorldPoint | null {
   let pos: WorldPoint | null = null;
   if (flags & UPDATEFLAG_LIVING) {
@@ -135,7 +126,7 @@ function readMovement(reader: PacketReader, flags: number): WorldPoint | null {
     pos = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
     reader.f32LE(); // orientation
     if (moveFlags & MOVEFLAG_ONTRANSPORT) {
-      readPackedGuid(reader);
+      reader.packedGuid();
       reader.f32LE(); reader.f32LE(); reader.f32LE(); reader.f32LE(); // transport x,y,z,o
       reader.u32LE(); // transport time
     }

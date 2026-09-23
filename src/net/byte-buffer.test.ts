@@ -78,6 +78,17 @@ describe("PacketReader", () => {
     expect(() => reader.cString()).toThrow(/unterminated/);
   });
 
+  it("round-trips a packed guid, writing only its non-zero bytes behind a mask", () => {
+    const creature = 0xf130_0000_2a00_0507n;
+    const buf = new PacketWriter().packedGuid(creature).packedGuid(0n).toBuffer();
+    // mask 0b11001011 = bytes 0,1,3,6,7; then the empty guid is a lone zero mask.
+    expect([...buf]).toEqual([0xcb, 0x07, 0x05, 0x2a, 0x30, 0xf1, 0x00]);
+    const reader = new PacketReader(buf);
+    expect(reader.packedGuid()).toBe(creature);
+    expect(reader.packedGuid()).toBe(0n);
+    expect(reader.remaining).toBe(0);
+  });
+
   it("can start reading from a given offset", () => {
     const buf = Buffer.from([0xff, 0xff, 0x07]);
     expect(new PacketReader(buf, 2).u8()).toBe(7);

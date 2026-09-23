@@ -87,6 +87,23 @@ export class PacketWriter {
   }
 
   /** Raw bytes, copied verbatim. */
+  /** A packed GUID: a mask byte naming which of the 8 little-endian bytes follow, then those
+   *  non-zero bytes. How the world protocol sends most unit references. */
+  packedGuid(value: bigint): this {
+    let mask = 0;
+    const present: number[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      const byte = Number((value >> BigInt(i * 8)) & 0xffn);
+      if (byte !== 0) {
+        mask |= 1 << i;
+        present.push(byte);
+      }
+    }
+    this.u8(mask);
+    for (const byte of present) this.u8(byte);
+    return this;
+  }
+
   bytes(value: Buffer | Uint8Array): this {
     this.#ensure(value.length);
     Buffer.from(value).copy(this.#buf, this.#length);
@@ -191,6 +208,16 @@ export class PacketReader {
     const value = this.#buf.readBigUInt64LE(this.#offset);
     this.#offset += 8;
     return value;
+  }
+
+  /** A packed GUID — see `PacketWriter.packedGuid`. */
+  packedGuid(): bigint {
+    const mask = this.u8();
+    let guid = 0n;
+    for (let i = 0; i < 8; i += 1) {
+      if (mask & (1 << i)) guid |= BigInt(this.u8()) << BigInt(i * 8);
+    }
+    return guid;
   }
 
   bytes(count: number): Buffer {
