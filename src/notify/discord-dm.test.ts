@@ -163,6 +163,23 @@ describe("DiscordDmSender", () => {
     });
   });
 
+  describe("pinChannelMessage", () => {
+    it("PUTs the message into the channel's pins (204 = ok)", async () => {
+      const fetchImpl = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 204));
+      const result = await new DiscordDmSender("tok", fetchImpl).pinChannelMessage("chan9", "msg7");
+      expect(result).toEqual({ ok: true });
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toBe("https://discord.com/api/v10/channels/chan9/messages/pins/msg7");
+      expect(init.method).toBe("PUT");
+    });
+
+    it("surfaces a missing Pin Messages permission as unreachable, and needs a token", async () => {
+      const forbidden = new DiscordDmSender("tok", () => Promise.resolve(res(false, 403)));
+      expect(await forbidden.pinChannelMessage("chan9", "msg7")).toEqual({ ok: false, kind: "unreachable", status: 403 });
+      expect(await new DiscordDmSender(null).pinChannelMessage("chan9", "msg7")).toEqual({ ok: false, kind: "not-configured" });
+    });
+  });
+
   describe("renameChannel", () => {
     it("PATCHes the channel name", async () => {
       const fetchImpl = vi.fn<DiscordFetch>().mockResolvedValue(res(true, 200));

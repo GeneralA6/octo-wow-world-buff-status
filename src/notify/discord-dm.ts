@@ -165,6 +165,22 @@ export class DiscordDmSender {
     }
   }
 
+  /** Pin a message (PUT /channels/{id}/messages/pins/{id}). Needs the Pin Messages permission in the
+   *  channel — without it Discord answers 403, which comes back as `unreachable`. */
+  async pinChannelMessage(channelId: string, messageId: string): Promise<DmResult> {
+    if (!this.#botToken) return { ok: false, kind: "not-configured" };
+    try {
+      const response = await this.#fetch(`${API}/channels/${channelId}/messages/pins/${messageId}`, {
+        method: "PUT",
+        headers: this.#headers(this.#botToken),
+        body: "",
+      });
+      return response.ok ? { ok: true } : classify(response.status);
+    } catch {
+      return { ok: false, kind: "error" };
+    }
+  }
+
   /** Rename a channel (PATCH /channels/{id}). Needs the Manage Channels permission. Discord limits
    *  channel renames to ~2 per 10 minutes; a 429 comes back as `error` with its status so the caller
    *  can back off (the status widget renames only on a confirmed up/down transition, so it rarely does). */
