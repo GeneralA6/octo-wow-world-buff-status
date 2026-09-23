@@ -4,10 +4,11 @@ import { describe, expect, it } from "vitest";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { AUTH_OK, ChatType, GuildEvent, WorldOpcode } from "../protocol/opcodes.js";
 import type { WhoResult } from "../protocol/who.js";
-import type { MonsterChat } from "../protocol/chat.js";
+import type { IncomingChat, MonsterChat } from "../protocol/chat.js";
+import type { CombatEvent } from "../protocol/combat-log.js";
 import { PacketReader, PacketWriter } from "./byte-buffer.js";
 import type { NodeSocketLike } from "./socket.js";
-import { WorldClient } from "./world-client.js";
+import { WorldClient, type WorldClientHandlers } from "./world-client.js";
 
 const SESSION_KEY = Buffer.from(Array.from({ length: 40 }, (_, i) => (i * 7 + 1) & 0xff));
 
@@ -38,6 +39,7 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
   readonly standStates: number[] = [];
   readonly gameObjUses: bigint[] = [];
   readonly guildInvites: string[] = [];
+  readonly nameQueries: bigint[] = [];
 
   constructor(characters: { guid: bigint; name: string }[]) {
     super();
@@ -62,6 +64,26 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
       .u8(0)
       .toBuffer();
     this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
+  }
+
+  /** Deliver chat from a nearby player (say/yell/emote share the whisper layout). */
+  pushPlayerChat(type: number, senderGuid: bigint, text: string): void {
+    const msg = Buffer.from(text, "utf8");
+    const body = new PacketWriter()
+      .u8(type)
+      .u32LE(1)
+      .u64LE(senderGuid)
+      .u32LE(msg.length + 1)
+      .bytes(msg)
+      .u8(0)
+      .u8(0)
+      .toBuffer();
+    this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
+  }
+
+  /** Deliver any server packet as-is. */
+  pushPacket(opcode: number, body: Buffer): void {
+    this.#sendServer(opcode, body);
   }
 
   /** Deliver an SMSG_GUILD_EVENT (u8 type, u8 count, `count` cstrings). */
@@ -171,6 +193,7 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
         break;
       case WorldOpcode.CMSG_NAME_QUERY: {
         const guid = new PacketReader(body).u64LE();
+        this.nameQueries.push(guid);
         const name = this.#names.get(guid) ?? "Unknown";
         this.#sendServer(
           WorldOpcode.SMSG_NAME_QUERY_RESPONSE,
@@ -651,5 +674,90 @@ describe("WorldClient (against a scripted mock server)", () => {
     expect(await withTimeout(measured)).toBeGreaterThanOrEqual(0);
 
     client.close();
+  });
+  describe("combat, nearby chat and names", () => {
+    async function connect(handlers: WorldClientHandlers): Promise<{ socket: MockServerSocket; client: WorldClient }> {
+      const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+      let markReady: () => void = () => {};
+      const ready = new Promise<void>((resolve) => {
+        markReady = resolve;
+      });
+      const client = new WorldClient({
+        socket,
+        account: "BOTACCOUNT",
+        sessionKey: SESSION_KEY,
+        characterName: "Botchar",
+        clientSeed: 0x66,
+        pingIntervalMs: 0,
+        handlers: { ...handlers, onReady: () => markReady() },
+      });
+      client.start();
+      socket.begin(0xdeadbeef);
+      await withTimeout(ready);
+      return { socket, client };
+    }
+
+    const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+    it("routes a combat log line to onCombat", async () => {
+      const events: CombatEvent[] = [];
+      const { socket, client } = await connect({ onCombat: (event) => events.push(event) });
+
+      const hit = new PacketWriter().packedGuid(0xabcdn).packedGuid(0x555n).u32LE(12294).u32LE(1240).toBuffer();
+      socket.pushPacket(WorldOpcode.SMSG_SPELLNONMELEEDAMAGELOG, hit);
+      await settle();
+      expect(events).toEqual([{ kind: "spell", attacker: 0x555n, target: 0xabcdn, spellId: 12294, damage: 1240 }]);
+
+      client.close();
+    });
+
+    it("drops a combat log line it cannot read without ending the session", async () => {
+      const events: CombatEvent[] = [];
+      const errors: Error[] = [];
+      const { socket, client } = await connect({
+        onCombat: (event) => events.push(event),
+        onError: (error) => errors.push(error),
+      });
+
+      socket.pushPacket(WorldOpcode.SMSG_ATTACKERSTATEUPDATE, Buffer.from([0x01, 0x02]));
+      await settle();
+      expect(events).toEqual([]);
+      expect(errors).toEqual([]);
+      expect(client.isReady).toBe(true);
+
+      client.close();
+    });
+
+    it("routes a nearby player's say to onPlayerChat, never as a whisper command", async () => {
+      const chat: IncomingChat[] = [];
+      const whispers: string[] = [];
+      const { socket, client } = await connect({
+        onPlayerChat: (line) => chat.push(line),
+        onWhisper: (_sender, text) => whispers.push(text),
+      });
+
+      socket.pushPlayerChat(ChatType.Say, 0x555n, "bye bot");
+      await settle();
+      expect(chat).toEqual([{ type: ChatType.Say, language: 1, senderGuid: 0x555n, text: "bye bot" }]);
+      expect(whispers).toEqual([]);
+
+      client.close();
+    });
+
+    it("resolves a player's name once on request and remembers it", async () => {
+      const { socket, client } = await connect({});
+      socket.setName(0x555n, "Ganker");
+
+      expect(client.playerName(0x555n)).toBeUndefined();
+      client.queryName(0x555n);
+      client.queryName(0x555n); // still in flight: not asked again
+      await settle();
+      await settle();
+      expect(client.playerName(0x555n)).toBe("Ganker");
+      client.queryName(0x555n); // known: not asked again
+      expect(socket.nameQueries).toEqual([0x555n]);
+
+      client.close();
+    });
   });
 });

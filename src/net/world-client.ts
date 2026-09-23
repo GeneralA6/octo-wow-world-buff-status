@@ -22,7 +22,16 @@ import {
   type FriendListEntry,
   type MonsterChat,
   type FriendStatus,
+  type IncomingChat,
 } from "../protocol/chat.js";
+import {
+  parseAttackerStateUpdate,
+  parseAttackStart,
+  parseEnvironmentalDamage,
+  parsePeriodicAuraLog,
+  parseSpellDamageLog,
+  type CombatEvent,
+} from "../protocol/combat-log.js";
 import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.js";
 import { buildCreatureQuery, parseCreatureQueryResponse } from "../protocol/creature-query.js";
 import { silentLogger, type Logger } from "../logger.js";
@@ -81,6 +90,12 @@ export interface WorldClientHandlers {
   /** A player LEFT or was removed from our guild (SMSG_GUILD_EVENT) — used to keep the count of
    *  active guildies who joined via the bot accurate. */
   onGuildLeave?: (name: string) => void;
+  /** A player nearby said, yelled or emoted something — our own lines included, since the server
+   *  echoes them back. */
+  onPlayerChat?: (chat: IncomingChat) => void;
+  /** A combat log line: some unit attacked, hit or was hurt by the world. Every one in range, not
+   *  only ours — the wiring filters by target. */
+  onCombat?: (event: CombatEvent) => void;
   /** A decompressed nearby-object update block, for parsing GameObjects (e.g. a bench). */
   onWorldObjects?: (body: Buffer) => void;
   onError?: (error: Error) => void;
@@ -91,6 +106,9 @@ export interface WorldClientHandlers {
    *  latency. Fires once per matched pong (~every pingIntervalMs). */
   onLatency?: (rttMs: number) => void;
 }
+
+/** Player chat the rest of the zone can hear — the lines worth keeping as context. */
+const PLAYER_CHAT_TYPES: ReadonlySet<number> = new Set([ChatType.Say, ChatType.Yell, ChatType.Emote]);
 
 export interface WorldClientOptions {
   readonly socket: NodeSocketLike;
@@ -142,6 +160,8 @@ export class WorldClient {
   /** Resolved sender names, and whispers held while a name query is in flight. */
   readonly #nameCache = new Map<bigint, string>();
   readonly #pendingWhispers = new Map<bigint, string[]>();
+  /** Name queries sent on request (not for a whisper) and not answered yet. */
+  readonly #pendingNames = new Set<bigint>();
 
   constructor(options: WorldClientOptions) {
     this.#socket = options.socket;
@@ -381,6 +401,21 @@ export class WorldClient {
         case WorldOpcode.SMSG_NAME_QUERY_RESPONSE:
           this.#handleNameQueryResponse(body);
           break;
+        case WorldOpcode.SMSG_ATTACKSTART:
+          this.#handleCombat(body, parseAttackStart);
+          break;
+        case WorldOpcode.SMSG_ATTACKERSTATEUPDATE:
+          this.#handleCombat(body, parseAttackerStateUpdate);
+          break;
+        case WorldOpcode.SMSG_SPELLNONMELEEDAMAGELOG:
+          this.#handleCombat(body, parseSpellDamageLog);
+          break;
+        case WorldOpcode.SMSG_PERIODICAURALOG:
+          this.#handleCombat(body, parsePeriodicAuraLog);
+          break;
+        case WorldOpcode.SMSG_ENVIRONMENTALDAMAGELOG:
+          this.#handleCombat(body, parseEnvironmentalDamage);
+          break;
         case WorldOpcode.SMSG_CHAT_PLAYER_NOT_FOUND:
           this.#handlePlayerNotFound(body);
           break;
@@ -472,6 +507,10 @@ export class WorldClient {
         this.#handlers.onSystemMessage?.(chat.text.trim());
         return;
       }
+      if (PLAYER_CHAT_TYPES.has(chat.type)) {
+        this.#handlers.onPlayerChat?.(chat);
+        return;
+      }
       if (chat.type !== ChatType.Whisper) return; // only inbound whispers are commands
       const text = chat.text.trim();
       if (!text) return;
@@ -550,6 +589,32 @@ export class WorldClient {
     }
   }
 
+  /** A combat log packet. One the parser cannot read is logged and dropped — it is only ever
+   *  context, never worth the session. */
+  #handleCombat(body: Buffer, parse: (body: Buffer) => CombatEvent | null): void {
+    try {
+      const event = parse(body);
+      if (event) this.#handlers.onCombat?.(event);
+    } catch (error) {
+      this.#logger.debug(
+        `world: could not read combat log [${body.subarray(0, 64).toString("hex")}]: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /** A player's name, if a name query has already resolved it this session. */
+  playerName(guid: bigint): string | undefined {
+    return this.#nameCache.get(guid);
+  }
+
+  /** Resolve a player's name in the background, for `playerName` to answer later. Asks the server
+   *  at most once per guid until it replies, and not at all once the name is known. */
+  queryName(guid: bigint): void {
+    if (!this.#ready || this.#nameCache.has(guid) || this.#pendingNames.has(guid)) return;
+    this.#pendingNames.add(guid);
+    this.#send(WorldOpcode.CMSG_NAME_QUERY, buildNameQuery(guid));
+  }
+
   /** Ask what an NPC entry is called. `guid` is any live instance of it. */
   queryCreature(entry: number, guid: bigint): void {
     if (!this.#ready) return;
@@ -569,6 +634,7 @@ export class WorldClient {
     try {
       const { guid, name } = parseNameQueryResponse(body);
       this.#nameCache.set(guid, name);
+      this.#pendingNames.delete(guid);
       const queued = this.#pendingWhispers.get(guid);
       if (!queued) return;
       this.#pendingWhispers.delete(guid);
