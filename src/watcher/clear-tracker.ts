@@ -160,6 +160,12 @@ export class ClearTracker {
     return this.#formedAt !== null;
   }
 
+  /** The tracked raid's members — confirmed or still forming, present or already gone. Empty when
+   *  no raid is tracked. Read-only: the roster changes only through `observe`/`restore`. */
+  get members(): ReadonlySet<string> {
+    return this.#roster;
+  }
+
   /** The current raid's reference number, or null if none is tracked / numbering is off. */
   get number(): number | null {
     return this.#number;

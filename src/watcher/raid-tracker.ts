@@ -78,8 +78,10 @@ export interface RaidObservation {
 export class RaidTracker {
   readonly #presence = new PresenceTracker();
   readonly #clears: ClearTracker;
-  /** The most recent `WhoPlayer` for every name seen, so a tracked raid's guild label can be derived
-   *  for the status readout (ClearTracker keeps only names). */
+  /** The latest `WhoPlayer` for everyone present or on the tracked raid's roster, so the raid's
+   *  guild label can be derived for the status readout (ClearTracker keeps only names). Anyone else
+   *  is forgotten: the lair sees new visitors all day, and only a roster member's details are ever
+   *  read. */
   readonly #seen = new Map<string, WhoPlayer>();
 
   constructor(options: RaidTrackerOptions) {
@@ -104,9 +106,11 @@ export class RaidTracker {
     if (census.blackout) {
       // Discard or resume the in-progress measurement (ClearTracker decides from its own roster); no events.
       this.#clears.observe(names, view.at, true, view.complete);
+      this.#forgetStrangers(names);
       return { events: [], census };
     }
     const obs = this.#clears.observe(names, view.at, false, view.complete);
+    this.#forgetStrangers(names);
     const events: RaidLifecycleEvent[] = [];
     if (obs.formed) events.push({ kind: "formed", number: obs.formed.number, peak: obs.formed.peak });
     if (obs.clear) {
@@ -119,6 +123,20 @@ export class RaidTracker {
       });
     }
     return { events, census };
+  }
+
+  /** How many players' details are held — everyone present plus the tracked raid's roster. */
+  get rememberedPlayers(): number {
+    return this.#seen.size;
+  }
+
+  /** Drop details of anyone neither in the lair now nor on the tracked raid's roster. Runs after the
+   *  roster has absorbed this poll's arrivals, so a newcomer who just joined it is kept. */
+  #forgetStrangers(present: readonly string[]): void {
+    const keep = new Set(present);
+    for (const name of this.#seen.keys()) {
+      if (!keep.has(name) && !this.#clears.members.has(name)) this.#seen.delete(name);
+    }
   }
 
   /** The raid(s) in progress — for the status query. One while a single raid is tracked. */

@@ -475,4 +475,17 @@ describe("ClearTracker — lockout rule", () => {
     expect(restarted.observe(R(30), 48 * MIN, false).formed).toBeNull(); // same members → still locked
     expect(restarted.observe(C(30), 49 * MIN, false).formed).not.toBeNull(); // a new crowd still forms
   });
+
+  it("exposes the roster as members while forming, keeps leavers on it, and empties it on a clear", () => {
+    const t = tracker({ formConfirmMs: 2 * MIN });
+    expect(t.members.size).toBe(0);
+    t.observe(R(20), 0, false); // forming, not yet confirmed
+    expect([...t.members]).toEqual(R(20));
+    t.observe(R(16), MIN, false); // four left — still this raid's members
+    expect(t.members.has("r19")).toBe(true);
+    t.observe([], 2 * MIN, false);
+    t.observe([], 20 * MIN, false); // gone well past the sustained window → cleared
+    expect(t.tracking).toBe(false);
+    expect(t.members.size).toBe(0);
+  });
 });

@@ -98,6 +98,50 @@ describe("RaidTracker — status queries", () => {
   });
 });
 
+describe("RaidTracker — remembered players", () => {
+  it("labels by the whole roster, including members who left before the raid was confirmed", () => {
+    // 12 Dawn + 8 Nightfall form a raid; 5 Dawn leave while it is still forming. Counted over the
+    // roster Dawn still leads 12–8; counted over only those present it would flip to Nightfall 8–7.
+    const t = tracker({ formConfirmMs: 2 * M });
+    const dawn = raid(12, "Dawn");
+    const nightfall = raid(8, "Nightfall");
+    t.observe(view([...dawn, ...nightfall], 0));
+    const remaining = [...dawn.slice(0, 7), ...nightfall];
+    t.observe(view(remaining, 1 * M));
+    t.observe(view(remaining, 2 * M)); // confirmed now
+    const [active] = t.activeRaids();
+    expect(active?.count).toBe(20);
+    expect(active?.label).toContain("Dawn");
+  });
+
+  it("forgets a visitor who leaves while no raid is tracked", () => {
+    const t = tracker();
+    t.observe(view(raid(3, "Tourist"), 0));
+    expect(t.rememberedPlayers).toBe(3);
+    t.observe(view([], M));
+    expect(t.rememberedPlayers).toBe(0);
+  });
+
+  it("keeps the roster through a raid, then lets it go once the raid clears", () => {
+    const t = tracker({ fillWindowMs: M / 2 }); // arrivals after 30s are not this raid's members
+    t.observe(view(raid(20, "Nightfall"), 0));
+    t.observe(view(raid(3, "Tourist"), M)); // the raid left; three strangers wander in
+    expect(t.rememberedPlayers).toBe(23); // roster (still tracked) + those present
+    t.observe(view([], 20 * M)); // gone past the sustained window → cleared
+    expect(t.activeRaids()).toEqual([]);
+    expect(t.rememberedPlayers).toBe(0);
+  });
+
+  it("forgets strangers during a blackout poll too, but never the roster", () => {
+    const t = tracker({ fillWindowMs: M / 2 });
+    t.observe(view(raid(20, "Nightfall"), 0));
+    t.observe(view(raid(2, "Tourist"), M)); // 20 roster + 2 strangers
+    t.observe(view([], 2 * M, false)); // incomplete /who — a blackout
+    expect(t.rememberedPlayers).toBe(20);
+    expect(t.activeRaids()[0]?.label).toContain("Nightfall");
+  });
+});
+
 describe("RaidTracker — two-point start (forming size < strength, leave below the floor)", () => {
   const opts: Partial<RaidTrackerOptions> = { minRaidSize: 20, strengthSize: 23, leftFloor: 15, clearSustainedMs: 5 * M };
 
