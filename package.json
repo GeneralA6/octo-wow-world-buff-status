@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node dist/index.js",
+    "start": "node --max-old-space-size=96 --max-semi-space-size=2 dist/index.js",
     "start:dev": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
