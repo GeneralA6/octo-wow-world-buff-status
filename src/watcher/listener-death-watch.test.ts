@@ -102,6 +102,19 @@ describe("ListenerDeathWatch", () => {
     expect(deps.report.mock.calls[0]?.[0]).toContain('     0.0s  0x555 (player) says: "hm"');
   });
 
+  it("includes system messages in the report", () => {
+    const { watch, deps } = setup();
+    watch.health(3000);
+    vi.advanceTimersByTime(5_000);
+    watch.system("You have been kicked from the battleground queue.");
+    watch.health(0);
+    vi.advanceTimersByTime(2_000);
+    expect(deps.report.mock.calls[0]?.[0]).toContain(
+      '     0.0s  system: "You have been kicked from the battleground queue."',
+    );
+    expect(deps.queryName).not.toHaveBeenCalled(); // a system message names no one
+  });
+
   it("records nothing before it knows who we are", () => {
     const { watch, deps } = setup(null);
     watch.health(3000);

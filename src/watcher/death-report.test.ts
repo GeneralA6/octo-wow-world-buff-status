@@ -31,6 +31,7 @@ const report: DeathReport = {
     { at: 2_000, kind: "combat", event: { kind: "attack-start", attacker: GANKER, target: US } },
     { at: 2_500, kind: "combat", event: { kind: "melee", attacker: GANKER, target: US, damage: 400 } },
     { at: 10_000, kind: "health", health: 1200 },
+    { at: 15_000, kind: "system", text: "You are now PvP flagged." },
     {
       at: 29_900,
       kind: "combat",
@@ -60,6 +61,7 @@ describe("formatDeathReport", () => {
       "   -28.0s  Ganker (player) starts attacking us",
       "   -27.5s  Ganker (player) hits us for 400 (melee)",
       "   -20.0s  health 1200",
+      '   -15.0s  system: "You are now PvP flagged."',
       "    -0.1s  Ganker (player) hits us for 1240 with spell 12294",
       "    -0.1s  Orgrimmar Grunt (npc) hits Ganker (player) for 90 (melee)",
       "     0.0s  health 0 — dead",

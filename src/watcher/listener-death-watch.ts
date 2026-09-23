@@ -7,7 +7,8 @@ import { formatDeathReport } from "./death-report.js";
 /**
  * One listener session's account of its own death.
  *
- * Feeds the recorder the combat log lines that hit us, nearby player chat and our health. Whoever
+ * Feeds the recorder the combat log lines that hit us, nearby player chat, server system messages
+ * and our health. Whoever
  * hits us is named at once (a name query for a player, a creature query for an NPC) — that only
  * happens in a real fight. Nearby speakers are NOT: a capital talks all day, and naming every one
  * would be a steady stream of queries and an ever-growing name cache for a report that almost never
@@ -63,6 +64,11 @@ export class ListenerDeathWatch {
       chatType: chat.type,
       text: chat.text,
     });
+  }
+
+  /** A server system message — how the server explains a refused action or announces a change. */
+  system(text: string): void {
+    this.#recorder.record({ at: Date.now(), kind: "system", text });
   }
 
   /** A creature query answered. */

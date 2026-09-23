@@ -62,6 +62,8 @@ function describeClue(clue: DeathClue, selfGuid: bigint, names: UnitNames): stri
       return describeCombat(clue.event, selfGuid, names);
     case "chat":
       return `${describeUnit(clue.senderGuid, selfGuid, names)} ${CHAT_VERBS.get(clue.chatType) ?? "says"}: ${JSON.stringify(clue.text)}`;
+    case "system":
+      return `system: ${JSON.stringify(clue.text)}`;
     case "health":
       return clue.health === 0 ? "health 0 — dead" : `health ${clue.health}`;
   }

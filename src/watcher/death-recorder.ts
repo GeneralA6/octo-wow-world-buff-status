@@ -6,7 +6,8 @@ import type { CombatEvent } from "../protocol/combat-log.js";
  *
  * Nothing is logged while the character is fine — a city is busy and almost all of it is noise.
  * The recorder only keeps a rolling window of what could explain a death: hits taken, nearby player
- * chat, and our own health. The moment our health drops to zero it hands that window back.
+ * chat, server system messages, and our own health. The moment our health drops to zero it hands
+ * that window back.
  *
  * A character that is already dead when first seen (logged in as a corpse) produces no report:
  * whatever killed it happened before this session and is not in the window.
@@ -21,6 +22,7 @@ export type DeathClue =
       readonly chatType: number;
       readonly text: string;
     }
+  | { readonly at: number; readonly kind: "system"; readonly text: string }
   | { readonly at: number; readonly kind: "health"; readonly health: number };
 
 export interface DeathReport {

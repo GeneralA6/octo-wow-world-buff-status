@@ -1040,6 +1040,7 @@ async function runListener(
           // here ("you are dead", "you can't do that yet"), and a listener that silently swallows
           // those hides the only explanation it will ever be given for why it is doing nothing.
           logger.info(`system: ${JSON.stringify(text)}`);
+          deathWatch.system(text);
           // This listener whispers too now, so the server can throttle it — back its own queue off
           // and retry, exactly as Bufftracker does.
           if (isWhisperThrottle(text)) listenerWhispers.notifyThrottled();
