@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatFaire } from "./format.js";
+import { capitalStatusFaire, formatFaire } from "./format.js";
 import { FAIRE_SITES } from "./location.js";
 import type { FaireAnswer } from "./observation.js";
 
@@ -34,5 +34,17 @@ describe("formatFaire", () => {
     const reply = formatFaire({ known: false }, NOW);
     expect(reply).toBe("I don't know where the Darkmoon Faire is right now - nobody's spotted it lately.");
     expect(reply).not.toMatch(/Elwynn|Mulgore/);
+  });
+});
+
+describe("capitalStatusFaire", () => {
+  it("carries the zone, how long ago it was seen, and whether that is recent", () => {
+    expect(capitalStatusFaire(known(), NOW)).toEqual({ zone: "Elwynn Forest", ageMs: 240_000, fresh: true });
+    const old = known({ location: "mulgore", site: FAIRE_SITES.mulgore, observedAt: NOW - 11 * 3_600_000, fresh: false });
+    expect(capitalStatusFaire(old, NOW)).toEqual({ zone: "Mulgore", ageMs: 11 * 3_600_000, fresh: false });
+  });
+
+  it("is null when nothing is known, so the yell leaves the faire out", () => {
+    expect(capitalStatusFaire({ known: false }, NOW)).toBeNull();
   });
 });

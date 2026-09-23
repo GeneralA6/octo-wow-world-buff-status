@@ -213,6 +213,15 @@ export function formatFeedbackPost(from: string, text: string, server?: string):
   return `💬 **Suggestion from ${who}:**\n${text}`;
 }
 
+/** The faire's last known place, for the status yell. */
+export interface CapitalStatusFaire {
+  readonly zone: string;
+  /** How long ago it was seen there. */
+  readonly ageMs: number;
+  /** Seen recently enough to state in the present tense; otherwise the look is dated. */
+  readonly fresh: boolean;
+}
+
 export interface CapitalStatusRaid {
   readonly number: number | null;
   readonly elapsedMs: number;
@@ -227,10 +236,11 @@ export function formatCapitalStatusYell(
   faction: Faction,
   raid: CapitalStatusRaid | null,
   typicalClear?: string,
-  /** The zone the Darkmoon Faire is in, when it has been seen RECENTLY. Null/undefined omits the
-   *  line entirely — a yell is broadcast to strangers, so it carries only what we would state as
-   *  fact, never a stale look or an "I do not know". */
-  faireZone?: string | null,
+  /** Where the Darkmoon Faire was last seen. A recent look is stated in the present tense, an older
+   *  one with its age — a yell reaches strangers who cannot ask a follow-up, so it never claims the
+   *  present on old information. Null/undefined (nothing seen within a week) omits the line; the
+   *  yell never shouts an "I do not know". */
+  faire?: CapitalStatusFaire | null,
 ): string {
   const parts: string[] = [];
   if (raid) {
@@ -244,7 +254,13 @@ export function formatCapitalStatusYell(
   }
   // Bracketed like the [Onyxia] tag: in a busy capital the yell scrolls past, and the tag is what
   // a reader picks out. A second topic in the same yell needs the same handle.
-  if (faireZone) parts.push(`[Darkmoon Faire] is in ${faireZone}.`);
+  if (faire) {
+    parts.push(
+      faire.fresh
+        ? `[Darkmoon Faire] is in ${faire.zone}.`
+        : `[Darkmoon Faire] was last seen in ${faire.zone} ~${humanSpan(faire.ageMs)} ago.`,
+    );
+  }
   parts.push(`Whisper "subscribe" for pings, "discord" for discord notifications.`);
   return `[Onyxia] ${parts.join(" ")}`;
 }

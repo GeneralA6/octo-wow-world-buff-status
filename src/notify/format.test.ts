@@ -268,22 +268,41 @@ describe("humanSpan", () => {
 });
 
 describe("formatCapitalStatusYell darkmoon line", () => {
+  const H = 3_600_000;
+
   it("promotes the faire when it has been seen recently", () => {
-    const yell = formatCapitalStatusYell("horde", null, undefined, "Mulgore");
+    const yell = formatCapitalStatusYell("horde", null, undefined, { zone: "Mulgore", ageMs: 20 * M, fresh: true });
     expect(yell).toContain("[Darkmoon Faire] is in Mulgore.");
     // Slotted before the call to action, so the yell still ends on what to whisper.
     expect(yell.indexOf("Darkmoon Faire")).toBeLessThan(yell.indexOf("Whisper"));
   });
 
-  it("says nothing about the faire when it has not been seen recently", () => {
-    // A yell reaches strangers who cannot ask a follow-up, so a stale look is left out entirely
-    // rather than shouted with a hedge nobody will read.
+  it("dates an older look instead of claiming the faire is still there", () => {
+    const yell = formatCapitalStatusYell("horde", null, undefined, { zone: "Mulgore", ageMs: 11.5 * H, fresh: false });
+    expect(yell).toContain("[Darkmoon Faire] was last seen in Mulgore ~11h30m ago.");
+    expect(yell).not.toContain("is in Mulgore");
+  });
+
+  it("says nothing about the faire when nothing is known", () => {
     expect(formatCapitalStatusYell("horde", null, undefined, null)).not.toContain("Darkmoon");
     expect(formatCapitalStatusYell("horde", null)).not.toContain("Darkmoon");
   });
 
+  it("stays within the 255-char yell cap with a raid and the longest dated faire line", () => {
+    const y = formatCapitalStatusYell("alliance", { number: 99999, elapsedMs: 135 * M }, "30-50m", {
+      zone: "Elwynn Forest",
+      ageMs: 6 * 86_400_000 + 23 * H,
+      fresh: false,
+    });
+    expect(y.length).toBeLessThanOrEqual(255);
+  });
+
   it("keeps the raid status first — that is what the yell is for", () => {
-    const yell = formatCapitalStatusYell("alliance", { number: 7, elapsedMs: 1_800_000 }, "30-50m", "Elwynn Forest");
+    const yell = formatCapitalStatusYell("alliance", { number: 7, elapsedMs: 1_800_000 }, "30-50m", {
+      zone: "Elwynn Forest",
+      ageMs: 20 * M,
+      fresh: true,
+    });
     expect(yell.indexOf("Onyxia raid in progress")).toBeLessThan(yell.indexOf("Darkmoon"));
   });
 });

@@ -1,4 +1,4 @@
-import { humanSpan } from "../notify/format.js";
+import { humanSpan, type CapitalStatusFaire } from "../notify/format.js";
 import type { FaireAnswer } from "./observation.js";
 
 /**
@@ -17,4 +17,10 @@ export function formatFaire(answer: FaireAnswer, now: number): string {
   return answer.fresh
     ? `Darkmoon Faire is in ${where} - seen ${ago} ago.`
     : `Darkmoon Faire was last seen in ${where} ~${ago} ago - it moves weekly, so it may have moved on.`;
+}
+
+/** The faire as the capital status yell states it, or null when nothing is known worth saying. */
+export function capitalStatusFaire(answer: FaireAnswer, now: number): CapitalStatusFaire | null {
+  if (!answer.known) return null;
+  return { zone: answer.site.zone, ageMs: now - answer.observedAt, fresh: answer.fresh };
 }

@@ -40,6 +40,7 @@ import type { UserLedger } from "./subscribers/user-ledger.js";
 import type { GuildieStore } from "./subscribers/guildie-store.js";
 import type { WhisperPool } from "./chat/whisper-pool.js";
 import type { NotifyMessage } from "./notify/notifier.js";
+import { capitalStatusFaire } from "./darkmoon/format.js";
 
 /**
  * Exactly what the raid service needs from the connection — a narrow view of index.ts's
@@ -184,15 +185,14 @@ export function createRaidService(
       if (!config.whispersEnabled) return;
       const now = Date.now();
       const typical = await typicalClear();
-      // Only a RECENT look gets shouted. A yell reaches strangers who cannot ask a follow-up, so
-      // it states the faire as fact or says nothing — never a stale look dressed up as one.
-      const faire = faireAnswer?.(now);
-      const faireZone = faire?.known === true && faire.fresh ? faire.site.zone : null;
+      // A recent look is shouted as fact, an older one with its age; nothing within a week, nothing.
+      const answer = faireAnswer?.(now);
+      const faire = answer ? capitalStatusFaire(answer, now) : null;
       for (const faction of FACTIONS) {
         const yell = yellSink[faction];
         if (!yell) continue; // no listener parked in this capital right now
         const raid = raidStateFor(faction, now);
-        yell(formatCapitalStatusYell(faction, raid, raid ? typical : undefined, faireZone));
+        yell(formatCapitalStatusYell(faction, raid, raid ? typical : undefined, faire));
       }
     };
 
