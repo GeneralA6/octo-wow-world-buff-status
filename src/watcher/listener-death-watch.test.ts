@@ -1,22 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatType } from "../protocol/opcodes.js";
+import type { UnitOwner } from "../protocol/unit-owner.js";
 import { ListenerDeathWatch, type ListenerDeathWatchDeps } from "./listener-death-watch.js";
 
 const US = 0x77n;
 const GANKER = 0x555n;
 const GRUNT = 0xf130_000c_9300_0042n;
+const INFERNAL = 0xf130_0000_5900_0abcn; // creature entry 89
 
 function setup(selfGuid: bigint | null = US) {
   const names = new Map<bigint, string>();
+  const owners = new Map<bigint, UnitOwner>();
   const deps = {
     selfGuid: () => selfGuid,
     playerName: (guid: bigint) => names.get(guid),
     queryName: vi.fn<(guid: bigint) => void>(),
     queryCreature: vi.fn<(entry: number, guid: bigint) => void>(),
+    ownerOf: vi.fn((guid: bigint): UnitOwner | null => owners.get(guid) ?? null),
     report: vi.fn<(lines: string[]) => void>(),
   } satisfies ListenerDeathWatchDeps;
   const watch = new ListenerDeathWatch(deps, { windowMs: 30_000, reportDelayMs: 2_000 });
-  return { watch, deps, names };
+  return { watch, deps, names, owners };
 }
 
 describe("ListenerDeathWatch", () => {
@@ -61,6 +65,41 @@ describe("ListenerDeathWatch", () => {
     watch.health(0);
     vi.advanceTimersByTime(2_000);
     expect(deps.report.mock.calls[0]?.[0][0]).toContain("Orgrimmar Grunt (npc) hits us for 3000 (melee)");
+  });
+
+  it("names whoever the attacker answered to, asking for their name at the hit", () => {
+    const { watch, deps, names, owners } = setup();
+    owners.set(INFERNAL, { relation: "controlled", guid: GANKER, current: false });
+    watch.health(100);
+    watch.combat({ kind: "spell", attacker: INFERNAL, target: US, spellId: 20153, damage: 100 });
+    expect(deps.queryCreature).toHaveBeenCalledWith(89, INFERNAL);
+    expect(deps.queryName).toHaveBeenCalledWith(GANKER);
+
+    watch.creatureName(89, "Infernal");
+    names.set(GANKER, "Ganker");
+    watch.health(0);
+    vi.advanceTimersByTime(2_000);
+    expect(deps.report.mock.calls[0]?.[0][0]).toBe(
+      "DIED — killing blow: Infernal (npc) formerly controlled by Ganker (player) hits us for 100 with spell 20153. Last 30s:",
+    );
+  });
+
+  it("keeps the owner as it stood at the hit, after the unit is gone from view", () => {
+    const { watch, deps, names, owners } = setup();
+    owners.set(INFERNAL, { relation: "created", guid: GANKER, current: true });
+    names.set(GANKER, "Ganker");
+    watch.health(100);
+    watch.combat({ kind: "spell", attacker: INFERNAL, target: US, spellId: 20153, damage: 100 });
+    owners.delete(INFERNAL); // it despawned before the report was written
+    watch.health(0);
+    vi.advanceTimersByTime(2_000);
+    expect(deps.report.mock.calls[0]?.[0][0]).toContain("creature #89 (npc) created by Ganker (player) hits us");
+  });
+
+  it("looks for no owner behind damage from the world", () => {
+    const { watch, deps } = setup();
+    watch.combat({ kind: "environmental", target: US, cause: "falling", damage: 50 });
+    expect(deps.ownerOf).not.toHaveBeenCalled();
   });
 
   it("ignores hits on anyone else", () => {

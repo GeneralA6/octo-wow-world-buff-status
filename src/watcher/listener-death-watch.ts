@@ -1,6 +1,7 @@
 import type { IncomingChat } from "../protocol/chat.js";
 import type { CombatEvent } from "../protocol/combat-log.js";
 import { unitRef } from "../protocol/guid.js";
+import type { UnitOwner } from "../protocol/unit-owner.js";
 import { DeathRecorder, type DeathClue } from "./death-recorder.js";
 import { formatDeathReport } from "./death-report.js";
 
@@ -10,9 +11,10 @@ import { formatDeathReport } from "./death-report.js";
  * Feeds the recorder the combat log lines that hit us, nearby player chat, server system messages
  * and our health. Whoever
  * hits us is named at once (a name query for a player, a creature query for an NPC) — that only
- * happens in a real fight. Nearby speakers are NOT: a capital talks all day, and naming every one
- * would be a steady stream of queries and an ever-growing name cache for a report that almost never
- * comes. They are named when a death actually needs them, and the report waits a moment for those
+ * happens in a real fight. So is whoever that attacker answers to, as it stood at the hit: the
+ * warlock behind an Infernal, the hunter behind a pet. Nearby speakers are NOT: a capital talks
+ * all day, and naming every one would be a steady stream of queries and an ever-growing name cache
+ * for a report that almost never comes. They are named when a death actually needs them, and the report waits a moment for those
  * answers before it is handed to `report`; one still unanswered by then is shown by its GUID.
  */
 
@@ -24,6 +26,8 @@ export interface ListenerDeathWatchDeps {
   readonly queryName: (guid: bigint) => void;
   /** Resolve a creature entry's name in the background; `guid` is a live instance of it. */
   readonly queryCreature: (entry: number, guid: bigint) => void;
+  /** Who a unit in view answers to — its charmer, summoner or creator — or null for no one. */
+  readonly ownerOf: (guid: bigint) => UnitOwner | null;
   readonly report: (lines: string[]) => void;
 }
 
@@ -51,8 +55,10 @@ export class ListenerDeathWatch {
   combat(event: CombatEvent): void {
     const self = this.#deps.selfGuid();
     if (self === null || event.target !== self) return;
-    this.#recorder.record({ at: Date.now(), kind: "combat", event });
+    const attackerOwner = event.kind === "environmental" ? null : this.#deps.ownerOf(event.attacker);
+    this.#recorder.record({ at: Date.now(), kind: "combat", event, attackerOwner });
     if (event.kind !== "environmental") this.#learnName(event.attacker);
+    if (attackerOwner) this.#learnName(attackerOwner.guid);
   }
 
   /** A nearby player spoke. Kept, but not named until a death needs it. */
@@ -112,7 +118,10 @@ function involvedUnits(clues: readonly DeathClue[]): Set<bigint> {
   const units = new Set<bigint>();
   for (const clue of clues) {
     if (clue.kind === "chat") units.add(clue.senderGuid);
-    else if (clue.kind === "combat" && clue.event.kind !== "environmental") units.add(clue.event.attacker);
+    else if (clue.kind === "combat" && clue.event.kind !== "environmental") {
+      units.add(clue.event.attacker);
+      if (clue.attackerOwner) units.add(clue.attackerOwner.guid);
+    }
   }
   return units;
 }

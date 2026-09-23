@@ -1,4 +1,5 @@
 import type { CombatEvent } from "../protocol/combat-log.js";
+import type { UnitOwner } from "../protocol/unit-owner.js";
 
 /**
  * Remembers the last few seconds around a parked listener, so that when it dies there is an
@@ -14,7 +15,13 @@ import type { CombatEvent } from "../protocol/combat-log.js";
  */
 
 export type DeathClue =
-  | { readonly at: number; readonly kind: "combat"; readonly event: CombatEvent }
+  | {
+      readonly at: number;
+      readonly kind: "combat";
+      readonly event: CombatEvent;
+      /** Who the attacker answered to at the time — a warlock behind its Infernal. Null for none. */
+      readonly attackerOwner: UnitOwner | null;
+    }
   | {
       readonly at: number;
       readonly kind: "chat";

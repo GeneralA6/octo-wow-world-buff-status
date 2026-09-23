@@ -32,6 +32,7 @@ import { createRaidService } from "./raid-service.js";
 import type { DetectionLane, LaneChronicle, YellSink } from "./lanes.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
+import { UnitOwnerTable } from "./protocol/unit-owner.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
 import {
   FACTIONS,
@@ -839,6 +840,9 @@ async function runListener(
       silenceMs: config.listenerSilenceMs,
       graceMs: LISTENER_SILENCE_GRACE_MS,
     });
+    // Who each pet, guardian and charmed unit in view answers to — sent only as it comes into view,
+    // so kept from then on for a death report to name. A reconnect starts fresh.
+    const unitOwners = new UnitOwnerTable();
     // What killed it, if it dies while we are watching. Its callbacks reach `world`, created below —
     // they only run once packets arrive. Nothing is logged unless the character dies.
     const deathWatch = new ListenerDeathWatch(
@@ -849,6 +853,7 @@ async function runListener(
         queryCreature: (entry, guid) => {
           for (const fresh of npcWatch.take([entry])) world.queryCreature(fresh, guid);
         },
+        ownerOf: (guid) => unitOwners.ownerOf(guid),
         report: (lines) => {
           for (const line of lines) logger.error(`${listener.characterName}: ${line}`);
         },
@@ -1034,6 +1039,7 @@ async function runListener(
         },
         onCombat: (event) => deathWatch.combat(event),
         onPlayerChat: (chat) => deathWatch.chat(chat),
+        onObjectDestroyed: (guid) => unitOwners.forget(guid),
         onSystemMessage: (text) => {
           if (!text) return;
           // Logged like the watcher's, which they were not: the server answers a refused action
@@ -1051,6 +1057,7 @@ async function runListener(
             // decode, so we keep whatever it read. Pass our own GUID so `self` is OUR position,
             // never a bystander's in the same packet.
             const parsed = parseUpdateObject(raw, world.selfGuid ?? undefined);
+            for (const change of parsed.ownerChanges) unitOwners.apply(change);
             if (parsed.selfHealth !== null) deathWatch.health(parsed.selfHealth);
             if (listener.onLogin === "interact" && !interacted) {
               for (const go of parsed.gameObjects) nearby.push(go);

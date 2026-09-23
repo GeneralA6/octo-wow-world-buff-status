@@ -1,11 +1,12 @@
-import type { CombatEvent } from "../protocol/combat-log.js";
 import { unitRef } from "../protocol/guid.js";
 import { ChatType } from "../protocol/opcodes.js";
+import type { UnitOwner } from "../protocol/unit-owner.js";
 import type { DeathClue, DeathReport } from "./death-recorder.js";
 
 /**
- * Turns a death report into log lines a person can read: who hit us, with what, what was said
- * nearby, and a one-line verdict naming the killing blow.
+ * Turns a death report into log lines a person can read: who hit us (and whose it was, for a pet,
+ * guardian or charmed unit), with what, what was said nearby, and a one-line verdict naming the
+ * killing blow.
  *
  * Names are looked up at format time, so whatever resolved while the fight was on is used; a unit
  * still unnamed is shown by its guid, which is enough to look it up later.
@@ -34,19 +35,31 @@ export function describeUnit(guid: bigint, selfGuid: bigint, names: UnitNames): 
   }
 }
 
-function describeCombat(event: CombatEvent, selfGuid: bigint, names: UnitNames): string {
+type CombatClue = Extract<DeathClue, { kind: "combat" }>;
+
+/** Who a unit answers to: "controlled by Xyz (player)", or "formerly …" once it broke free. */
+function describeOwner(owner: UnitOwner, selfGuid: bigint, names: UnitNames): string {
+  return `${owner.current ? "" : "formerly "}${owner.relation} by ${describeUnit(owner.guid, selfGuid, names)}`;
+}
+
+function describeAttacker(guid: bigint, owner: UnitOwner | null, selfGuid: bigint, names: UnitNames): string {
+  const unit = describeUnit(guid, selfGuid, names);
+  return owner ? `${unit} ${describeOwner(owner, selfGuid, names)}` : unit;
+}
+
+function describeCombat({ event, attackerOwner }: CombatClue, selfGuid: bigint, names: UnitNames): string {
   const target = describeUnit(event.target, selfGuid, names);
+  if (event.kind === "environmental") return `${target} takes ${event.damage} ${event.cause} damage`;
+  const attacker = describeAttacker(event.attacker, attackerOwner, selfGuid, names);
   switch (event.kind) {
     case "attack-start":
-      return `${describeUnit(event.attacker, selfGuid, names)} starts attacking ${target}`;
+      return `${attacker} starts attacking ${target}`;
     case "melee":
-      return `${describeUnit(event.attacker, selfGuid, names)} hits ${target} for ${event.damage} (melee)`;
+      return `${attacker} hits ${target} for ${event.damage} (melee)`;
     case "spell":
-      return `${describeUnit(event.attacker, selfGuid, names)} hits ${target} for ${event.damage} with spell ${event.spellId}`;
+      return `${attacker} hits ${target} for ${event.damage} with spell ${event.spellId}`;
     case "periodic":
-      return `${describeUnit(event.attacker, selfGuid, names)} ticks ${target} for ${event.damage} with spell ${event.spellId}`;
-    case "environmental":
-      return `${target} takes ${event.damage} ${event.cause} damage`;
+      return `${attacker} ticks ${target} for ${event.damage} with spell ${event.spellId}`;
   }
 }
 
@@ -59,7 +72,7 @@ const CHAT_VERBS: ReadonlyMap<number, string> = new Map([
 function describeClue(clue: DeathClue, selfGuid: bigint, names: UnitNames): string {
   switch (clue.kind) {
     case "combat":
-      return describeCombat(clue.event, selfGuid, names);
+      return describeCombat(clue, selfGuid, names);
     case "chat":
       return `${describeUnit(clue.senderGuid, selfGuid, names)} ${CHAT_VERBS.get(clue.chatType) ?? "says"}: ${JSON.stringify(clue.text)}`;
     case "system":
@@ -75,7 +88,7 @@ export function killingBlow(report: DeathReport, selfGuid: bigint, names: UnitNa
     const clue = report.clues[i];
     if (clue?.kind !== "combat" || clue.event.kind === "attack-start") continue;
     if (clue.event.target !== selfGuid) continue;
-    return describeCombat(clue.event, selfGuid, names);
+    return describeCombat(clue, selfGuid, names);
   }
   return null;
 }

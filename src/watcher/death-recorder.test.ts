@@ -9,6 +9,7 @@ const hit = (at: number, damage: number): DeathClue => ({
   at,
   kind: "combat",
   event: { kind: "melee", attacker: GANKER, target: US, damage },
+  attackerOwner: null,
 });
 
 describe("DeathRecorder", () => {
