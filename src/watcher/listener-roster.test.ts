@@ -16,7 +16,29 @@ describe("ListenerRoster", () => {
     roster.voice("Onyxiabuffsw", voice());
 
     expect(roster.speakers("horde").map((s) => s.name)).toEqual(["Onyxiabuffog", "Onybuffogb"]);
-    expect(roster.speakers("horde", "Onyxiabuffog")).toEqual([{ name: "Onybuffogb", voice: ogb }]);
+    expect(roster.speakers("horde", "Onyxiabuffog").map(({ name, voice }) => ({ name, voice }))).toEqual([
+      { name: "Onybuffogb", voice: ogb },
+    ]);
+  });
+
+  it("starts a listener on a new stint whenever it dies, comes back, leaves or returns", () => {
+    const roster = new ListenerRoster();
+    roster.life("Onyxiabuffog", "horde", true);
+    roster.voice("Onyxiabuffog", voice());
+    const stint = (): number | undefined => roster.speakers("horde")[0]?.stint;
+    const first = stint();
+
+    roster.life("Onyxiabuffog", "horde", true); // told again it is alive: nothing changed
+    expect(stint()).toBe(first);
+
+    roster.life("Onyxiabuffog", "horde", false);
+    roster.life("Onyxiabuffog", "horde", true); // died and brought straight back
+    const afterRez = stint();
+    expect(afterRez).not.toBe(first);
+
+    roster.voice("Onyxiabuffog", null);
+    roster.voice("Onyxiabuffog", voice()); // dropped and logged straight back in
+    expect(stint()).not.toBe(afterRez);
   });
 
   it("passes over a listener that is dead or out of the world", () => {

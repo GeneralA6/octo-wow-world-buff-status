@@ -24,6 +24,9 @@ export interface ListenerVoice {
 export interface Speaker {
   readonly name: string;
   readonly voice: ListenerVoice;
+  /** Which stretch of being alive and in world this is: it changes whenever the listener dies, is
+   *  brought back, leaves the world or comes back into it — however quickly one follows the other. */
+  readonly stint: number;
 }
 
 interface Listener {
@@ -34,16 +37,20 @@ interface Listener {
 export class ListenerRoster {
   readonly #listeners = new Map<string, Listener>();
   readonly #voices = new Map<string, ListenerVoice>();
+  readonly #stints = new Map<string, number>();
 
   /** A listener was found alive or dead. `faction` is the capital it stands in. */
   life(character: string, faction: Faction | null, alive: boolean): void {
+    const before = this.#listeners.get(character);
     this.#listeners.set(character, { faction, alive });
+    if (before?.alive !== alive) this.#nextStint(character);
   }
 
   /** A listener came into world and can speak — or, with null, left it. */
   voice(character: string, voice: ListenerVoice | null): void {
     if (voice) this.#voices.set(character, voice);
     else this.#voices.delete(character);
+    this.#nextStint(character);
   }
 
   /** The listeners lying dead, and the capital each stands in. */
@@ -62,8 +69,12 @@ export class ListenerRoster {
     for (const [name, listener] of this.#listeners) {
       if (name === except || !listener.alive || listener.faction !== faction) continue;
       const voice = this.#voices.get(name);
-      if (voice) speakers.push({ name, voice });
+      if (voice) speakers.push({ name, voice, stint: this.#stints.get(name) ?? 0 });
     }
     return speakers;
+  }
+
+  #nextStint(character: string): void {
+    this.#stints.set(character, (this.#stints.get(character) ?? 0) + 1);
   }
 }
