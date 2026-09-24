@@ -4,7 +4,7 @@ import type { ListenerRoster } from "./listener-roster.js";
 
 /**
  * Has the two listeners of one capital hold a conversation, one /say each in turn, paced like two
- * players typing. Only listeners of the same capital talk: Orgrimmar's pair with each other, and
+ * players reading each other's line and typing their own. Only listeners of the same capital talk: Orgrimmar's pair with each other, and
  * Stormwind's with each other. A conversation stops as soon as either speaker dies or leaves the world,
  * and each capital goes through its other conversations before repeating a recent one.
  */
@@ -25,9 +25,18 @@ export interface BanterOptions {
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
-/** How long the next speaker takes to read `line` and type an answer. */
-export function pauseAfter(line: string): number {
-  return Math.min(9_000, Math.max(3_000, 2_000 + 60 * line.length));
+/** A player's reading pace, about 25 characters a second, and a beat to take the line in. */
+const READ_MS_PER_CHAR = 40;
+const TAKE_IN_MS = 1_000;
+/** A player's typing pace in chat, about 5 characters a second. */
+const TYPE_MS_PER_CHAR = 200;
+const SHORTEST_PAUSE_MS = 5_000;
+const LONGEST_PAUSE_MS = 20_000;
+
+/** How long before `line` is said after `previous`: its speaker reads the one, then types the other. */
+export function pauseBefore(previous: string, line: string): number {
+  const pause = TAKE_IN_MS + READ_MS_PER_CHAR * previous.length + TYPE_MS_PER_CHAR * line.length;
+  return Math.min(LONGEST_PAUSE_MS, Math.max(SHORTEST_PAUSE_MS, pause));
 }
 
 export class Banter {
@@ -71,7 +80,7 @@ export class Banter {
   async #perform(faction: Faction, conversation: Conversation, cast: Record<Part, string>): Promise<boolean> {
     let previous: string | null = null;
     for (const [part, line] of conversation.lines) {
-      if (previous !== null) await this.#sleep(pauseAfter(previous));
+      if (previous !== null) await this.#sleep(pauseBefore(previous, line));
       // Both must still be here: half a conversation, answered by no one, is worse than none.
       const present = this.#roster.speakers(faction);
       const speaker = present.find((candidate) => candidate.name === cast[part]);
