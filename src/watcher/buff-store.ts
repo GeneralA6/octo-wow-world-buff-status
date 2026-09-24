@@ -85,11 +85,13 @@ export class MongoBuffStore implements BuffStore {
     this.#db = db;
   }
 
+  /** `collectionName` keeps a different buff's drops apart — the Warchief's Blessing's, say. */
   static async open(
     database: Db,
     ttlDays: number = DEFAULT_TTL_DAYS,
+    collectionName: string = COLLECTION,
   ): Promise<MongoBuffStore> {
-    const collection = database.collection<BuffDoc>(COLLECTION);
+    const collection = database.collection<BuffDoc>(collectionName);
     await collection.createIndex({ appliedAt: 1 }, { expireAfterSeconds: ttlDays * 86_400 });
     await collection.createIndex({ faction: 1, appliedAt: -1 });
     const db: BuffDb = {

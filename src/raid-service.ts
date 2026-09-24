@@ -12,6 +12,7 @@ import {
   formatRaidDisbandedWhisper,
   formatRaidEnding,
   formatRaidEndingWhisper,
+  formatWarchiefBlessingWhisper,
 } from "./notify/format.js";
 import { formatHeartbeat } from "./watcher/heartbeat.js";
 import { evaluateTimer, improvedEstimate, typicalClearText } from "./watcher/timer-eval.js";
@@ -151,6 +152,15 @@ export function createRaidService(
         config.whisperMaxAgeMs,
       );
     };
+
+    // Rend's head turned in: the Warchief's Blessing is up in Orgrimmar. Horde-only, so only the Horde
+    // (and both-sides) subscribers hear of it; no park-now whispers to purge — no raid led up to it.
+    const announceWarchiefBlessing = (): Promise<void> =>
+      delivery.sendFactionWhisper(
+        "horde",
+        formatWarchiefBlessingWhisper(config.discordServerInvite ?? undefined),
+        config.whisperMaxAgeMs,
+      );
 
     // The raid in progress for a faction (from the lane covering it), or null.
     const raidStateFor = (faction: Faction, now: number): { number: number | null; elapsedMs: number } | null => {
@@ -517,5 +527,5 @@ export function createRaidService(
       }
     };
 
-  return { onRoster: processRoster, announceBuffDrop, yellCapitalStatus };
+  return { onRoster: processRoster, announceBuffDrop, announceWarchiefBlessing, yellCapitalStatus };
 }
