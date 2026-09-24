@@ -295,6 +295,188 @@ const HORDE: readonly Conversation[] = [
       ["b", "You don't. You just watch which way he runs."],
     ],
   },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The Venture Company is still cutting down Stonetalon."],
+      ["b", "Goblins with saws the size of kodos."],
+      ["a", "The Charred Vale burned for a week last summer. The druids wept."],
+      ["b", "And the goblins sold the ashes."],
+      ["a", "To whom?"],
+      ["b", "To the druids. For fertilizer."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Magatha Grimtotem smiles at Cairne in every council."],
+      ["b", "She smiles like a hyena at a carcass."],
+      ["a", "Her tribe ambushes travelers in Stonetalon and Feralas, and she sits on Elder Rise."],
+      ["b", "One day she'll stop smiling. I hope Cairne is watching when she does."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "A troll witch doctor offered to read my future."],
+      ["b", "What did he see?"],
+      ["a", "Me paying him five silver. He was right."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The Royal Apothecaries are brewing something new under the Undercity."],
+      ["b", "A cure for the plague?"],
+      ["a", "A new plague. For the Scourge, they say."],
+      ["b", "For the Scourge. Of course."],
+      ["a", "I asked Master Apothecary Faranell what it does. He smiled and sent me to Hillsbrad for samples."],
+      ["b", "Stay away from anything green down there. That's all I'm saying."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "What do you call a tauren with no legs?"],
+      ["b", "Ground beef."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "Did you see the new High Warlord in the Hall of Legends?"],
+      ["b", "Fourteen ranks of honor, and still no time to sleep."],
+      ["a", "They say he hasn't logged out in months."],
+      ["b", "Neither have we, and nobody gives us a title."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The Kul Tirans still hold Tiragarde Keep on our own coast."],
+      ["b", "Proudmoore's leftovers. They never went home."],
+      ["a", "Their admiral died on these shores. They think they're guarding his grave."],
+      ["b", "Maybe they are."],
+      ["a", "Every week some young grunt gets sent to clear them out."],
+      ["b", "You have to respect it. Holding a keep for a dead man's grudge."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "How does an orc knock on a door?"],
+      ["b", "Axe first. Then he asks who's there."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "Brill has the only inn where the patrons are deader than the ale."],
+      ["b", "The Gallows' End Tavern. Innkeeper Renee pours a fine drink."],
+      ["a", "The whole town was human, once. Some of them still sit in the same chairs."],
+      ["b", "Old habits don't die. Even when you do."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Why did the goblin build a rocket to the moon?"],
+      ["b", "He heard it was made of gold."],
+      ["a", "It wasn't. He sold the rocket to a gnome anyway."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Hamuul Runetotem studied at Moonglade with the night elves."],
+      ["b", "A tauren, taught by the kaldorei? How did that go?"],
+      ["a", "Malfurion himself took him as a student. The first tauren druid in ten thousand years."],
+      ["b", "And now the Cenarion Circle sits in Thunder Bluff too."],
+      ["a", "Horde and night elves, sharing tea in the Moonglade."],
+      ["b", "The only place in the world where nobody fights. The owls are watching."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Went to watch the races at the Shimmering Flats."],
+      ["b", "Goblins against gnomes. Who won?"],
+      ["a", "Nobody. Both cars blew up at the starting line."],
+      ["b", "So a normal day at the Flats."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Do you know why this land is called Durotar?"],
+      ["b", "For Thrall's father, Durotan."],
+      ["a", "Chieftain of the Frostwolves. He never saw it. Never saw his son grown, either."],
+      ["b", "So his son gave him a whole country instead."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Why did the Forsaken skip dinner?"],
+      ["b", "No stomach for it."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Drek'Thar still leads the Frostwolves in Alterac Valley."],
+      ["b", "The blind shaman? He raised Thrall, didn't he?"],
+      ["a", "Taught him the elements when no one else would. Now the dwarves dig in his valley."],
+      ["b", "The Stormpike want the iron. The Frostwolves want to be left alone."],
+      ["a", "So the whole Horde marches in to help."],
+      ["b", "And that valley never stays quiet for more than an hour."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "The Crossroads is under attack again."],
+      ["b", "Centaur?"],
+      ["a", "Kolkar, this time. Or the Alliance. Or a very angry raptor."],
+      ["b", "That town has been under attack since the day it was built. It's a tradition now."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Why did the kodo cross the Barrens?"],
+      ["b", "It didn't. It's still halfway. Kodos are slow."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The old orc beside Thrall in Grommash Hold is Eitrigg."],
+      ["b", "The one a human paladin spared?"],
+      ["a", "Tirion Fordring. He lost his title for it."],
+      ["b", "And Eitrigg never forgot. Honor doesn't care what color your skin is."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "I asked a grunt for directions to the bank."],
+      ["b", "What did he say?"],
+      ["a", "Lok'tar ogar. Then he pointed at the auction house."],
+      ["b", "Close enough, for a grunt."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "My grandmother told me about Shattrath."],
+      ["b", "The draenei city on Draenor?"],
+      ["a", "The Horde burned it on Gul'dan's word. She held a torch that day."],
+      ["b", "Did she regret it?"],
+      ["a", "Every day of her life. She said the fel doesn't ask. It just burns through you."],
+      ["b", "Then we make sure nothing asks us that again."],
+    ],
+  },
 ];
 
 const ALLIANCE: readonly Conversation[] = [
@@ -569,6 +751,187 @@ const ALLIANCE: readonly Conversation[] = [
       ["a", "The barkeep told him to get down. He said he was down."],
     ],
   },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Have you heard the true story of Gnomeregan?"],
+      ["b", "The troggs came up from below, didn't they?"],
+      ["a", "And Mekkatorque flooded the city with radiation to stop them. Half his people were still inside."],
+      ["b", "On his advisor Thermaplugg's word."],
+      ["a", "Who stayed behind to take the throne of what was left."],
+      ["b", "A king of glowing ruins. Some ambitions are best left unmet."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Why do dwarves ride gryphons?"],
+      ["b", "Rams can't fly, and the gnomes' flying machines keep exploding."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Gryan Stoutmantle raised a militia in Westfall."],
+      ["b", "Farmers with pitchforks against the Defias?"],
+      ["a", "Farmers with pitchforks and a very long list of names."],
+      ["b", "The People's Militia. Stormwind won't help them, so they help themselves."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Teldrassil was planted without the blessing of the dragons."],
+      ["b", "Is that why the forest there feels wrong?"],
+      ["a", "The Gnarlpine furbolgs went mad, and the timberlings turn on anything that walks."],
+      ["b", "Fandral says the tree is healthy."],
+      ["a", "Fandral says a lot of things."],
+      ["b", "And the Archdruid is never wrong. Just ask him."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "How many paladins does it take to light a candle?"],
+      ["b", "One. After Blessing of Might, Blessing of Wisdom and Blessing of Kings."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "The Great Forge in Ironforge has never gone out, you know."],
+      ["b", "Not once in all these centuries?"],
+      ["a", "The dwarves say the day it goes cold, Ironforge goes with it."],
+      ["b", "Then keep the coal coming. I like the dwarves."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Southshore buried three more militiamen last week."],
+      ["b", "The Forsaken from Tarren Mill again?"],
+      ["a", "They were neighbors once. Same farms, same chapel, before the plague."],
+      ["b", "Now one town is alive and the other isn't."],
+      ["a", "And they still fight over the same fields."],
+      ["b", "Some feuds outlive the people who started them."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "How long does it take to cross Darnassus?"],
+      ["b", "Nobody knows. Nobody has ever found the other side."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "SI:7 knows everything that happens in this city."],
+      ["b", "Even what we're saying right now?"],
+      ["a", "Especially that. Master Shaw's people are everywhere."],
+      ["b", "Then hello, Master Shaw. Lovely weather in the Trade District."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Alterac sided with the Horde in the Second War."],
+      ["b", "Lord Perenolde's betrayal. The kingdom paid for it."],
+      ["a", "Lordaeron burned his capital to the ground and gave his lands away."],
+      ["b", "And his nobles?"],
+      ["a", "Went into the hills and became the Syndicate. Thieves in fine coats."],
+      ["b", "Some nobles never change. They just lose their castles."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "A gnome told me he's the tallest mage in Ironforge."],
+      ["b", "Standing on what?"],
+      ["a", "A dwarf."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Westfall's farmers built mechanical scarecrows to guard their crops."],
+      ["b", "The harvest golems? They work for the Defias now."],
+      ["a", "Turns out if you build a golem to reap, it doesn't care what it reaps."],
+      ["b", "Stormwind's finest engineering, pointed the wrong way."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "The Explorers' League found another tablet in Uldaman."],
+      ["b", "What did it say?"],
+      ["a", "That the dwarves were made of stone by the Titans, long ago."],
+      ["b", "Half of Ironforge refuses to believe it. Imagine finding out you're a statue."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Someone fell into the Stormwind canal again."],
+      ["b", "Did they drown?"],
+      ["a", "No, but they came out with three murlocs and a quest."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The orphanage behind the Cathedral is full again."],
+      ["b", "The Scourge?"],
+      ["a", "The Scourge, the Defias, the Blackrock. Every one of them leaves children behind."],
+      ["b", "Children's Week is coming. I'll take one of them to see the Great Forge."],
+      ["a", "Matron Nightingale says they mostly want someone who comes back."],
+      ["b", "Then I'll come back."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "What's the difference between a dwarf and his rifle?"],
+      ["b", "The rifle doesn't need a drink after every shot."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "The Dark Irons blew a hole in the Thandol Span."],
+      ["b", "The bridge between the Wetlands and Arathi?"],
+      ["a", "Half of it's gone. You cross it holding your breath."],
+      ["b", "Dark Iron diplomacy. Always explosive."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "A gnome, a dwarf and a night elf walk into a tavern."],
+      ["b", "What happened?"],
+      ["a", "The dwarf drank, the elf danced, and the gnome got stepped on."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The night elves still remember the Sundering."],
+      ["b", "When the Well of Eternity exploded?"],
+      ["a", "Their whole world sank under the sea. Queen Azshara and her court with it."],
+      ["b", "Ten thousand years, and they still won't touch arcane magic."],
+      ["a", "Most of them look at us mages like we're holding a lit torch in a library."],
+      ["b", "To be fair, we usually are."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "There was an explosion in the Mage Quarter again."],
+      ["b", "An apprentice?"],
+      ["a", "A Frost Nova, somehow. Half the street is still stuck."],
+      ["b", "Leave them. It builds character."],
+    ],
+  },
 ];
 
 const SHARED: readonly Conversation[] = [
@@ -835,6 +1198,183 @@ const SHARED: readonly Conversation[] = [
       ["b", "Ysera's own? They guard the Emerald Dream."],
       ["a", "Something in the Dream has turned them. They breathe sleep and rot now."],
       ["b", "If even the Dream's guardians are falling, who is left to guard us?"],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "What's the last thing a priest says before a wipe?"],
+      ["b", "Don't stand in the fire."],
+      ["a", "And the first thing after?"],
+      ["b", "I said don't stand in the fire."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "A stranger asked me for a free portal today."],
+      ["b", "What did you say?"],
+      ["a", "Nothing is free. Reagents cost money, and so does my patience."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Why do frost mages make terrible friends?"],
+      ["b", "They give everyone the cold shoulder."],
+      ["a", "Then Frost Nova them when they try to leave."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "How can you tell a fire mage has visited the library?"],
+      ["b", "There isn't one anymore."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Aegwynn fought Sargeras himself, long ago."],
+      ["b", "Medivh's mother? The Guardian of Tirisfal?"],
+      ["a", "She slew his avatar in Northrend. But his spirit hid inside her."],
+      ["b", "And passed into her son."],
+      ["a", "She saved the world, and handed it the Dark Portal without knowing it."],
+      ["b", "The worst tragedies start with a victory."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Why do kobolds wear candles on their heads?"],
+      ["b", "So they can see who's about to take the candle."],
+      ["a", "You no take candle!"],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Thaurissan summoned Ragnaros to win his war against Ironforge."],
+      ["b", "Did it work?"],
+      ["a", "The Firelord burned him to ash and took the mountain for himself."],
+      ["b", "Be careful what you summon. It might want your house."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "Where did you set your hearthstone?"],
+      ["b", "Right here. Where else would I go?"],
+      ["a", "Somewhere with a chair, maybe."],
+      ["b", "Chairs are for people who don't stand guard."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Have you ever heard the whispers in Silithus?"],
+      ["b", "The sandstorms?"],
+      ["a", "Something older. The Twilight's Hammer camp out there worships it."],
+      ["b", "C'Thun, they say. Sleeping beneath Ahn'Qiraj."],
+      ["a", "They say if you listen too long, you hear your own name."],
+      ["b", "Then we stop listening. We have enough voices to deal with."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "My friend tried to rez me with goblin jumper cables."],
+      ["b", "Did it work?"],
+      ["a", "On the fourth try. I'm still smoking."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "Nat Pagle says the big fish are in Dustwallow Marsh."],
+      ["b", "Is that where he lives?"],
+      ["a", "On a little island, fishing all day, never bothering anyone."],
+      ["b", "Now there's a man who has figured life out."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The bronze dragons guard a cave in Tanaris."],
+      ["b", "The Caverns of Time?"],
+      ["a", "They say every moment that ever happened is kept in there."],
+      ["b", "Then somewhere in there, we're still standing here. Forever."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "What's the most dangerous monster in Azeroth?"],
+      ["b", "Onyxia? Ragnaros?"],
+      ["a", "The repair bill after a wipe."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The Bloodsail Buccaneers attacked Booty Bay again."],
+      ["b", "Pirates against goblins? Who do you root for?"],
+      ["a", "The sharks. They're the only ones in that bay who aren't cheating anyone."],
+      ["b", "Baron Revilgaz pays well to sink pirates, though."],
+      ["a", "He pays in pirate hats."],
+      ["b", "Currency is currency, in Booty Bay."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Felwood was part of Ashenvale, once."],
+      ["b", "Before the demons?"],
+      ["a", "The Legion's blood soaked into the roots. Now even the furbolgs are mad."],
+      ["b", "The Timbermaw held out. Stubborn bears."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "I polymorphed a gnoll this morning."],
+      ["b", "What happened?"],
+      ["a", "The sheep was smarter. I left it that way."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "One of the Four Horsemen in Naxxramas was a paladin once."],
+      ["b", "Sir Zeliek?"],
+      ["a", "He still begs forgiveness while he swings his hammer."],
+      ["b", "The Lich King doesn't just take your life. He makes you watch what he does with it."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Did you hear about the paladin in Blackrock Spire?"],
+      ["b", "The one who ran into the rookery alone?"],
+      ["a", "At least he had chicken."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The centaur are the children of Zaetar and Princess Theradras."],
+      ["b", "Cenarius' son, and the earth elemental?"],
+      ["a", "Their children killed him for being their father. Now his ghost wanders Maraudon."],
+      ["b", "No wonder the centaur hate everyone. They started with family."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "The Argent Dawn takes Horde and Alliance alike."],
+      ["b", "At Light's Hope? Anyone at all?"],
+      ["a", "If you kill Scourge, you're welcome. That's their only rule."],
+      ["b", "Best rule in the Plaguelands."],
     ],
   },
 ];
