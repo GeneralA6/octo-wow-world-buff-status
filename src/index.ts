@@ -56,6 +56,7 @@ import { tauntFor } from "./watcher/taunts.js";
 import { thanksFor } from "./watcher/thanks.js";
 import { LifeSigns } from "./watcher/life-signs.js";
 import { PartnerPleas } from "./watcher/partner-pleas.js";
+import { Banter } from "./watcher/banter.js";
 import { ListenerRoster, type ListenerVoice } from "./watcher/listener-roster.js";
 import { NearbyHealers, RESURRECTION_BY_CLASS } from "./watcher/nearby-healers.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
@@ -1512,6 +1513,7 @@ async function main(): Promise<void> {
   let darkmoonRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let shameSweepTimer: ReturnType<typeof setInterval> | null = null;
   let partnerPleaTimer: ReturnType<typeof setInterval> | null = null;
+  let banterTimer: ReturnType<typeof setInterval> | null = null;
   let wallOfShame: WallOfShame | null = null;
 
   const watchOptions: RaidTrackerOptions = {
@@ -1992,6 +1994,7 @@ async function main(): Promise<void> {
     if (darkmoonRefreshTimer) clearInterval(darkmoonRefreshTimer);
     if (shameSweepTimer) clearInterval(shameSweepTimer);
     if (partnerPleaTimer) clearInterval(partnerPleaTimer);
+    if (banterTimer) clearInterval(banterTimer);
     // Exit even if a store.close() hangs, so we log out fast and don't overlap a redeploy.
     const hardExit = setTimeout(() => process.exit(0), 3_000);
     hardExit.unref?.();
@@ -2278,6 +2281,22 @@ async function main(): Promise<void> {
       .catch((error) => logger.error(`partner pleas: ${describeError(error)}`));
   }, PARTNER_PLEA_INTERVAL_MS);
   partnerPleaTimer.unref?.();
+  // Now and then, the two listeners of each capital talk to each other in /say — only a capital's
+  // own pair, and only while both are alive and in world.
+  if (config.listenerBanterMs > 0) {
+    const banter = new Banter(listenerRoster);
+    banterTimer = setInterval(() => {
+      for (const faction of ["horde", "alliance"] as const) {
+        void banter
+          .converse(faction)
+          .then((held) => {
+            if (held) logger.info(`banter: ${held.between.join(" and ")} told a ${held.kind}${held.finished ? "" : ", cut short"}`);
+          })
+          .catch((error) => logger.error(`banter (${faction}): ${describeError(error)}`));
+      }
+    }, config.listenerBanterMs);
+    banterTimer.unref?.();
+  }
 
   const onListenerThreatened = (character: string, threat: Threat): void => {
     const distance = `${Math.round(threat.distance)} yd`;
