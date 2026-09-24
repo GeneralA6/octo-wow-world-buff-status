@@ -908,6 +908,8 @@ const GUID_PROBE_TIMEOUT_MS = 3_000;
  *  past the default stand-down, so the listener that fled is back to ask even if no other one is up. */
 const OWNER_NAME_ATTEMPTS = 20;
 const OWNER_NAME_RETRY_MS = 30_000;
+/** How often a listener notes, at most, that object updates are being cut short. */
+const CUT_SHORT_NOTE_INTERVAL_MS = 10 * 60_000;
 /** How often a listener asks passers-by to resurrect its dead partner. */
 const PARTNER_PLEA_INTERVAL_MS = 3 * 60_000;
 /** A listener kept away by the same threat reports it at most this often. */
@@ -974,10 +976,21 @@ async function runListener(
     // out now — instant in a capital — and stay out a while. An Infernal's owner is named by the other
     // characters; this one is not staying to ask. Its callbacks reach `world`, created below.
     let standDownMs = 0;
+    // Object updates cut short, counted between notes so a busy city cannot flood the log.
+    let cutShort = 0;
+    let cutShortNotedAt = 0;
     const threats = new ThreatWatch(
       {
         isShunned: hooks.isShunned,
         ownerOf: (guid) => unitOwners.ownerOf(guid),
+        onInfernalSeen: (guid, distance) => {
+          const owner = unitOwners.ownerOf(guid);
+          logger.info(
+            `${listener.characterName}: an Infernal (0x${guid.toString(16)}) is in view, ` +
+              (distance === null ? "before our own position is known" : `${Math.round(distance)} yd away`) +
+              (owner ? `, ${owner.current ? "" : "formerly "}${owner.relation} by 0x${owner.guid.toString(16)}` : ""),
+          );
+        },
         onThreat: (threat) => {
           standDownMs = config.listenerStandDownMs;
           const what = {
@@ -1014,7 +1027,8 @@ async function runListener(
     const deathWatch = new ListenerDeathWatch(
       {
         selfGuid: () => world.selfGuid,
-        playerName: (guid) => world.playerName(guid),
+        // A killer already on the wall of shame is named from it, should the name query be slow.
+        playerName: (guid) => world.playerName(guid) ?? hooks.knownName(guid),
         queryName: (guid) => world.queryName(guid),
         queryCreature: (entry, guid) => {
           for (const fresh of npcWatch.take([entry])) world.queryCreature(fresh, guid);
@@ -1234,7 +1248,11 @@ async function runListener(
             .onListenerContact(sender, text, listener.faction)
             .catch((error) => logger.error(`outreach: ${describeError(error)}`));
         },
-        onCombat: (event) => deathWatch.combat(event),
+        onCombat: (event) => {
+          deathWatch.combat(event);
+          // An Infernal swinging at us, or burning us, is on top of us whatever position we read.
+          if (event.kind !== "environmental" && event.target === world.selfGuid) threats.struckBy(event.attacker);
+        },
         onPlayerChat: (chat) => deathWatch.chat(chat),
         onObjectDestroyed: (guid) => {
           unitOwners.forget(guid);
@@ -1268,6 +1286,20 @@ async function runListener(
             // decode, so we keep whatever it read. Pass our own GUID so `self` is OUR position,
             // never a bystander's in the same packet.
             const parsed = parseUpdateObject(raw, world.selfGuid ?? undefined);
+            // A packet cut short loses every object after the break — an Infernal among them, say.
+            if (parsed.incomplete) {
+              cutShort += 1;
+              const now = Date.now();
+              if (now - cutShortNotedAt >= CUT_SHORT_NOTE_INTERVAL_MS) {
+                const { block, of, what, reason } = parsed.incomplete;
+                logger.warn(
+                  `${listener.characterName}: an object update was read only ${block} of ${of} blocks — stopped at ` +
+                    `${what}: ${reason} (${cutShort} cut short since the last note)`,
+                );
+                cutShortNotedAt = now;
+                cutShort = 0;
+              }
+            }
             // Owners first, so an Infernal arriving in this same packet is judged with its owner known.
             for (const change of parsed.ownerChanges) {
               unitOwners.apply(change);
