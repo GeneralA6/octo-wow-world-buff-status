@@ -33,6 +33,7 @@ import type { DetectionLane, LaneChronicle, YellSink } from "./lanes.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { UnitOwnerTable } from "./protocol/unit-owner.js";
+import { unitRef } from "./protocol/guid.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
 import {
   FACTIONS,
@@ -49,6 +50,8 @@ import { formatDeathReport, type DeathAccount } from "./watcher/death-report.js"
 import { DEATH_ALERT_TITLE, formatDeathAlert } from "./watcher/death-alert.js";
 import { ShameList } from "./watcher/shame-list.js";
 import { ShameProfiler } from "./watcher/shame-profiler.js";
+import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
+import { PlayerNames } from "./watcher/player-names.js";
 import { InMemoryShameListStore, MongoShameListStore, type ShameListStore } from "./watcher/shame-list-store.js";
 import { WallOfShame } from "./watcher/wall-of-shame.js";
 import {
@@ -814,10 +817,46 @@ async function runConnection(
   });
 }
 
+/** What a listener session reports to, and asks of, the rest of the bot. */
+interface ListenerHooks {
+  /** Raise the alarm that a parked listener has gone deaf — it cannot report this itself. */
+  readonly onListenerSilent: (character: string, quietFor: string) => Promise<void>;
+  /** Raise the alarm that a parked listener is dead at a graveyard. */
+  readonly onListenerDead: (character: string) => Promise<void>;
+  /** Raise the alarm the moment a parked listener is killed, naming who did it. */
+  readonly onListenerKilled: (character: string, death: DeathAccount) => Promise<void>;
+  /** A threat came within reach, and the listener is logging out for a while. */
+  readonly onListenerThreatened: (character: string, threat: Threat) => void;
+  /** Whether a player is on the wall of shame, by GUID — one who is counts as a threat nearby. */
+  readonly isShunned: (guid: bigint) => boolean;
+  /** Where this listener offers its name queries, for GUIDs another character saw. */
+  readonly playerNames: PlayerNames;
+  /** Fired once this listener reaches in-world — the realm-recovery signal (see runConnection). */
+  readonly onConnected: () => void;
+}
+
+/** How a listener session ended: `standDownMs` above zero means it left for a threat, and should
+ *  stay out that long before logging back in. */
+interface ListenerExit {
+  readonly standDownMs: number;
+}
+
+/** How long a threatened listener waits for the server to confirm its logout before just leaving. */
+const LISTENER_LOGOUT_TIMEOUT_MS = 3_000;
+/** How long a character waits on a name query for a GUID another one saw. */
+const PLAYER_NAME_TIMEOUT_MS = 5_000;
+/** Rounds of asking our characters who owns an Infernal a listener fled from — spaced so they span
+ *  the stand-down, when even the listener that fled is back to ask. */
+const OWNER_NAME_ATTEMPTS = 12;
+const OWNER_NAME_RETRY_MS = 30_000;
+/** A listener kept away by the same threat reports it at most this often. */
+const STOOD_DOWN_ALERT_INTERVAL_MS = 60 * 60_000;
+
 /**
  * A listener session: log in a city-parked character, reach the world, and forward buff yells.
  * It also lends its socket for faction /who lookups and joins the whisper pool (so broadcasts
  * fan across the listeners' throttle budgets). Shares the client identity so a patch heals once.
+ * It watches its surroundings, too, and logs out when an Infernal or a shunned player comes near.
  */
 async function runListener(
   config: BotConfig,
@@ -831,15 +870,9 @@ async function runListener(
   whisperPool: WhisperPool,
   /** Hears the Darkmoon heralds, who wander the capitals these listeners are parked in. */
   faire: FaireService,
-  /** Raise the alarm that a parked listener has gone deaf — it cannot report this itself. */
-  onListenerSilent: (character: string, quietFor: string) => Promise<void>,
-  /** Raise the alarm that a parked listener is dead at a graveyard. */
-  onListenerDead: (character: string) => Promise<void>,
-  /** Raise the alarm the moment a parked listener is killed, naming who did it. */
-  onListenerKilled: (character: string, death: DeathAccount) => Promise<void>,
-  // Fired once this listener reaches in-world — the realm-recovery signal (see runConnection).
-  onConnected: () => void,
-): Promise<void> {
+  hooks: ListenerHooks,
+): Promise<ListenerExit> {
+  const { onListenerSilent, onListenerDead, onListenerKilled, onConnected } = hooks;
   const { sessionKey, realms } = await new AuthClient(logger).login({
     host: config.authHost,
     port: config.authPort,
@@ -853,7 +886,7 @@ async function runListener(
   const socket = await connectSocket(target.host, target.port);
   const ownCharacters = OwnCharacters.of(config);
 
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<ListenerExit>((resolve, reject) => {
     let readyTimer: NodeJS.Timeout | null = null;
     let interactTimer: NodeJS.Timeout | null = null;
     let silenceTimer: NodeJS.Timeout | null = null;
@@ -869,6 +902,33 @@ async function runListener(
     // Who each pet, guardian and charmed unit in view answers to — sent only as it comes into view,
     // so kept from then on for a death report to name. A reconnect starts fresh.
     const unitOwners = new UnitOwnerTable();
+    // An Infernal, or a player on the wall of shame, near enough to be meant for this listener: log
+    // out now — instant in a capital — and stay out a while. An Infernal's owner is named by the other
+    // characters; this one is not staying to ask. Its callbacks reach `world`, created below.
+    let standDownMs = 0;
+    const threats = new ThreatWatch(
+      {
+        isShunned: hooks.isShunned,
+        ownerOf: (guid) => unitOwners.ownerOf(guid),
+        onThreat: (threat) => {
+          standDownMs = config.listenerStandDownMs;
+          const what = threat.kind === "infernal" ? "an Infernal" : "a player on the wall of shame";
+          logger.warn(
+            `${listener.characterName}: ${what} came within ${Math.round(threat.distance)} yd — logging out for ` +
+              humanSpan(standDownMs),
+          );
+          hooks.onListenerThreatened(listener.characterName, threat);
+          void world.logout(LISTENER_LOGOUT_TIMEOUT_MS).then((outcome) => {
+            if (outcome !== "logged-out") {
+              logger.warn(`${listener.characterName}: logout ${outcome}; dropping the connection instead`);
+            }
+            world.close();
+            settle();
+          });
+        },
+      },
+      { radiusYd: config.listenerThreatRadiusYd },
+    );
     // What killed it, if it dies while we are watching. Its callbacks reach `world`, created below —
     // they only run once packets arrive. Nothing is logged unless the character dies.
     const deathWatch = new ListenerDeathWatch(
@@ -907,11 +967,14 @@ async function runListener(
       listenerWho.unregister(listener.characterName); // stop offering this socket once it's gone
       whisperPool.unregister(listener.characterName); // and stop routing broadcasts through it
       listenerWhispers.stop();
+      hooks.playerNames.unregister(listener.characterName);
       if (listener.faction && registeredYell && yellSink[listener.faction] === registeredYell) {
         delete yellSink[listener.faction];
       }
-      if (error) reject(error);
-      else resolve();
+      // Leaving for a threat is not a failure, however the connection ended.
+      if (standDownMs > 0) resolve({ standDownMs });
+      else if (error) reject(error);
+      else resolve({ standDownMs: 0 });
     };
 
     // A one-at-a-time /who on THIS listener's socket, offered to Bufftracker for faction lookups
@@ -954,6 +1017,8 @@ async function runListener(
           listenerWho.register(listener.characterName, queuedWho);
           // Join the whisper pool so broadcasts can fan across this listener's own throttle budget.
           whisperPool.register(listener.characterName, listener.faction, listenerWhispers);
+          // Name GUIDs for the others — the owner of an Infernal another listener fled from.
+          hooks.playerNames.register(listener.characterName, (guid) => world.resolveName(guid, PLAYER_NAME_TIMEOUT_MS));
           // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone standing
           // in this capital — only when a faction is set AND this listener is a yeller. A second bot
           // in the same city with yeller=false stays whisper-only, so the two don't churn the single
@@ -1074,7 +1139,11 @@ async function runListener(
         },
         onCombat: (event) => deathWatch.combat(event),
         onPlayerChat: (chat) => deathWatch.chat(chat),
-        onObjectDestroyed: (guid) => unitOwners.forget(guid),
+        onObjectDestroyed: (guid) => {
+          unitOwners.forget(guid);
+          threats.gone(guid);
+        },
+        onMovement: (move) => threats.moved(move),
         onSystemMessage: (text) => {
           if (!text) return;
           // Logged like the watcher's, which they were not: the server answers a refused action
@@ -1092,7 +1161,13 @@ async function runListener(
             // decode, so we keep whatever it read. Pass our own GUID so `self` is OUR position,
             // never a bystander's in the same packet.
             const parsed = parseUpdateObject(raw, world.selfGuid ?? undefined);
-            for (const change of parsed.ownerChanges) unitOwners.apply(change);
+            // Owners first, so an Infernal arriving in this same packet is judged with its owner known.
+            for (const change of parsed.ownerChanges) {
+              unitOwners.apply(change);
+              if (change.kind === "out-of-range") threats.gone(change.guid);
+            }
+            if (parsed.self) threats.self(parsed.self);
+            for (const position of parsed.positions) threats.moved(position);
             if (parsed.selfHealth !== null) deathWatch.health(parsed.selfHealth);
             if (listener.onLogin === "interact" && !interacted) {
               for (const go of parsed.gameObjects) nearby.push(go);
@@ -1948,22 +2023,74 @@ async function main(): Promise<void> {
       logger.warn(`shame list: ${character}'s killer 0x${culprit.guid.toString(16)} never resolved to a name`);
       return;
     }
-    const added = await shameList.add(culprit.name, culprit.guid).catch((error: unknown) => {
+    await shamePlayer(culprit.name, culprit.guid, `killed ${character}`);
+  };
+  /** Put a player on the shame list and the wall, find out who they are, and stop their alerts.
+   *  `why` finishes "<name> … and is now on the wall of shame". */
+  const shamePlayer = async (name: string, guid: bigint, why: string): Promise<void> => {
+    const added = await shameList.add(name, guid).catch((error: unknown) => {
       // Still listed for this run — only the save failed, so it would be forgotten on restart.
-      logger.error(`shame list: could not save ${culprit.name} (${describeError(error)})`);
+      logger.error(`shame list: could not save ${name} (${describeError(error)})`);
       return true;
     });
     if (!added) return;
-    logger.warn(`shame list: ${culprit.name} killed ${character} and is now on the wall of shame`);
+    logger.warn(`shame list: ${name} ${why} and is now on the wall of shame`);
+    void notifyAdmin("⛔ Added to the wall of shame", `${name} ${why}. They are banned from the tracker.`);
     void wallOfShame?.show(shameList.players);
-    // They are almost surely still online seconds after the kill — look them up now.
-    void shameProfiler.profile(culprit.name);
+    // They are almost surely online right now — look them up while they are.
+    void shameProfiler.profile(name);
     // No more buff alerts either: the subscription goes, and the router refuses a new one.
-    const unsubscribed = await store.remove(culprit.name).catch((error: unknown) => {
-      logger.error(`shame list: could not unsubscribe ${culprit.name} (${describeError(error)})`);
+    const unsubscribed = await store.remove(name).catch((error: unknown) => {
+      logger.error(`shame list: could not unsubscribe ${name} (${describeError(error)})`);
       return false;
     });
-    if (unsubscribed) logger.info(`shame list: unsubscribed ${culprit.name}`);
+    if (unsubscribed) logger.info(`shame list: unsubscribed ${name}`);
+  };
+
+  // Every listener in world offers its name queries here, so a GUID one of them saw — the owner of an
+  // Infernal it fled from — can be named by another.
+  const playerNames = new PlayerNames();
+  /** A listener left because a threat came within reach: say so, and put an Infernal's owner on the
+   *  wall. The listener that saw it has gone, so the others name the owner, trying for a few minutes
+   *  in case none of them is in world yet. */
+  const lastStoodDownAlert = new Map<string, number>();
+  const onListenerThreatened = (character: string, threat: Threat): void => {
+    const distance = `${Math.round(threat.distance)} yd`;
+    const away = humanSpan(config.listenerStandDownMs);
+    // A threat that stays put meets the listener again each time it logs back in; say so once an hour,
+    // not every few minutes. The listener logs every time regardless.
+    const key = `${character}:${threat.guid}`;
+    const now = Date.now();
+    const alert = (body: string): void => {
+      if (now - (lastStoodDownAlert.get(key) ?? -Infinity) < STOOD_DOWN_ALERT_INTERVAL_MS) return;
+      lastStoodDownAlert.set(key, now);
+      void notifyAdmin("🛡️ Listener stood down", body);
+    };
+    if (threat.kind === "shunned-player") {
+      const name = shameList.byGuid(threat.guid)?.name ?? `0x${threat.guid.toString(16)}`;
+      alert(`${character} logged out for ${away}: ${name}, from the wall of shame, came within ${distance}.`);
+      return;
+    }
+    const owner = threat.owner;
+    alert(
+      `${character} logged out for ${away}: an Infernal came within ${distance}` +
+        (owner ? ` — its owner is being named.` : ` — nobody was named as its owner.`),
+    );
+    // Named again on every sighting: a player already on the wall is left as they are, and one whose
+    // name could not be found last time gets another try.
+    if (!owner || unitRef(owner.guid).kind !== "player") return;
+    void (async () => {
+      const name = await playerNames.resolve(owner.guid, {
+        except: character,
+        attempts: OWNER_NAME_ATTEMPTS,
+        retryMs: OWNER_NAME_RETRY_MS,
+      });
+      if (name === null) {
+        logger.warn(`shame list: the owner 0x${owner.guid.toString(16)} of the Infernal near ${character} was never named`);
+        return;
+      }
+      await shamePlayer(name, owner.guid, `brought an Infernal within ${distance} of ${character}`);
+    })();
   };
 
   const watcherLog = prefixed(logger, config.characterName);
@@ -2018,9 +2145,33 @@ async function main(): Promise<void> {
       recordBuff(faction, source, text, listener.characterName);
     const down = new DownTracker(DOWN_ALERT_THRESHOLD);
     let backoffMs = 5_000;
+    const hooks: ListenerHooks = {
+      onListenerSilent: (character, quietFor) =>
+        notifyAdmin(
+          "🔇 Listener has gone deaf",
+          `${character} has heard no NPC chat for ${quietFor}. It is still logged in, but it ` +
+            `cannot hear the buff yell from where it is standing — check whether it died and ` +
+            `released, or is parked out of earshot of the capital criers.`,
+        ),
+      onListenerDead: (character) =>
+        notifyAdmin(
+          "💀 Listener is dead",
+          `${character} is standing at a graveyard next to a Spirit Healer. It died and ` +
+            `released, so it can neither hear the buff yell nor yell the status board. ` +
+            `Resurrect it and walk it back to where the head hangs.`,
+        ),
+      onListenerKilled: (character, death) => {
+        void shameCulprit(character, death);
+        return notifyAdmin(DEATH_ALERT_TITLE, formatDeathAlert(character, death, DEATH_ALERT_MAX_LENGTH));
+      },
+      onListenerThreatened,
+      isShunned: (guid) => shameList.hasGuid(guid),
+      playerNames,
+      onConnected: () => announceRealmUp(listener.characterName),
+    };
     while (!shuttingDown) {
       try {
-        await runListener(
+        const exit = await runListener(
           config,
           listener,
           log,
@@ -2031,26 +2182,14 @@ async function main(): Promise<void> {
           listenerWho,
           whisperPool,
           faire,
-          (character, quietFor) =>
-            notifyAdmin(
-              "🔇 Listener has gone deaf",
-              `${character} has heard no NPC chat for ${quietFor}. It is still logged in, but it ` +
-                `cannot hear the buff yell from where it is standing — check whether it died and ` +
-                `released, or is parked out of earshot of the capital criers.`,
-            ),
-          (character) =>
-            notifyAdmin(
-              "💀 Listener is dead",
-              `${character} is standing at a graveyard next to a Spirit Healer. It died and ` +
-                `released, so it can neither hear the buff yell nor yell the status board. ` +
-                `Resurrect it and walk it back to where the head hangs.`,
-            ),
-          (character, death) => {
-            void shameCulprit(character, death);
-            return notifyAdmin(DEATH_ALERT_TITLE, formatDeathAlert(character, death, DEATH_ALERT_MAX_LENGTH));
-          },
-          () => announceRealmUp(listener.characterName),
+          hooks,
         );
+        if (exit.standDownMs > 0) {
+          // Left for a threat: stay out, then log back in — and leave again if it is still there.
+          log.warn(`stood down; logging back in ${humanSpan(exit.standDownMs)} from now`);
+          await delay(exit.standDownMs);
+          continue;
+        }
         log.warn("connection closed; reconnecting shortly");
         backoffMs = 5_000;
         if (down.recover()) {
