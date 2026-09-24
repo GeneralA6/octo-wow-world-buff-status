@@ -68,6 +68,17 @@ describe("parseUpdateObject (real grid packet with pathing NPCs)", () => {
   });
 });
 
+describe("parseUpdateObject paths (real grid packet)", () => {
+  it("reads where a walking NPC's path ends, and no path for one standing still", () => {
+    const { positions } = parseUpdateObject(Buffer.from(BIG_GRID, "hex"));
+    const walker = positions.find((p) => p.guid === 0xf1300000440137f3n); // a Stormwind guard on patrol
+    expect(walker?.destination?.x).toBeCloseTo(-8986.5, 0);
+    expect(walker?.destination?.y).toBeCloseTo(486.8, 0);
+    const standing = positions.find((p) => p.guid === 0xf1300001d201373dn);
+    expect(standing?.destination).toBeNull();
+  });
+});
+
 describe("parseUpdateObject self-guid filtering", () => {
   function packet(): Buffer {
     const w = new PacketWriter();
@@ -225,6 +236,23 @@ describe("parseUpdateObject positions", () => {
     expect(positions.map((p) => p.guid)).toEqual([INFERNAL, GANKER]);
     expect(positions[0]?.pos.x).toBeCloseTo(10, 1);
     expect(self?.x).toBeCloseTo(1, 1);
+  });
+
+  it("says where a unit that comes into view already running is heading", () => {
+    const body = packet(1, (w) => {
+      w.u8(2).packedGuid(INFERNAL).u8(3).u8(0x20); // CREATE, a unit, LIVING
+      w.u32LE(0x00400001).u32LE(0); // moving forward on a spline; time
+      w.f32LE(90).f32LE(0).f32LE(0).f32LE(0); // at 90 yd, orientation
+      w.u32LE(0); // fall time
+      for (let i = 0; i < 6; i += 1) w.f32LE(7); // speeds
+      w.u32LE(0).u32LE(0).u32LE(12_000).u32LE(5).u32LE(1); // spline flags, time passed, duration, id, 1 point
+      w.f32LE(45).f32LE(0).f32LE(0); // the point
+      w.f32LE(2).f32LE(0).f32LE(0); // where it ends — beside us
+      w.u8(0); // no values
+    });
+    const { positions } = parseUpdateObject(body, US);
+    expect(positions[0]?.pos.x).toBeCloseTo(90, 1);
+    expect(positions[0]?.destination?.x).toBeCloseTo(2, 1);
   });
 
   it("places a unit whose movement block alone was updated", () => {

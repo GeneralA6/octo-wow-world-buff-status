@@ -145,13 +145,13 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
       if (updateType === UPDATETYPE_CREATE || updateType === UPDATETYPE_CREATE2) {
         const objType = reader.u8();
         const flags = reader.u8();
-        const pos = readMovement(reader, flags);
+        const { pos, destination } = readMovement(reader, flags);
         const { entry, health, ownerWords } = readValues(reader);
         if (isSelf(guid) && health !== null) selfHealth = health;
         if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
         if (objType === OBJTYPE_UNIT && entry > 0) units.push({ guid, entry });
         if (objType === OBJTYPE_PLAYER && pos && (selfGuid === undefined || guid === selfGuid)) self = pos;
-        if ((objType === OBJTYPE_UNIT || objType === OBJTYPE_PLAYER) && pos && !isSelf(guid)) positions.push({ guid, pos, destination: null });
+        if ((objType === OBJTYPE_UNIT || objType === OBJTYPE_PLAYER) && pos && !isSelf(guid)) positions.push({ guid, pos, destination });
         // Every unit's create goes through, owner or not: it also clears whatever an earlier sighting left.
         if (objType === OBJTYPE_UNIT || objType === OBJTYPE_PLAYER) {
           ownerChanges.push({ kind: "create", guid, words: ownerWords });
@@ -163,8 +163,8 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         // rotation — so only a unit's GUID makes these words owners.
         if (ownerWords.size > 0 && isUnitGuid(guid)) ownerChanges.push({ kind: "values", guid, words: ownerWords });
       } else if (updateType === UPDATETYPE_MOVEMENT) {
-        const pos = readMovement(reader, reader.u8());
-        if (pos && isUnitGuid(guid) && !isSelf(guid)) positions.push({ guid, pos, destination: null });
+        const { pos, destination } = readMovement(reader, reader.u8());
+        if (pos && isUnitGuid(guid) && !isSelf(guid)) positions.push({ guid, pos, destination });
       } else {
         break; // unknown block type — stop, keep what we have
       }
@@ -185,8 +185,15 @@ export function parseDestroyObject(body: Buffer): bigint {
   return new PacketReader(body).u64LE();
 }
 
-function readMovement(reader: PacketReader, flags: number): WorldPoint | null {
+/** Where a movement block puts its object, and — for one walking a path — where the path ends. */
+interface Movement {
+  readonly pos: WorldPoint | null;
+  readonly destination: WorldPoint | null;
+}
+
+function readMovement(reader: PacketReader, flags: number): Movement {
   let pos: WorldPoint | null = null;
+  let destination: WorldPoint | null = null;
   if (flags & UPDATEFLAG_LIVING) {
     const moveFlags = reader.u32LE();
     reader.u32LE(); // time
@@ -204,7 +211,7 @@ function readMovement(reader: PacketReader, flags: number): WorldPoint | null {
     }
     if (moveFlags & MOVEFLAG_SPLINE_ELEVATION) reader.f32LE();
     for (let i = 0; i < 6; i += 1) reader.f32LE(); // walk/run/... speeds
-    if (moveFlags & MOVEFLAG_SPLINE_ENABLED) readSpline(reader);
+    if (moveFlags & MOVEFLAG_SPLINE_ENABLED) destination = readSpline(reader);
   } else if (flags & UPDATEFLAG_HAS_POSITION) {
     pos = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
     reader.f32LE(); // orientation
@@ -212,11 +219,15 @@ function readMovement(reader: PacketReader, flags: number): WorldPoint | null {
   if (flags & UPDATEFLAG_ALL) reader.u32LE();
   if (flags & UPDATEFLAG_HIGHGUID) reader.u32LE();
   if (flags & UPDATEFLAG_TRANSPORT) reader.u32LE();
-  return pos;
+  return { pos, destination };
 }
 
-/** Skip a monster/spline movement block (a pathing NPC). Layout confirmed live. */
-function readSpline(reader: PacketReader): void {
+/**
+ * Read a monster/spline movement block (a pathing NPC), keeping where its path ends. Layout
+ * confirmed live. A creature that comes into view already running carries its whole path here, and
+ * may send nothing more until it arrives — so the end is what says it is running at us.
+ */
+function readSpline(reader: PacketReader): WorldPoint | null {
   const splineFlags = reader.u32LE();
   if (splineFlags & SPLINE_FINAL_ANGLE) reader.f32LE();
   else if (splineFlags & SPLINE_FINAL_TARGET) reader.u64LE();
@@ -228,8 +239,15 @@ function readSpline(reader: PacketReader): void {
   reader.u32LE(); // spline id
   const pointCount = reader.u32LE();
   for (let i = 0; i < pointCount * 3; i += 1) reader.f32LE();
-  reader.f32LE(); reader.f32LE(); reader.f32LE(); // final destination
+  const end = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
+  // A cyclic path sends no end (zero); a misread one is no place in the world.
+  const nowhere = end.x === 0 && end.y === 0 && end.z === 0;
+  const plausible = [end.x, end.y, end.z].every((v) => Number.isFinite(v) && Math.abs(v) <= WORLD_EXTENT);
+  return !nowhere && plausible ? end : null;
 }
+
+/** Past this on any axis a coordinate is no place in the 1.12 world — a misread, not a position. */
+const WORLD_EXTENT = 20_000;
 
 interface ValueFields {
   /** OBJECT_FIELD_ENTRY, or 0 when the block did not carry it. */
