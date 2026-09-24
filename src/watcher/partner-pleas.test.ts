@@ -5,9 +5,7 @@ const first = (): number => 0;
 
 describe("pleaFor", () => {
   it("names the partner lying dead", () => {
-    expect(pleaFor("Onyxiabuffog", first)).toBe(
-      "Could a kind soul resurrect my partner Onyxiabuffog? They fell right here, guarding the head.",
-    );
+    expect(pleaFor("Onyxiabuffog", first)).toBe("Rez for Onyxiabuffog? Paying in conjured water.");
   });
 
   it("has more than a dozen lines, all different, and never picks past the end", () => {
@@ -21,7 +19,7 @@ describe("pleaFor", () => {
     for (let index = 0; index < PLEA_COUNT; index += 1) {
       const line = pleaFor("Onyxiabuffoglongname", () => index);
       expect(line).toMatch(/^[\x20-\x7e]+$/);
-      expect(line.length).toBeLessThanOrEqual(255);
+      expect(line.length - "Onyxiabuffoglongname".length).toBeLessThanOrEqual(50); // short, not a speech
       expect(line).not.toMatch(/[0-9]|minute|hour/i);
       expect(line).toContain("Onyxiabuffoglongname");
     }

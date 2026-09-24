@@ -6,27 +6,27 @@ import type { Faction } from "./buff-store.js";
  * the body is, and the listener that dead one would otherwise wait on a person to log in for.
  *
  * Only a partner that is alive and in world can plead, and only for a listener of its own city; the
- * pleas stop the moment the dead one is alive again. Plain ASCII, one short /say, never how long it
- * has been.
+ * pleas stop the moment the dead one is alive again. Plain ASCII, short and specific — a mage's
+ * joke, not a form letter — and never how long it has been.
  */
 
 type Line = (partner: string) => string;
 
 const LINES: readonly Line[] = [
-  (partner) => `Could a kind soul resurrect my partner ${partner}? They fell right here, guarding the head.`,
-  (partner) => `Any priests, shamans or paladins about? ${partner} could use a resurrection. Conjured water for your trouble!`,
-  (partner) => `${partner} is lying here looking rather dead. Would anyone spare a resurrection?`,
-  (partner) => `My partner ${partner} fell in the line of duty. Bring them back and I'll owe you a Portal.`,
-  (partner) => `Healers of the city, hear me! ${partner} has fallen and needs a resurrection.`,
-  (partner) => `${partner} is taking a very long nap on the floor. A rez would wake them right up!`,
-  (partner) => `Would a priest, shaman or paladin kindly revive ${partner}? I'll conjure you a snack.`,
-  (partner) => `${partner} tripped over an Infernal. Anyone with a resurrection to spare?`,
-  (partner) => `A resurrection for ${partner}, anyone? They promise to stand somewhere safer.`,
-  (partner) => `Please, someone revive ${partner}. It's lonely guarding this spot alone.`,
-  (partner) => `${partner} is dead but still on duty. A little rez would help them do it properly.`,
-  (partner) => `Seeking a kind healer: ${partner} needs raising. Payment in conjured water.`,
-  (partner) => `${partner} has seen the Spirit Healer's face and did not like it. A rez, please?`,
-  (partner) => `If anyone has a resurrection spell handy, ${partner} is right here and very grateful.`,
+  (partner) => `Rez for ${partner}? Paying in conjured water.`,
+  (partner) => `${partner} forgot to Ice Block. Healer, please!`,
+  (partner) => `${partner} is too dead to Blink. Rez, anyone?`,
+  (partner) => `Mage down! ${partner} needs a rez.`,
+  (partner) => `${partner} got Inferno'd. Any healer with a heart?`,
+  (partner) => `${partner} is face down by the head again. Rez?`,
+  (partner) => `Spare a rez for ${partner}? Bread and water on me.`,
+  (partner) => `${partner} tanked an Infernal. Poorly. Rez please?`,
+  (partner) => `Priests, shamans, paladins - ${partner} needs you!`,
+  (partner) => `${partner} is hugging the floor. Help a mage up?`,
+  (partner) => `A rez for ${partner}? The Spirit Healer is dull company.`,
+  (partner) => `${partner} Evocated way too hard. Anyone got a rez?`,
+  (partner) => `Free conjured snacks for whoever rezzes ${partner}!`,
+  (partner) => `${partner} died on duty. Rez the hero?`,
 ];
 
 /** How many plea lines there are. */
