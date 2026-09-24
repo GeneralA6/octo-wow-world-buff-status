@@ -40,6 +40,9 @@ export interface ThreatWatchDeps {
 export interface ThreatWatchOptions {
   /** How close a threat may come before the listener leaves. */
   readonly radiusYd: number;
+  /** Whether a player on the wall of shame standing close is itself a threat. Off, only their
+   *  Inferno — aimed at us, or an Infernal coming — is; the listener stays up beside them. */
+  readonly fleeShunnedPlayers: boolean;
 }
 
 /**
@@ -59,6 +62,7 @@ export interface ThreatWatchOptions {
 export class ThreatWatch {
   readonly #deps: ThreatWatchDeps;
   readonly #radiusYd: number;
+  readonly #fleeShunnedPlayers: boolean;
   #self: WorldPoint | null = null;
   /** Where each unit that would be a threat up close was last seen, and where it was heading. */
   readonly #watched = new Map<bigint, UnitPosition>();
@@ -67,6 +71,7 @@ export class ThreatWatch {
   constructor(deps: ThreatWatchDeps, options: ThreatWatchOptions) {
     this.#deps = deps;
     this.#radiusYd = options.radiusYd;
+    this.#fleeShunnedPlayers = options.fleeShunnedPlayers;
   }
 
   /** Where we stand. */
@@ -99,7 +104,7 @@ export class ThreatWatch {
   #isThreatening(guid: bigint): boolean {
     const ref = unitRef(guid);
     if (ref.kind === "creature" || ref.kind === "pet") return ref.entry === INFERNAL_ENTRY;
-    return ref.kind === "player" && this.#deps.isShunned(guid);
+    return ref.kind === "player" && this.#fleeShunnedPlayers && this.#deps.isShunned(guid);
   }
 
   #judge({ guid, pos, destination }: UnitPosition): void {

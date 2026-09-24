@@ -75,6 +75,9 @@ export interface BotConfig {
   readonly listenerThreatRadiusYd: number;
   /** How long a listener that logged out for a threat stays out before logging back in. */
   readonly listenerStandDownMs: number;
+  /** Whether a listener also leaves when a player on the wall of shame merely stands close. Off by
+   *  default: their Inferno is caught as it is cast, so the listener can stay up beside them. */
+  readonly listenerFleeShunnedPlayers: boolean;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   /** Members a cohort must reach for a raid to count as forming ("about to start") — when the
@@ -435,6 +438,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   // enough to be meant for the listener and leaves time to log out (instant in a city) first.
   const listenerThreatRadiusYd = intWithDefault("WOW_LISTENER_THREAT_RADIUS_YARDS", 40, 5);
   const listenerStandDownMs = intWithDefault("WOW_LISTENER_STAND_DOWN_MINUTES", 5, 1) * 60_000;
+  const fleeShunnedRaw = env.WOW_LISTENER_FLEE_SHUNNED_PLAYERS?.trim().toLowerCase();
+  const listenerFleeShunnedPlayers = fleeShunnedRaw === "true" || fleeShunnedRaw === "1";
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
   // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
@@ -601,6 +606,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     listenerSilenceMs,
     listenerThreatRadiusYd,
     listenerStandDownMs,
+    listenerFleeShunnedPlayers,
     watchAreaId,
     watchAreaName,
     minRaidSize,

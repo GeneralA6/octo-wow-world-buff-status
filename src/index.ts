@@ -968,7 +968,7 @@ async function runListener(
           });
         },
       },
-      { radiusYd: config.listenerThreatRadiusYd },
+      { radiusYd: config.listenerThreatRadiusYd, fleeShunnedPlayers: config.listenerFleeShunnedPlayers },
     );
     // What killed it, if it dies while we are watching. Its callbacks reach `world`, created below —
     // they only run once packets arrive. Nothing is logged unless the character dies.

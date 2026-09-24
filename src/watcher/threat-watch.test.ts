@@ -10,7 +10,11 @@ const WARLOCK = 0x1234n;
 
 const at = (x: number, y = 0, z = 0) => ({ x, y, z });
 
-function setup(shunned: readonly bigint[] = [GANKER], owners = new Map<bigint, UnitOwner>()) {
+function setup(
+  shunned: readonly bigint[] = [GANKER],
+  owners = new Map<bigint, UnitOwner>(),
+  fleeShunnedPlayers = true,
+) {
   const threats: Threat[] = [];
   const watch = new ThreatWatch(
     {
@@ -18,7 +22,7 @@ function setup(shunned: readonly bigint[] = [GANKER], owners = new Map<bigint, U
       ownerOf: (guid) => owners.get(guid) ?? null,
       onThreat: vi.fn((threat: Threat) => threats.push(threat)),
     },
-    { radiusYd: 30 },
+    { radiusYd: 30, fleeShunnedPlayers },
   );
   return { watch, threats };
 }
@@ -49,6 +53,15 @@ describe("ThreatWatch", () => {
     expect(threats).toEqual([]);
     watch.moved({ guid: GANKER, pos: at(0, 0, 10), destination: null });
     expect(threats).toEqual([{ kind: "shunned-player", guid: GANKER, distance: 10 }]);
+  });
+
+  it("stays beside a player on the wall of shame when told to, but still flees their Inferno", () => {
+    const { watch, threats } = setup([GANKER], new Map(), false);
+    watch.self(at(0));
+    watch.moved({ guid: GANKER, pos: at(2), destination: null });
+    expect(threats).toEqual([]);
+    watch.castStarted({ caster: GANKER, spellId: 1122, destination: at(1) });
+    expect(threats).toEqual([{ kind: "inferno-cast", guid: GANKER, distance: 1 }]);
   });
 
   it("judges what it saw before it knew where we stand", () => {

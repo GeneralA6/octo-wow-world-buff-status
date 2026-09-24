@@ -557,6 +557,11 @@ describe("loadConfig listener threats", () => {
     expect(config.listenerStandDownMs).toBe(10 * 60_000);
   });
 
+  it("stays beside a player on the wall of shame unless told to flee them too", () => {
+    expect(loadConfig({ ...minimalEnv }).listenerFleeShunnedPlayers).toBe(false);
+    expect(loadConfig({ ...minimalEnv, WOW_LISTENER_FLEE_SHUNNED_PLAYERS: "true" }).listenerFleeShunnedPlayers).toBe(true);
+  });
+
   it("rejects a radius too small to leave in time", () => {
     expect(() => loadConfig({ ...minimalEnv, WOW_LISTENER_THREAT_RADIUS_YARDS: "2" })).toThrow(
       /WOW_LISTENER_THREAT_RADIUS_YARDS must be an integer >= 5/,
