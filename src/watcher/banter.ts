@@ -1,12 +1,13 @@
 import { conversationsFor, type Conversation, type Part } from "./banter-lines.js";
 import type { Faction } from "./buff-store.js";
-import type { ListenerRoster } from "./listener-roster.js";
+import type { ListenerRoster, Speaker } from "./listener-roster.js";
 
 /**
  * Has the two listeners of one capital hold a conversation, one /say each in turn, a few seconds
  * apart. Only listeners of the same capital talk: Orgrimmar's pair with each other, and Stormwind's
- * with each other. A conversation stops as soon as either speaker dies or leaves the world,
- * and each capital goes through its other conversations before repeating a recent one.
+ * with each other. A conversation is dropped, never resumed, once either speaker dies or leaves the
+ * world — even if it is back by the next line — and each capital goes through its other
+ * conversations before repeating a recent one.
  */
 
 /** A conversation that was held. */
@@ -55,7 +56,7 @@ export class Banter {
     const conversations = conversationsFor(faction);
     const conversation = conversations[this.#choose(faction, conversations.length)];
     if (!conversation) return null;
-    const cast: Record<Part, string> = { a: first.name, b: second.name };
+    const cast: Record<Part, Speaker> = { a: first, b: second };
 
     this.#talking.add(faction);
     try {
@@ -66,15 +67,17 @@ export class Banter {
     }
   }
 
-  async #perform(faction: Faction, conversation: Conversation, cast: Record<Part, string>): Promise<boolean> {
+  async #perform(faction: Faction, conversation: Conversation, cast: Record<Part, Speaker>): Promise<boolean> {
     for (const [index, [part, line]] of conversation.lines.entries()) {
       if (index > 0) await this.#sleep(LINE_GAP_MS);
-      // Both must still be here: half a conversation, answered by no one, is worse than none.
+      // Both must still be here, and never have gone: one that died, logged out or dropped since the
+      // last line — even if already back — ends it. Half a conversation, picked up again as if nothing
+      // happened, is worse than none.
       const present = this.#roster.speakers(faction);
-      const speaker = present.find((candidate) => candidate.name === cast[part]);
-      const listener = present.find((candidate) => candidate.name === cast[part === "a" ? "b" : "a"]);
-      if (!speaker || !listener) return false;
-      speaker.voice.say(line);
+      const stayed = (speaker: Speaker): boolean =>
+        present.some((candidate) => candidate.name === speaker.name && candidate.stint === speaker.stint);
+      if (!stayed(cast.a) || !stayed(cast.b)) return false;
+      cast[part].voice.say(line);
     }
     return true;
   }

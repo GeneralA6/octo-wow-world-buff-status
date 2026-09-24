@@ -104,6 +104,43 @@ describe("Banter", () => {
     expect(og.say).toHaveBeenCalledTimes(1);
   });
 
+  it("drops the conversation when a speaker dies and is brought back between two lines", async () => {
+    const { roster, og, ogb } = city();
+    const banter = new Banter(roster, {
+      pick: first,
+      sleep: async () => {
+        roster.life("Onybuffogb", "horde", false);
+        roster.life("Onybuffogb", "horde", true);
+      },
+    });
+    const held = await banter.converse("horde");
+    expect(held?.finished).toBe(false);
+    expect(og.say).toHaveBeenCalledTimes(1);
+    expect(ogb.say).not.toHaveBeenCalled();
+  });
+
+  it("drops the conversation when a speaker drops and logs straight back in between two lines", async () => {
+    const { roster, og } = city();
+    const again = voice();
+    const banter = new Banter(roster, {
+      pick: first,
+      sleep: async () => {
+        roster.voice("Onyxiabuffog", null);
+        roster.voice("Onyxiabuffog", again.voice);
+      },
+    });
+    const held = await banter.converse("horde");
+    expect(held?.finished).toBe(false);
+    expect(og.say).toHaveBeenCalledTimes(1);
+    expect(again.say).not.toHaveBeenCalled();
+  });
+
+  it("carries on when a speaker is merely told again that it is alive", async () => {
+    const { roster } = city();
+    const banter = new Banter(roster, { pick: first, sleep: async () => roster.life("Onybuffogb", "horde", true) });
+    expect((await banter.converse("horde"))?.finished).toBe(true);
+  });
+
   it("holds one conversation at a time in a capital", async () => {
     const { roster } = city();
     let release: () => void = () => {};
