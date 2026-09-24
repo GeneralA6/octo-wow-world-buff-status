@@ -2297,7 +2297,7 @@ async function main(): Promise<void> {
   // own pair, and only while both are alive and in world. With a player from the wall of shame in
   // earshot, every other conversation or so is a joke about them.
   if (config.listenerBanterMs > 0) {
-    const banter = new Banter(listenerRoster);
+    const banter = new Banter(listenerRoster, { lineGapMs: config.listenerBanterLineGapMs });
     banterTimer = setInterval(() => {
       for (const faction of ["horde", "alliance"] as const) {
         void banter

@@ -570,8 +570,17 @@ describe("loadConfig listener threats", () => {
 });
 
 describe("loadConfig listener banter", () => {
-  it("defaults to a conversation in each capital every two minutes", () => {
-    expect(loadConfig({ ...minimalEnv }).listenerBanterMs).toBe(2 * 60_000);
+  it("defaults to a conversation in each capital every three minutes, its lines ten seconds apart", () => {
+    const config = loadConfig({ ...minimalEnv });
+    expect(config.listenerBanterMs).toBe(3 * 60_000);
+    expect(config.listenerBanterLineGapMs).toBe(10_000);
+  });
+
+  it("takes the gap between lines in seconds, but never none", () => {
+    expect(loadConfig({ ...minimalEnv, WOW_LISTENER_BANTER_LINE_GAP_SECONDS: "7" }).listenerBanterLineGapMs).toBe(7_000);
+    expect(() => loadConfig({ ...minimalEnv, WOW_LISTENER_BANTER_LINE_GAP_SECONDS: "0" })).toThrow(
+      /WOW_LISTENER_BANTER_LINE_GAP_SECONDS must be an integer >= 1/,
+    );
   });
 
   it("takes an interval in minutes, or 0 to keep the listeners quiet", () => {
