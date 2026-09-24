@@ -42,6 +42,7 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
   readonly gameObjUses: bigint[] = [];
   readonly guildInvites: string[] = [];
   readonly nameQueries: bigint[] = [];
+  readonly resurrectAnswers: { resurrector: bigint; status: number }[] = [];
 
   constructor(characters: { guid: bigint; name: string }[]) {
     super();
@@ -183,6 +184,10 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     }
     if (opcode === WorldOpcode.CMSG_GAMEOBJ_USE) {
       this.gameObjUses.push(new PacketReader(body).u64LE());
+    }
+    if (opcode === WorldOpcode.CMSG_RESURRECT_RESPONSE) {
+      const reader = new PacketReader(body);
+      this.resurrectAnswers.push({ resurrector: reader.u64LE(), status: reader.u8() });
     }
     if (opcode === WorldOpcode.CMSG_GUILD_INVITE) {
       this.guildInvites.push(new PacketReader(body).cString());
@@ -801,6 +806,21 @@ describe("WorldClient (against a scripted mock server)", () => {
       socket.pushPacket(WorldOpcode.SMSG_SPELL_START, inferno);
       await settle();
       expect(casts).toEqual([{ caster: 0x2f1an, spellId: 1122, destination: { x: 10, y: 20, z: 30 } }]);
+      client.close();
+    });
+
+    it("passes on a resurrection offer, and sends the answer", async () => {
+      const offers: bigint[] = [];
+      const { socket, client } = await connect({ onResurrectRequest: (resurrector) => offers.push(resurrector) });
+      socket.pushPacket(
+        WorldOpcode.SMSG_RESURRECT_REQUEST,
+        new PacketWriter().u64LE(0x4d2n).u32LE(1).cString("").u8(0).toBuffer(),
+      );
+      await settle();
+      expect(offers).toEqual([0x4d2n]);
+
+      client.answerResurrection(0x4d2n, true);
+      expect(socket.resurrectAnswers).toEqual([{ resurrector: 0x4d2n, status: 1 }]);
       client.close();
     });
 

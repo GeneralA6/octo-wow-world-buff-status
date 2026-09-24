@@ -74,6 +74,10 @@ export enum WorldOpcode {
   SMSG_COMPRESSED_UPDATE_OBJECT = 0x1f6,
   /** Someone near us started casting — who, which spell, where it is aimed (spell-cast.ts). */
   SMSG_SPELL_START = 0x131,
+  /** A player offers to resurrect us (resurrect.ts). */
+  SMSG_RESURRECT_REQUEST = 0x15b,
+  /** Our answer to that offer. */
+  CMSG_RESURRECT_RESPONSE = 0x15c,
   // The combat log — every hit a nearby unit takes. Stock 1.12 values; layouts in combat-log.ts.
   /** A unit started swinging at another (u64 attacker, u64 victim). */
   SMSG_ATTACKSTART = 0x143,

@@ -38,6 +38,7 @@ import { buildCreatureQuery, parseCreatureQueryResponse } from "../protocol/crea
 import { parseDestroyObject } from "../protocol/update-object.js";
 import { parseMonsterMove, parsePlayerMovement, PLAYER_MOVEMENT_OPCODES, type UnitPosition } from "../protocol/movement.js";
 import { parseSpellStart, type SpellCast } from "../protocol/spell-cast.js";
+import { buildResurrectResponse, parseResurrectRequest } from "../protocol/resurrect.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
 import {
@@ -108,6 +109,8 @@ export interface WorldClientHandlers {
   onMovement?: (move: UnitPosition) => void;
   /** Someone near us started casting a spell — who, which, and where it is aimed. */
   onSpellStart?: (cast: SpellCast) => void;
+  /** A player is offering to resurrect us; answer with `answerResurrection`. */
+  onResurrectRequest?: (resurrector: bigint) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
   /** Server sent warden data — anticheat is active and unhandled. */
@@ -254,6 +257,12 @@ export class WorldClient {
   }
 
   /** /yell — heard by everyone nearby in the zone (used to broadcast in a capital). */
+  /** Accept or decline `resurrector`'s offer to resurrect us. */
+  answerResurrection(resurrector: bigint, accept: boolean): void {
+    if (!this.#ready) throw new Error("cannot answer a resurrection before the character is in world");
+    this.#send(WorldOpcode.CMSG_RESURRECT_RESPONSE, buildResurrectResponse(resurrector, accept));
+  }
+
   /** Say something to everyone standing close by. */
   say(message: string): void {
     if (!this.#ready) throw new Error("cannot say before the character is in world");
@@ -430,6 +439,9 @@ export class WorldClient {
           break;
         case WorldOpcode.SMSG_SPELL_START:
           this.#handleSpellStart(body);
+          break;
+        case WorldOpcode.SMSG_RESURRECT_REQUEST:
+          this.#handleResurrectRequest(body);
           break;
         case WorldOpcode.SMSG_LOGOUT_RESPONSE:
           this.#handleLogoutResponse(body);
@@ -726,6 +738,14 @@ export class WorldClient {
     // Accepted is followed by SMSG_LOGOUT_COMPLETE; only a refusal settles the logout here.
     const reason = body.length >= 4 ? body.readUInt32LE(0) : 0;
     if (reason !== 0) this.#pendingLogout?.("refused");
+  }
+
+  #handleResurrectRequest(body: Buffer): void {
+    try {
+      this.#handlers.onResurrectRequest?.(parseResurrectRequest(body));
+    } catch (error) {
+      this.#logger.debug(`world: could not read resurrect request: ${(error as Error).message}`);
+    }
   }
 
   #handleSpellStart(body: Buffer): void {
