@@ -51,6 +51,7 @@ import { DEATH_ALERT_TITLE, formatDeathAlert } from "./watcher/death-alert.js";
 import { ShameList } from "./watcher/shame-list.js";
 import { ShameProfiler } from "./watcher/shame-profiler.js";
 import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
+import { tauntFor } from "./watcher/taunts.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
 import { GuidProbe } from "./watcher/guid-probe.js";
 import { InMemoryShameListStore, MongoShameListStore, type ShameListStore } from "./watcher/shame-list-store.js";
@@ -832,6 +833,8 @@ interface ListenerHooks {
   readonly onListenerThreatened: (character: string, threat: Threat) => void;
   /** Whether a player is on the wall of shame, by GUID — one who is counts as a threat nearby. */
   readonly isShunned: (guid: bigint) => boolean;
+  /** A player's name when the bot already knows it — from the wall of shame — for the parting /say. */
+  readonly knownName: (guid: bigint) => string | undefined;
   /** Where this listener offers its name queries, for GUIDs another character saw. */
   readonly playerNames: PlayerNames;
   /** Where this listener offers its friend-list GUID lookups, for players listed by name alone. */
@@ -934,6 +937,14 @@ async function runListener(
               humanSpan(standDownMs),
           );
           hooks.onListenerThreatened(listener.characterName, threat);
+          // A parting shot at whoever sent it, heard by everyone close by — the warlock included.
+          const culprit = threat.kind === "infernal" ? (threat.owner?.guid ?? null) : threat.guid;
+          const name = culprit === null ? null : (hooks.knownName(culprit) ?? world.playerName(culprit) ?? null);
+          try {
+            world.say(tauntFor(threat.kind, name));
+          } catch (error) {
+            logger.debug(`${listener.characterName}: no parting /say (${describeError(error)})`);
+          }
           void world.logout(LISTENER_LOGOUT_TIMEOUT_MS).then((outcome) => {
             if (outcome !== "logged-out") {
               logger.warn(`${listener.characterName}: logout ${outcome}; dropping the connection instead`);
@@ -2198,6 +2209,7 @@ async function main(): Promise<void> {
       },
       onListenerThreatened,
       isShunned: (guid) => shameList.hasGuid(guid),
+      knownName: (guid) => shameList.byGuid(guid)?.name,
       playerNames,
       playerGuids,
       onConnected: () => announceRealmUp(listener.characterName),
