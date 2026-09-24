@@ -53,6 +53,7 @@ import { ShameList } from "./watcher/shame-list.js";
 import { ShameProfiler } from "./watcher/shame-profiler.js";
 import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
 import { tauntFor } from "./watcher/taunts.js";
+import { thanksFor } from "./watcher/thanks.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
 import { WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
@@ -877,11 +878,18 @@ interface ListenerExit {
 
 /**
  * Accept a resurrection — from anyone: a character of ours never has a reason to stay dead, and only a
- * player on its own side can offer one — and hand back who gave it, by name when the server says.
+ * player on its own side can offer one — thank the player out loud by name, and hand back who it was.
  */
 async function acceptResurrection(world: WorldClient, resurrector: bigint): Promise<string> {
   world.answerResurrection(resurrector, true);
-  return (await world.resolveName(resurrector, PLAYER_NAME_TIMEOUT_MS)) ?? `0x${resurrector.toString(16)}`;
+  const name = await world.resolveName(resurrector, PLAYER_NAME_TIMEOUT_MS);
+  // Alive by now — the server raises us on the accept — so the living hear it.
+  try {
+    world.say(thanksFor(name));
+  } catch {
+    // left the world meanwhile: nobody to thank
+  }
+  return name ?? `0x${resurrector.toString(16)}`;
 }
 
 /** How long a threatened listener waits for the server to confirm its logout before just leaving. */
