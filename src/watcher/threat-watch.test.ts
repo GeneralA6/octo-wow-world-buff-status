@@ -16,15 +16,17 @@ function setup(
   fleeShunnedPlayers = true,
 ) {
   const threats: Threat[] = [];
+  const sightings: { guid: bigint; distance: number | null }[] = [];
   const watch = new ThreatWatch(
     {
       isShunned: (guid) => shunned.includes(guid),
       ownerOf: (guid) => owners.get(guid) ?? null,
       onThreat: vi.fn((threat: Threat) => threats.push(threat)),
+      onInfernalSeen: (guid, distance) => sightings.push({ guid, distance }),
     },
     { radiusYd: 30, fleeShunnedPlayers },
   );
-  return { watch, threats };
+  return { watch, threats, sightings };
 }
 
 describe("ThreatWatch", () => {
@@ -116,6 +118,29 @@ describe("ThreatWatch", () => {
     watch.castStarted({ caster: WARLOCK, spellId: 5740, destination: at(1) }); // Rain of Fire
     watch.castStarted({ caster: WARLOCK, spellId: 1122, destination: null });
     expect(threats).toEqual([]);
+  });
+
+  it("reports each Infernal it sees once, with its distance, far off or near", () => {
+    const { watch, sightings } = setup([]);
+    watch.moved({ guid: INFERNAL, pos: at(5), destination: null }); // before we know where we stand
+    watch.self(at(0));
+    watch.moved({ guid: INFERNAL, pos: at(4), destination: null });
+    const FAR_INFERNAL = 0xf130_0000_5900_0abdn;
+    watch.moved({ guid: FAR_INFERNAL, pos: at(70), destination: null });
+    watch.moved({ guid: GRUNT, pos: at(1), destination: null });
+    expect(sightings).toEqual([
+      { guid: INFERNAL, distance: null },
+      { guid: FAR_INFERNAL, distance: 70 },
+    ]);
+  });
+
+  it("leaves at an Infernal's first blow, whatever its position said", () => {
+    const owner: UnitOwner = { relation: "controlled", guid: WARLOCK, current: false };
+    const { watch, threats } = setup([], new Map([[INFERNAL, owner]]));
+    watch.struckBy(GRUNT); // a guard's swing is not an Infernal's
+    expect(threats).toEqual([]);
+    watch.struckBy(INFERNAL);
+    expect(threats).toEqual([{ kind: "infernal", guid: INFERNAL, owner, distance: 0 }]);
   });
 
   it("forgets a unit that left view", () => {

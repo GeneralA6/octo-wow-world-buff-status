@@ -35,6 +35,9 @@ export interface ThreatWatchDeps {
   readonly ownerOf: (guid: bigint) => UnitOwner | null;
   /** The first threat to come within reach — the only one reported; the answer to it is to leave. */
   readonly onThreat: (threat: Threat) => void;
+  /** An Infernal came into view — once each, how far off, or null before our own position is known.
+   *  For the log: a miss can then be told from one never seen at all. */
+  readonly onInfernalSeen: (guid: bigint, distance: number | null) => void;
 }
 
 export interface ThreatWatchOptions {
@@ -83,8 +86,21 @@ export class ThreatWatch {
   /** A unit came into view or moved. */
   moved(position: UnitPosition): void {
     if (!this.#isThreatening(position.guid)) return;
+    if (!this.#watched.has(position.guid) && isInfernal(position.guid)) {
+      this.#deps.onInfernalSeen(position.guid, this.#self ? distanceBetween(this.#self, position.pos) : null);
+    }
     this.#watched.set(position.guid, position);
     this.#judge(position);
+  }
+
+  /**
+   * Something hit us. An Infernal's blow is the last word: whatever position we never read, it is on
+   * top of us — leave now, though mid-fight the server may refuse the logout.
+   */
+  struckBy(attacker: bigint): void {
+    if (this.#reported || !isInfernal(attacker)) return;
+    this.#reported = true;
+    this.#deps.onThreat({ kind: "infernal", guid: attacker, owner: this.#deps.ownerOf(attacker), distance: 0 });
   }
 
   /** Someone near us started casting. An Inferno aimed within reach is a threat, whoever casts it. */
@@ -102,9 +118,8 @@ export class ThreatWatch {
   }
 
   #isThreatening(guid: bigint): boolean {
-    const ref = unitRef(guid);
-    if (ref.kind === "creature" || ref.kind === "pet") return ref.entry === INFERNAL_ENTRY;
-    return ref.kind === "player" && this.#fleeShunnedPlayers && this.#deps.isShunned(guid);
+    if (isInfernal(guid)) return true;
+    return unitRef(guid).kind === "player" && this.#fleeShunnedPlayers && this.#deps.isShunned(guid);
   }
 
   #judge({ guid, pos, destination }: UnitPosition): void {
@@ -118,6 +133,12 @@ export class ThreatWatch {
         : { kind: "infernal", guid, owner: this.#deps.ownerOf(guid), distance },
     );
   }
+}
+
+/** Whether a GUID is an Infernal's — its entry sits in its GUID. */
+function isInfernal(guid: bigint): boolean {
+  const ref = unitRef(guid);
+  return (ref.kind === "creature" || ref.kind === "pet") && ref.entry === INFERNAL_ENTRY;
 }
 
 function distanceBetween(a: WorldPoint, b: WorldPoint): number {
