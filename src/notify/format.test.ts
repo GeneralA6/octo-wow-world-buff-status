@@ -5,6 +5,8 @@ import {
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
+  formatWarchiefBlessing,
+  formatWarchiefBlessingWhisper,
   formatRaidEnding,
   formatRaidEndingWhisper,
   formatRaidDisbanded,
@@ -144,6 +146,29 @@ describe("formatBuffDropped", () => {
     expect(saved.body).toMatch(/no raid was in the lair/);
     expect(saved.body).not.toMatch(/tip|appreciated/i);
     expect(saved.title).toBe(fresh.title); // same headline; only the body differs
+  });
+});
+
+describe("formatWarchiefBlessing", () => {
+  it("names the buff, Orgrimmar and Rend's head, and makes no duration claim", () => {
+    const msg = formatWarchiefBlessing();
+    expect(msg.title).toBe("⚔️ Warchief's Blessing dropped in Orgrimmar");
+    expect(msg.body).toContain("Rend Blackhand");
+    expect(msg.body).toMatch(/Horde/);
+    expect(msg.body).not.toMatch(/cooldown|wears off|until|hour/i);
+  });
+});
+
+describe("formatWarchiefBlessingWhisper", () => {
+  it("says it dropped in Orgrimmar, with the Discord nudge when an invite is set", () => {
+    expect(formatWarchiefBlessingWhisper()).toBe("The Warchief's Blessing just dropped in Orgrimmar!");
+    expect(formatWarchiefBlessingWhisper("https://discord.gg/abc")).toBe(
+      "The Warchief's Blessing just dropped in Orgrimmar! In-game pings can lag - Discord is instant: https://discord.gg/abc",
+    );
+  });
+
+  it("fits in one whisper", () => {
+    expect(formatWarchiefBlessingWhisper("https://discord.gg/abcdefghij").length).toBeLessThanOrEqual(255);
   });
 });
 
