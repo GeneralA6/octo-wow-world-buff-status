@@ -57,6 +57,11 @@ export class ShameList {
     return this.players.filter((player) => player.details === null).map((player) => player.name);
   }
 
+  /** The listed players whose GUID is still unknown — who cannot yet be spotted nearby. */
+  get unidentified(): readonly string[] {
+    return this.players.filter((player) => player.guid === null).map((player) => player.name);
+  }
+
   /**
    * Put a player on the list, with their GUID. True when they were not on it already; one who was,
    * but without a GUID, gains it. The player counts as listed from this call on, even while the save

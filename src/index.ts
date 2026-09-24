@@ -51,7 +51,8 @@ import { DEATH_ALERT_TITLE, formatDeathAlert } from "./watcher/death-alert.js";
 import { ShameList } from "./watcher/shame-list.js";
 import { ShameProfiler } from "./watcher/shame-profiler.js";
 import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
-import { CharacterLookups, type PlayerNames } from "./watcher/character-lookups.js";
+import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
+import { GuidProbe } from "./watcher/guid-probe.js";
 import { InMemoryShameListStore, MongoShameListStore, type ShameListStore } from "./watcher/shame-list-store.js";
 import { WallOfShame } from "./watcher/wall-of-shame.js";
 import {
@@ -177,6 +178,8 @@ const LISTENER_DEATH_REPORT_DELAY_MS = 2_000;
 /** How often players on the wall of shame whose race and class are still unknown are looked up again —
  *  a killer who logged off straight after the kill is found the next time they are online. */
 const SHAME_PROFILE_SWEEP_MS = 10 * 60_000;
+/** The first of those sweeps after boot — once the listeners, whose accounts do the lookups, are in. */
+const SHAME_FIRST_SWEEP_MS = 90_000;
 /** Room for a death alert in one Discord post, after the bold title line `notifyAdmin` puts on top. */
 const DEATH_ALERT_MAX_LENGTH = DISCORD_MESSAGE_LIMIT - `**${DEATH_ALERT_TITLE}**\n`.length;
 const HEAD_INCOMING_DEDUP_MS = 15 * 60_000;
@@ -831,6 +834,8 @@ interface ListenerHooks {
   readonly isShunned: (guid: bigint) => boolean;
   /** Where this listener offers its name queries, for GUIDs another character saw. */
   readonly playerNames: PlayerNames;
+  /** Where this listener offers its friend-list GUID lookups, for players listed by name alone. */
+  readonly playerGuids: PlayerGuids;
   /** Fired once this listener reaches in-world — the realm-recovery signal (see runConnection). */
   readonly onConnected: () => void;
 }
@@ -845,6 +850,8 @@ interface ListenerExit {
 const LISTENER_LOGOUT_TIMEOUT_MS = 3_000;
 /** How long a character waits on a name query for a GUID another one saw. */
 const PLAYER_NAME_TIMEOUT_MS = 5_000;
+/** How long a listener waits for the server's answer when friending a player to learn their GUID. */
+const GUID_PROBE_TIMEOUT_MS = 3_000;
 /** Rounds of asking our characters who owns an Infernal a listener fled from: ten minutes of them, well
  *  past the default stand-down, so the listener that fled is back to ask even if no other one is up. */
 const OWNER_NAME_ATTEMPTS = 20;
@@ -902,6 +909,11 @@ async function runListener(
     // Who each pet, guardian and charmed unit in view answers to — sent only as it comes into view,
     // so kept from then on for a death report to name. A reconnect starts fresh.
     const unitOwners = new UnitOwnerTable();
+    // Learns the GUID of a player listed by name alone, by briefly friending them on this account.
+    const guidProbe = new GuidProbe(
+      { addFriend: (name) => world.addFriend(name), delFriend: (guid) => world.delFriend(guid) },
+      { timeoutMs: GUID_PROBE_TIMEOUT_MS },
+    );
     // An Infernal, or a player on the wall of shame, near enough to be meant for this listener: log
     // out now — instant in a capital — and stay out a while. An Infernal's owner is named by the other
     // characters; this one is not staying to ask. Its callbacks reach `world`, created below.
@@ -968,6 +980,7 @@ async function runListener(
       whisperPool.unregister(listener.characterName); // and stop routing broadcasts through it
       listenerWhispers.stop();
       hooks.playerNames.unregister(listener.characterName);
+      hooks.playerGuids.unregister(listener.characterName);
       if (listener.faction && registeredYell && yellSink[listener.faction] === registeredYell) {
         delete yellSink[listener.faction];
       }
@@ -1019,6 +1032,7 @@ async function runListener(
           whisperPool.register(listener.characterName, listener.faction, listenerWhispers);
           // Name GUIDs for the others — the owner of an Infernal another listener fled from.
           hooks.playerNames.register(listener.characterName, (guid) => world.resolveName(guid, PLAYER_NAME_TIMEOUT_MS));
+          hooks.playerGuids.register(listener.characterName, (name) => guidProbe.lookup(name));
           // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone standing
           // in this capital — only when a faction is set AND this listener is a yeller. A second bot
           // in the same city with yeller=false stays whisper-only, so the two don't churn the single
@@ -1144,6 +1158,7 @@ async function runListener(
           threats.gone(guid);
         },
         onMovement: (move) => threats.moved(move),
+        onFriendStatus: (status) => guidProbe.status(status),
         onSystemMessage: (text) => {
           if (!text) return;
           // Logged like the watcher's, which they were not: the server answers a refused action
@@ -2006,14 +2021,23 @@ async function main(): Promise<void> {
   // Who each listed player is — faction, race and class — from a /who on a listener's socket, so the
   // raid poll is never delayed. A killer who logged off before the first look is looked for on every
   // sweep until they are seen online.
+  // Every listener in world offers its name queries and friend-list GUID lookups here, so one can
+  // answer for another: naming the owner of an Infernal it fled from, or finding the GUID of a player
+  // listed by name alone.
+  const playerNames: PlayerNames = new CharacterLookups();
+  const playerGuids: PlayerGuids = new CharacterLookups();
   const shameProfiler = new ShameProfiler({
     list: shameList,
     who: () => listenerWho.any(),
+    guidOf: (name) => playerGuids.resolve(name),
     onDescribed: () => void wallOfShame?.show(shameList.players),
     logger,
   });
   shameSweepTimer = setInterval(() => void shameProfiler.sweep(), SHAME_PROFILE_SWEEP_MS);
   shameSweepTimer.unref?.();
+  // A first sweep once the listeners are in, so a player listed by name alone can be spotted nearby
+  // soon after a restart rather than a whole sweep later.
+  setTimeout(() => void shameProfiler.sweep(), SHAME_FIRST_SWEEP_MS).unref?.();
   /** Put the player behind a listener's death on the shame list, and the wall. The report waited for
    *  names to resolve; one that still has none cannot be listed, so it is only logged. */
   const shameCulprit = async (character: string, death: DeathAccount): Promise<void> => {
@@ -2047,9 +2071,6 @@ async function main(): Promise<void> {
     if (unsubscribed) logger.info(`shame list: unsubscribed ${name}`);
   };
 
-  // Every listener in world offers its name queries here, so a GUID one of them saw — the owner of an
-  // Infernal it fled from — can be named by another.
-  const playerNames: PlayerNames = new CharacterLookups();
   /** A listener left because a threat came within reach: say so, and put an Infernal's owner on the
    *  wall. The listener that saw it has gone, so the others name the owner, trying for a few minutes
    *  in case none of them is in world yet. */
@@ -2166,6 +2187,7 @@ async function main(): Promise<void> {
       onListenerThreatened,
       isShunned: (guid) => shameList.hasGuid(guid),
       playerNames,
+      playerGuids,
       onConnected: () => announceRealmUp(listener.characterName),
     };
     while (!shuttingDown) {

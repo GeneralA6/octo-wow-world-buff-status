@@ -13,6 +13,9 @@ import type { ShameList } from "./shame-list.js";
  * in a layout never confirmed here. A killer is nearly always still online seconds after the kill,
  * so the first look usually finds them. One who logged off is looked for again on every sweep until
  * they are seen, so nobody stays on the wall without it.
+ *
+ * A player listed by name alone — before GUIDs were kept — also gets their GUID found, so they can be
+ * spotted standing near a listener. That lookup works whether they are online or not.
  */
 
 export type WhoRunner = (query: WhoQuery) => Promise<WhoResult>;
@@ -21,6 +24,8 @@ export interface ShameProfilerDeps {
   readonly list: ShameList;
   /** A /who to ask on — a listener's, so the raid poll is never delayed — or null while none is up. */
   readonly who: () => WhoRunner | null;
+  /** A player's GUID from their name, or null when no character could find it. */
+  readonly guidOf: (name: string) => Promise<bigint | null>;
   /** The list now says more about someone: repaint whatever shows it. */
   readonly onDescribed: () => void;
   readonly logger: Logger;
@@ -66,11 +71,25 @@ export class ShameProfiler {
     return true;
   }
 
-  /** Look again, one at a time, for everyone whose race and class are still unknown. */
+  /** Find a player's GUID from their name. True when it was found. */
+  async identify(name: string): Promise<boolean> {
+    const { list, logger } = this.#deps;
+    const guid = await this.#deps.guidOf(name);
+    if (guid === null) return false;
+    await list.add(name, guid).catch((error: unknown) => {
+      // Known for this run all the same; only a restart would lose it, and the sweep would find it again.
+      logger.error(`shame list: could not save ${name}'s GUID (${messageOf(error)})`);
+    });
+    logger.info(`shame list: ${name} is GUID 0x${guid.toString(16)} — now spotted if they come near a listener`);
+    return true;
+  }
+
+  /** Look again, one at a time, for every GUID, race and class still unknown. */
   async sweep(): Promise<void> {
     if (this.#sweeping) return;
     this.#sweeping = true;
     try {
+      for (const name of this.#deps.list.unidentified) await this.identify(name);
       for (const name of this.#deps.list.undescribed) await this.profile(name);
     } finally {
       this.#sweeping = false;

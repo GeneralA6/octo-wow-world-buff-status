@@ -14,7 +14,11 @@ const whoPlayer = (name: string, raceId: number, classId: number): WhoPlayer => 
   areaId: 1637,
 });
 
-async function setup(players: readonly ShamedPlayer[], online: readonly WhoPlayer[]) {
+async function setup(
+  players: readonly ShamedPlayer[],
+  online: readonly WhoPlayer[],
+  guids: ReadonlyMap<string, bigint> = new Map(),
+) {
   const list = new ShameList(new InMemoryShameListStore(players));
   await list.load();
   const who = vi.fn(
@@ -26,8 +30,9 @@ async function setup(players: readonly ShamedPlayer[], online: readonly WhoPlaye
   const onDescribed = vi.fn();
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } satisfies Logger;
   let runner: WhoRunner | null = who;
-  const profiler = new ShameProfiler({ list, who: () => runner, onDescribed, logger });
-  return { list, who, onDescribed, logger, profiler, dropWho: () => (runner = null) };
+  const guidOf = vi.fn(async (name: string): Promise<bigint | null> => guids.get(name) ?? null);
+  const profiler = new ShameProfiler({ list, who: () => runner, guidOf, onDescribed, logger });
+  return { list, who, guidOf, onDescribed, logger, profiler, dropWho: () => (runner = null) };
 }
 
 describe("ShameProfiler", () => {
@@ -92,6 +97,37 @@ describe("ShameProfiler", () => {
     expect(await profiler.profile("Elfie")).toBe(true);
     expect(logger.warn).toHaveBeenCalledWith("shame list: Elfie is race #10, which has no name or faction mapped yet");
     expect(list.players[0]?.details).toEqual({ raceId: 10, classId: 8 });
+  });
+
+  it("finds the GUID of a player listed by name alone, so they can be spotted nearby", async () => {
+    const { list, profiler } = await setup([{ name: "Zezerver", guid: null, details: null }], [], new Map([["Zezerver", 0x2f1an]]));
+    expect(list.unidentified).toEqual(["Zezerver"]);
+    expect(await profiler.identify("Zezerver")).toBe(true);
+    expect(list.hasGuid(0x2f1an)).toBe(true);
+    expect(list.unidentified).toEqual([]);
+  });
+
+  it("leaves a GUID nobody could find to the next sweep", async () => {
+    const { list, profiler } = await setup([{ name: "Zezerver", guid: null, details: null }], []);
+    expect(await profiler.identify("Zezerver")).toBe(false);
+    expect(list.unidentified).toEqual(["Zezerver"]);
+  });
+
+  it("sweeps for missing GUIDs as well as missing race and class", async () => {
+    const { list, guidOf, who, profiler } = await setup(
+      [
+        { name: "Zezerver", guid: null, details: { raceId: 8, classId: 9 } },
+        { name: "Ganker", guid: "1365", details: null },
+      ],
+      [whoPlayer("Ganker", 2, 1)],
+      new Map([["Zezerver", 0x2f1an]]),
+    );
+    await profiler.sweep();
+    expect(guidOf).toHaveBeenCalledTimes(1);
+    expect(guidOf).toHaveBeenCalledWith("Zezerver");
+    expect(who).toHaveBeenCalledTimes(1);
+    expect(list.unidentified).toEqual([]);
+    expect(list.undescribed).toEqual([]);
   });
 
   it("does not repaint when nothing changed", async () => {
