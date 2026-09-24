@@ -1,4 +1,4 @@
-import type { Faction } from "./buff-store.js";
+import type { ListenerRoster, NamedHealer } from "./listener-roster.js";
 
 /**
  * While a listener lies dead, its partner in the same capital asks the passers-by — out loud, in
@@ -42,14 +42,6 @@ export function pleaFor(
   return line ? line(partner) : "";
 }
 
-/** A player nearby who could resurrect, by name, and the spell they would use. */
-export interface NamedHealer {
-  readonly guid: bigint;
-  readonly name: string;
-  /** Resurrection, Redemption, Ancestral Spirit, Rebirth. */
-  readonly spell: string;
-}
-
 type HealerLine = (healer: string, spell: string, partner: string) => string;
 
 const HEALER_LINES: readonly HealerLine[] = [
@@ -72,13 +64,6 @@ export function healerPleaFor(
   return line ? line(healer.name, healer.spell, partner) : "";
 }
 
-/** How a listener in world takes part: its voice, and the healers it can see. */
-export interface PartnerVoice {
-  say(line: string): void;
-  /** The nearest player who could resurrect, other than those in `exclude` — or null for none. */
-  healerNearby(exclude: ReadonlySet<bigint>): Promise<NamedHealer | null>;
-}
-
 /** One plea made: who asked, for whom, which healer if one was asked by name, and what was said. */
 export interface Plea {
   readonly by: string;
@@ -87,32 +72,15 @@ export interface Plea {
   readonly line: string;
 }
 
-interface Listener {
-  readonly faction: Faction | null;
-  alive: boolean;
-}
-
 export class PartnerPleas {
-  readonly #listeners = new Map<string, Listener>();
-  readonly #voices = new Map<string, PartnerVoice>();
+  readonly #roster: ListenerRoster;
   /** The healers already asked for each dead listener — each is asked once a death, never nagged. */
   readonly #asked = new Map<string, Set<bigint>>();
   readonly #pick: (count: number) => number;
 
-  constructor(pick: (count: number) => number = (count) => Math.floor(Math.random() * count)) {
+  constructor(roster: ListenerRoster, pick: (count: number) => number = (count) => Math.floor(Math.random() * count)) {
+    this.#roster = roster;
     this.#pick = pick;
-  }
-
-  /** A listener was found alive or dead. `faction` is the capital it stands in. */
-  life(character: string, faction: Faction | null, alive: boolean): void {
-    this.#listeners.set(character, { faction, alive });
-    if (alive) this.#asked.delete(character);
-  }
-
-  /** A listener came into world and can speak — or, with null, left it. */
-  voice(character: string, voice: PartnerVoice | null): void {
-    if (voice) this.#voices.set(character, voice);
-    else this.#voices.delete(character);
   }
 
   /**
@@ -120,10 +88,12 @@ export class PartnerPleas {
    * healer not yet asked, or of anyone when none is about. What was said, for the log.
    */
   async plead(): Promise<readonly Plea[]> {
+    // A listener back on its feet starts its next death with every healer unasked.
+    for (const name of [...this.#asked.keys()]) if (this.#roster.isAlive(name)) this.#asked.delete(name);
     const pleas: Plea[] = [];
-    for (const [dead, listener] of [...this.#listeners]) {
-      if (listener.alive || listener.faction === null) continue;
-      const partner = this.#partnerOf(dead, listener.faction);
+    for (const { name: dead, faction } of this.#roster.dead()) {
+      if (faction === null) continue;
+      const partner = this.#roster.speakers(faction, dead)[0];
       if (!partner) continue;
       const asked = this.#asked.get(dead) ?? new Set<bigint>();
       const healer = await partner.voice.healerNearby(asked).catch(() => null);
@@ -136,14 +106,5 @@ export class PartnerPleas {
       pleas.push({ by: partner.name, for: dead, healer: healer?.name ?? null, line });
     }
     return pleas;
-  }
-
-  #partnerOf(dead: string, faction: Faction): { name: string; voice: PartnerVoice } | null {
-    for (const [name, listener] of this.#listeners) {
-      if (name === dead || !listener.alive || listener.faction !== faction) continue;
-      const voice = this.#voices.get(name);
-      if (voice) return { name, voice };
-    }
-    return null;
   }
 }

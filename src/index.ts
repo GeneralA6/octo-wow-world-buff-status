@@ -55,7 +55,8 @@ import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
 import { tauntFor } from "./watcher/taunts.js";
 import { thanksFor } from "./watcher/thanks.js";
 import { LifeSigns } from "./watcher/life-signs.js";
-import { PartnerPleas, type PartnerVoice } from "./watcher/partner-pleas.js";
+import { PartnerPleas } from "./watcher/partner-pleas.js";
+import { ListenerRoster, type ListenerVoice } from "./watcher/listener-roster.js";
 import { NearbyHealers, RESURRECTION_BY_CLASS } from "./watcher/nearby-healers.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
 import { WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
@@ -868,7 +869,7 @@ interface ListenerHooks {
   /** This listener was found alive or dead — its partner asks passers-by for a rez while it is dead. */
   readonly onLifeChanged: (character: string, faction: Faction | null, alive: boolean) => void;
   /** This listener came into world and can speak, or — with null — left it. */
-  readonly onVoice: (character: string, voice: PartnerVoice | null) => void;
+  readonly onVoice: (character: string, voice: ListenerVoice | null) => void;
   /** A player resurrected this listener, and it accepted. */
   readonly onListenerResurrected: (character: string, by: string) => void;
   /** Thrall's Warchief's Blessing yell was heard — Rend's head turned in, in Orgrimmar. */
@@ -2265,7 +2266,9 @@ async function main(): Promise<void> {
    *  in case none of them is in world yet. */
   const lastStoodDownAlert = new Map<string, number>();
   // While a listener lies dead, its partner in the same capital asks passers-by for a resurrection.
-  const partnerPleas = new PartnerPleas();
+  // Which listeners are alive and able to speak — shared by their pleas and their conversations.
+  const listenerRoster = new ListenerRoster();
+  const partnerPleas = new PartnerPleas(listenerRoster);
   partnerPleaTimer = setInterval(() => {
     void partnerPleas
       .plead()
@@ -2398,8 +2401,8 @@ async function main(): Promise<void> {
       playerNames,
       playerGuids,
       onWarchiefBlessing: (source, text) => recordWarchiefBlessing(source, text, listener.characterName),
-      onLifeChanged: (character, faction, alive) => partnerPleas.life(character, faction, alive),
-      onVoice: (character, say) => partnerPleas.voice(character, say),
+      onLifeChanged: (character, faction, alive) => listenerRoster.life(character, faction, alive),
+      onVoice: (character, voice) => listenerRoster.voice(character, voice),
       onListenerResurrected: (character, by) =>
         void notifyAdmin("💚 Listener resurrected", `${character} was resurrected by ${by} and accepted — it is alive again.`),
       onConnected: () => announceRealmUp(listener.characterName),

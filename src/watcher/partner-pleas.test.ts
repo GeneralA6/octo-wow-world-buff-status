@@ -5,9 +5,8 @@ import {
   PartnerPleas,
   PLEA_COUNT,
   pleaFor,
-  type NamedHealer,
-  type PartnerVoice,
 } from "./partner-pleas.js";
+import { ListenerRoster, type ListenerVoice, type NamedHealer } from "./listener-roster.js";
 
 const first = (): number => 0;
 
@@ -58,24 +57,25 @@ function voice(healers: readonly NamedHealer[] = []) {
   return {
     say: vi.fn((_line: string) => undefined),
     healerNearby: vi.fn(async (exclude: ReadonlySet<bigint>) => healers.find((h) => !exclude.has(h.guid)) ?? null),
-  } satisfies PartnerVoice;
+  } satisfies ListenerVoice;
 }
 
 describe("PartnerPleas", () => {
   function orgrimmar(healers: readonly NamedHealer[] = []) {
-    const pleas = new PartnerPleas(first);
+    const roster = new ListenerRoster();
+    const pleas = new PartnerPleas(roster, first);
     const og = voice(healers);
     const ogb = voice(healers);
-    pleas.life("Onyxiabuffog", "horde", true);
-    pleas.life("Onybuffogb", "horde", true);
-    pleas.voice("Onyxiabuffog", og);
-    pleas.voice("Onybuffogb", ogb);
-    return { pleas, og, ogb };
+    roster.life("Onyxiabuffog", "horde", true);
+    roster.life("Onybuffogb", "horde", true);
+    roster.voice("Onyxiabuffog", og);
+    roster.voice("Onybuffogb", ogb);
+    return { roster, pleas, og, ogb };
   }
 
   it("has the living partner ask anyone for the dead one when no healer is about", async () => {
-    const { pleas, og, ogb } = orgrimmar();
-    pleas.life("Onyxiabuffog", "horde", false);
+    const { roster, pleas, og, ogb } = orgrimmar();
+    roster.life("Onyxiabuffog", "horde", false);
     expect(await pleas.plead()).toEqual([
       { by: "Onybuffogb", for: "Onyxiabuffog", healer: null, line: pleaFor("Onyxiabuffog", first) },
     ]);
@@ -86,8 +86,8 @@ describe("PartnerPleas", () => {
   it("asks a healer standing near by name, and never the same one twice a death", async () => {
     const healbot: NamedHealer = { guid: 7n, name: "Healbot", spell: "Resurrection" };
     const totemz: NamedHealer = { guid: 8n, name: "Totemz", spell: "Ancestral Spirit" };
-    const { pleas, ogb } = orgrimmar([healbot, totemz]);
-    pleas.life("Onyxiabuffog", "horde", false);
+    const { roster, pleas, ogb } = orgrimmar([healbot, totemz]);
+    roster.life("Onyxiabuffog", "horde", false);
 
     expect((await pleas.plead())[0]?.healer).toBe("Healbot");
     expect(ogb.say).toHaveBeenLastCalledWith(healerPleaFor(healbot, "Onyxiabuffog", first));
@@ -97,57 +97,60 @@ describe("PartnerPleas", () => {
 
   it("asks the healers afresh after the next death", async () => {
     const healbot: NamedHealer = { guid: 7n, name: "Healbot", spell: "Resurrection" };
-    const { pleas } = orgrimmar([healbot]);
-    pleas.life("Onyxiabuffog", "horde", false);
+    const { roster, pleas } = orgrimmar([healbot]);
+    roster.life("Onyxiabuffog", "horde", false);
     await pleas.plead();
-    pleas.life("Onyxiabuffog", "horde", true);
-    pleas.life("Onyxiabuffog", "horde", false);
+    roster.life("Onyxiabuffog", "horde", true);
+    await pleas.plead(); // alive: nothing asked, and the slate wiped
+    roster.life("Onyxiabuffog", "horde", false);
     expect((await pleas.plead())[0]?.healer).toBe("Healbot");
   });
 
   it("asks anyone when looking for a healer fails", async () => {
-    const { pleas, ogb } = orgrimmar();
+    const { roster, pleas, ogb } = orgrimmar();
     ogb.healerNearby.mockRejectedValueOnce(new Error("not in world"));
-    pleas.life("Onyxiabuffog", "horde", false);
+    roster.life("Onyxiabuffog", "horde", false);
     expect((await pleas.plead())[0]?.healer).toBeNull();
   });
 
   it("says nothing while everyone is alive, and stops once the dead one is back", async () => {
-    const { pleas, ogb } = orgrimmar();
+    const { roster, pleas, ogb } = orgrimmar();
     expect(await pleas.plead()).toEqual([]);
-    pleas.life("Onyxiabuffog", "horde", false);
+    roster.life("Onyxiabuffog", "horde", false);
     await pleas.plead();
-    pleas.life("Onyxiabuffog", "horde", true);
+    roster.life("Onyxiabuffog", "horde", true);
     expect(await pleas.plead()).toEqual([]);
     expect(ogb.say).toHaveBeenCalledTimes(1);
   });
 
   it("never asks from another city", async () => {
-    const pleas = new PartnerPleas(first);
+    const roster = new ListenerRoster();
+    const pleas = new PartnerPleas(roster, first);
     const sw = voice();
-    pleas.life("Onyxiabuffog", "horde", false);
-    pleas.life("Onyxiabuffsw", "alliance", true);
-    pleas.voice("Onyxiabuffsw", sw);
+    roster.life("Onyxiabuffog", "horde", false);
+    roster.life("Onyxiabuffsw", "alliance", true);
+    roster.voice("Onyxiabuffsw", sw);
     expect(await pleas.plead()).toEqual([]);
     expect(sw.say).not.toHaveBeenCalled();
   });
 
   it("waits while the partner is dead too, or out of the world", async () => {
-    const { pleas, ogb } = orgrimmar();
-    pleas.life("Onyxiabuffog", "horde", false);
-    pleas.voice("Onybuffogb", null); // stood down, say
+    const { roster, pleas, ogb } = orgrimmar();
+    roster.life("Onyxiabuffog", "horde", false);
+    roster.voice("Onybuffogb", null); // stood down, say
     expect(await pleas.plead()).toEqual([]);
-    pleas.voice("Onybuffogb", ogb);
-    pleas.life("Onybuffogb", "horde", false);
+    roster.voice("Onybuffogb", ogb);
+    roster.life("Onybuffogb", "horde", false);
     expect(await pleas.plead()).toEqual([]);
     expect(ogb.say).not.toHaveBeenCalled();
   });
 
   it("does not plead for a listener whose city is unknown", async () => {
-    const pleas = new PartnerPleas(first);
-    pleas.life("Wanderer", null, false);
-    pleas.life("Onybuffogb", "horde", true);
-    pleas.voice("Onybuffogb", voice());
+    const roster = new ListenerRoster();
+    const pleas = new PartnerPleas(roster, first);
+    roster.life("Wanderer", null, false);
+    roster.life("Onybuffogb", "horde", true);
+    roster.voice("Onybuffogb", voice());
     expect(await pleas.plead()).toEqual([]);
   });
 });
