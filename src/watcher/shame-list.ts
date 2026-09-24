@@ -13,6 +13,8 @@ export class ShameList {
   readonly #store: ShameListStore;
   /** By name key, in the order each player was added. */
   readonly #players = new Map<string, ShamedPlayer>();
+  /** The GUIDs of the listed players whose GUID is known, in decimal. */
+  readonly #guids = new Set<string>();
   /** Saves run one after another, so an older list can never land after a newer one. */
   #saves: Promise<void> = Promise.resolve();
 
@@ -23,13 +25,20 @@ export class ShameList {
   /** Load the players. Call once on boot, before anyone's whisper is answered. */
   async load(): Promise<void> {
     for (const player of await this.#store.load()) {
-      if (!this.#players.has(keyOf(player.name))) this.#players.set(keyOf(player.name), player);
+      if (this.#players.has(keyOf(player.name))) continue;
+      this.#players.set(keyOf(player.name), player);
+      if (player.guid !== null) this.#guids.add(player.guid);
     }
   }
 
   /** Whether a player is on the list. */
   has(name: string): boolean {
     return this.#players.has(keyOf(name));
+  }
+
+  /** Whether the character with this GUID is on the list — how one is spotted standing nearby. */
+  hasGuid(guid: bigint): boolean {
+    return this.#guids.has(guid.toString());
   }
 
   /** The players, in the order they first killed a listener. */
@@ -43,13 +52,21 @@ export class ShameList {
   }
 
   /**
-   * Put a player on the list. True when they were not on it already. The player counts as listed
-   * from this call on, even while the save is still in flight, or if it fails.
+   * Put a player on the list, with their GUID. True when they were not on it already; one who was,
+   * but without a GUID, gains it. The player counts as listed from this call on, even while the save
+   * is still in flight, or if it fails.
    */
-  add(name: string): Promise<boolean> {
+  add(name: string, guid: bigint): Promise<boolean> {
     const key = keyOf(name);
-    if (this.#players.has(key)) return Promise.resolve(false);
-    this.#players.set(key, { name, details: null });
+    const known = this.#players.get(key);
+    const id = guid.toString();
+    this.#guids.add(id);
+    if (known) {
+      if (known.guid !== null) return Promise.resolve(false);
+      this.#players.set(key, { ...known, guid: id });
+      return this.#save().then(() => false);
+    }
+    this.#players.set(key, { name, guid: id, details: null });
     return this.#save().then(() => true);
   }
 
@@ -60,7 +77,7 @@ export class ShameList {
     if (!player || (player.details?.raceId === details.raceId && player.details.classId === details.classId)) {
       return Promise.resolve(false);
     }
-    this.#players.set(key, { name: player.name, details });
+    this.#players.set(key, { ...player, details });
     return this.#save().then(() => true);
   }
 

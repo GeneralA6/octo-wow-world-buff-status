@@ -9,8 +9,8 @@ const OK: DmResult = { ok: true };
 const GONE: DmResult = { ok: false, kind: "unreachable", status: 404 };
 const FORBIDDEN: DmResult = { ok: false, kind: "unreachable", status: 403 };
 
-const GANKER: ShamedPlayer = { name: "Ganker", details: { raceId: 2, classId: 9 } };
-const WARLOCKZ: ShamedPlayer = { name: "Warlockz", details: null };
+const GANKER: ShamedPlayer = { name: "Ganker", guid: null, details: { raceId: 2, classId: 9 } };
+const WARLOCKZ: ShamedPlayer = { name: "Warlockz", guid: null, details: null };
 
 /** The message the wall posts for these players. */
 function wall(...players: ShamedPlayer[]): ChannelMessage {

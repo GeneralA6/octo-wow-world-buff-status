@@ -12,6 +12,9 @@ import type { CharacterDetails } from "./character.js";
 
 export interface ShamedPlayer {
   readonly name: string;
+  /** The character's GUID in decimal — what spots them standing nearby, where only GUIDs travel.
+   *  Null for a player listed before GUIDs were kept. */
+  readonly guid: string | null;
   /** Race and class from a /who, or null until the player has been seen online since the kill. */
   readonly details: CharacterDetails | null;
 }
@@ -44,9 +47,16 @@ export class InMemoryShameListStore implements ShameListStore {
   }
 }
 
+/** A player as stored — fields added over time may be missing from an older document. */
+interface StoredPlayer {
+  readonly name: string;
+  readonly guid?: string | null;
+  readonly details?: CharacterDetails | null;
+}
+
 interface ShameListDoc {
   readonly _id: string;
-  readonly players?: ShamedPlayer[];
+  readonly players?: StoredPlayer[];
   /** The first release kept names alone; read so its list is not lost. */
   readonly names?: string[];
 }
@@ -54,7 +64,8 @@ interface ShameListDoc {
 /** The players a stored document holds, whichever release wrote it. */
 export function playersOf(doc: Omit<ShameListDoc, "_id"> | null): readonly ShamedPlayer[] {
   if (!doc) return [];
-  return doc.players ?? doc.names?.map((name) => ({ name, details: null })) ?? [];
+  const stored = doc.players ?? doc.names?.map((name): StoredPlayer => ({ name })) ?? [];
+  return stored.map((player) => ({ name: player.name, guid: player.guid ?? null, details: player.details ?? null }));
 }
 
 /** Narrow port over the Mongo collection, so the store's logic is unit-tested with a fake. */

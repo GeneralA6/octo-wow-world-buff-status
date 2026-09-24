@@ -7,7 +7,7 @@ import {
   type ShameListDb,
 } from "./shame-list-store.js";
 
-const ganker: ShamedPlayer = { name: "Ganker", details: { raceId: 2, classId: 9 } };
+const ganker: ShamedPlayer = { name: "Ganker", guid: null, details: { raceId: 2, classId: 9 } };
 
 describe("InMemoryShameListStore", () => {
   it("starts empty and returns what was saved", async () => {
@@ -25,9 +25,13 @@ describe("playersOf", () => {
 
   it("reads the names-only list the first release wrote, with no details yet", () => {
     expect(playersOf({ names: ["Ganker", "Warlockz"] })).toEqual([
-      { name: "Ganker", details: null },
-      { name: "Warlockz", details: null },
+      { name: "Ganker", guid: null, details: null },
+      { name: "Warlockz", guid: null, details: null },
     ]);
+  });
+
+  it("reads a player stored before GUIDs were kept", () => {
+    expect(playersOf({ players: [{ name: "Ganker", details: { raceId: 2, classId: 9 } }] })).toEqual([ganker]);
   });
 
   it("is empty with no document", () => {

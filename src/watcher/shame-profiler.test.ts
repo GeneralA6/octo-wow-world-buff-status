@@ -33,38 +33,38 @@ async function setup(players: readonly ShamedPlayer[], online: readonly WhoPlaye
 describe("ShameProfiler", () => {
   it("records the race and class a /who by name reports, and asks for a repaint", async () => {
     const { list, who, onDescribed, profiler } = await setup(
-      [{ name: "Ganker", details: null }],
+      [{ name: "Ganker", guid: null, details: null }],
       [whoPlayer("Ganker", 2, 9)],
     );
     expect(await profiler.profile("Ganker")).toBe(true);
     expect(who).toHaveBeenCalledWith({ minLevel: 0, maxLevel: 100, playerName: "Ganker" });
-    expect(list.players).toEqual([{ name: "Ganker", details: { raceId: 2, classId: 9 } }]);
+    expect(list.players).toEqual([{ name: "Ganker", guid: null, details: { raceId: 2, classId: 9 } }]);
     expect(onDescribed).toHaveBeenCalledTimes(1);
   });
 
   it("takes only the exact name, not another that contains it", async () => {
-    const { list, profiler } = await setup([{ name: "Gank", details: null }], [whoPlayer("Gankerella", 1, 1)]);
+    const { list, profiler } = await setup([{ name: "Gank", guid: null, details: null }], [whoPlayer("Gankerella", 1, 1)]);
     expect(await profiler.profile("Gank")).toBe(false);
     expect(list.undescribed).toEqual(["Gank"]);
   });
 
   it("leaves a player who is offline to the next sweep, which finds them once online", async () => {
     const online: WhoPlayer[] = [];
-    const { list, profiler, onDescribed } = await setup([{ name: "Ganker", details: null }], online);
+    const { list, profiler, onDescribed } = await setup([{ name: "Ganker", guid: null, details: null }], online);
     expect(await profiler.profile("Ganker")).toBe(false);
     expect(list.undescribed).toEqual(["Ganker"]);
 
     online.push(whoPlayer("Ganker", 5, 4));
     await profiler.sweep();
-    expect(list.players).toEqual([{ name: "Ganker", details: { raceId: 5, classId: 4 } }]);
+    expect(list.players).toEqual([{ name: "Ganker", guid: null, details: { raceId: 5, classId: 4 } }]);
     expect(onDescribed).toHaveBeenCalledTimes(1);
   });
 
   it("sweeps only the players still undescribed", async () => {
     const { who, profiler } = await setup(
       [
-        { name: "Ganker", details: { raceId: 2, classId: 9 } },
-        { name: "Warlockz", details: null },
+        { name: "Ganker", guid: null, details: { raceId: 2, classId: 9 } },
+        { name: "Warlockz", guid: null, details: null },
       ],
       [whoPlayer("Warlockz", 2, 9)],
     );
@@ -74,21 +74,21 @@ describe("ShameProfiler", () => {
   });
 
   it("waits while no /who is available", async () => {
-    const { list, profiler, dropWho } = await setup([{ name: "Ganker", details: null }], [whoPlayer("Ganker", 2, 9)]);
+    const { list, profiler, dropWho } = await setup([{ name: "Ganker", guid: null, details: null }], [whoPlayer("Ganker", 2, 9)]);
     dropWho();
     expect(await profiler.profile("Ganker")).toBe(false);
     expect(list.undescribed).toEqual(["Ganker"]);
   });
 
   it("survives a /who that fails", async () => {
-    const { who, list, profiler } = await setup([{ name: "Ganker", details: null }], []);
+    const { who, list, profiler } = await setup([{ name: "Ganker", guid: null, details: null }], []);
     who.mockRejectedValueOnce(new Error("who timed out"));
     expect(await profiler.profile("Ganker")).toBe(false);
     expect(list.undescribed).toEqual(["Ganker"]);
   });
 
   it("flags a race it cannot name, and still records it", async () => {
-    const { list, logger, profiler } = await setup([{ name: "Elfie", details: null }], [whoPlayer("Elfie", 10, 8)]);
+    const { list, logger, profiler } = await setup([{ name: "Elfie", guid: null, details: null }], [whoPlayer("Elfie", 10, 8)]);
     expect(await profiler.profile("Elfie")).toBe(true);
     expect(logger.warn).toHaveBeenCalledWith("shame list: Elfie is race #10, which has no name or faction mapped yet");
     expect(list.players[0]?.details).toEqual({ raceId: 10, classId: 8 });
@@ -96,7 +96,7 @@ describe("ShameProfiler", () => {
 
   it("does not repaint when nothing changed", async () => {
     const { onDescribed, profiler } = await setup(
-      [{ name: "Ganker", details: { raceId: 2, classId: 9 } }],
+      [{ name: "Ganker", guid: null, details: { raceId: 2, classId: 9 } }],
       [whoPlayer("Ganker", 2, 9)],
     );
     expect(await profiler.profile("Ganker")).toBe(true);

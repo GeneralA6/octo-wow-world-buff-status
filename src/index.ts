@@ -1948,7 +1948,7 @@ async function main(): Promise<void> {
       logger.warn(`shame list: ${character}'s killer 0x${culprit.guid.toString(16)} never resolved to a name`);
       return;
     }
-    const added = await shameList.add(culprit.name).catch((error: unknown) => {
+    const added = await shameList.add(culprit.name, culprit.guid).catch((error: unknown) => {
       // Still listed for this run — only the save failed, so it would be forgotten on restart.
       logger.error(`shame list: could not save ${culprit.name} (${describeError(error)})`);
       return true;
