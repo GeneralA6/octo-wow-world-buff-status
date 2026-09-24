@@ -5,12 +5,13 @@ const first = (): number => 0;
 
 describe("tauntFor", () => {
   it("names the warlock behind an Inferno when known", () => {
-    expect(tauntFor("inferno-cast", "Zezerver", first)).toBe("Nice try, Zezerver. Your Infernal can have the spot.");
+    expect(tauntFor("inferno-cast", "Zezerver", first)).toBe("Bold of you to bring fire to a Frost mage, Zezerver. Blink!");
   });
 
   it("reads right without a name", () => {
-    expect(tauntFor("inferno-cast", null, first)).toBe("Nice try. Your Infernal can have the spot.");
-    expect(tauntFor("shunned-player", null, first)).toBe("Oh look, someone from the Wall of Shame. I'll come back when you're gone.");
+    expect(tauntFor("inferno-cast", null, first)).toBe("Bold of you to bring fire to a Frost mage. Blink!");
+    expect(tauntFor("inferno-cast", null, () => 1)).toBe("I'd Polymorph your Infernal, but the sheep deserve better.");
+    expect(tauntFor("shunned-player", null, first)).toBe("Oh look, someone from the Wall of Shame. Invisibility, please.");
   });
 
   it("has a line for every kind of threat", () => {

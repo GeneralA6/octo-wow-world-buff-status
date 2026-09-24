@@ -2,8 +2,9 @@ import type { Threat } from "./threat-watch.js";
 
 /**
  * What a listener says out loud as it leaves for a threat: a parting shot at whoever sent it, heard
- * by everyone standing close by, the warlock included. The joke is that it saw them coming — cheeky,
- * never abusive, one short /say. Named when the bot already knows who it is; the line reads right
+ * by everyone standing close by, the warlock included. The listeners are mages, so it is a mage's
+ * exit — Blink, Ice Block, conjured water for the Infernal — and the joke is that it saw them
+ * coming. Cheeky, never abusive, one short /say. Named when the bot already knows who it is; the line reads right
  * without a name too.
  *
  * Plain ASCII only: the game's chat font has no em dash or curly quotes. And never how long it will
@@ -14,20 +15,20 @@ type Line = (name: string | null) => string;
 
 const LINES: Readonly<Record<Threat["kind"], readonly Line[]>> = {
   "inferno-cast": [
-    (name) => `Nice try${name ? `, ${name}` : ""}. Your Infernal can have the spot.`,
-    (name) => `Saw that Inferno coming a mile off${name ? `, ${name}` : ""}. The Wall of Shame says hi.`,
-    (name) => `Missed me${name ? `, ${name}` : ""}! Enjoy guarding an empty spot.`,
-    (name) => `${name ? `${name}, an` : "An"} Inferno? Again? I'll be back when you run out of shards.`,
+    (name) => `Bold of you to bring fire to a Frost mage${name ? `, ${name}` : ""}. Blink!`,
+    (name) => `${name ? `${name}, I'd` : "I'd"} Polymorph your Infernal, but the sheep deserve better.`,
+    (name) => `Hold on${name ? `, ${name}` : ""}, let me conjure some water to put your Infernal out.`,
+    (name) => `An Inferno${name ? `, ${name}` : ""}? Ice Block, Invisibility, gone. Mages always have an exit.`,
   ],
   infernal: [
-    (name) => `Cute pet${name ? `, ${name}` : ""}. Not today.`,
-    () => `An Infernal? How original. See you around.`,
-    (name) => `${name ? `${name}, your` : "Your"} Infernal can stand here all it likes. I'll wait.`,
+    (name) => `Is that an Infernal${name ? `, ${name}` : ""}? I've Polymorphed scarier things.`,
+    () => `A walking bonfire? Frost Nova it yourself, I'm out.`,
+    (name) => `${name ? `${name}, your` : "Your"} Infernal looks thirsty. Conjured water, on the house.`,
   ],
   "shunned-player": [
-    (name) => `Oh look, ${name ?? "someone"} from the Wall of Shame. I'll come back when you're gone.`,
-    (name) => `${name ?? "You"} again? I'll wait.`,
-    (name) => `Not falling for it twice${name ? `, ${name}` : ""}. See you never.`,
+    (name) => `Oh look, ${name ?? "someone"} from the Wall of Shame. Invisibility, please.`,
+    (name) => `${name ?? "You"} again? Portal to anywhere but here.`,
+    (name) => `Not falling for it twice${name ? `, ${name}` : ""}. Blinking somewhere safer.`,
   ],
 };
 
