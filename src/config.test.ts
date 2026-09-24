@@ -502,6 +502,33 @@ describe("loadConfig warchief's blessing channel", () => {
   });
 });
 
+describe("loadConfig spire watch", () => {
+  it("is off by default, reading Blackrock Spire once a minute when on", () => {
+    const config = loadConfig({ ...minimalEnv });
+    expect(config.spireWatchEnabled).toBe(false);
+    expect(config.spireAreaId).toBe(1583);
+    expect(config.spirePollMs).toBe(60_000);
+  });
+
+  it("turns on with true or 1", () => {
+    expect(loadConfig({ ...minimalEnv, WOW_SPIRE_WATCH: "true" }).spireWatchEnabled).toBe(true);
+    expect(loadConfig({ ...minimalEnv, WOW_SPIRE_WATCH: "1" }).spireWatchEnabled).toBe(true);
+    expect(loadConfig({ ...minimalEnv, WOW_SPIRE_WATCH: "yes please" }).spireWatchEnabled).toBe(false);
+  });
+
+  it("takes another zone id and interval", () => {
+    const config = loadConfig({ ...minimalEnv, WOW_SPIRE_AREA_ID: "25", WOW_SPIRE_POLL_SECONDS: "120" });
+    expect(config.spireAreaId).toBe(25);
+    expect(config.spirePollMs).toBe(120_000);
+  });
+
+  it("never reads the Spire more than every twenty seconds", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_SPIRE_POLL_SECONDS: "5" })).toThrow(
+      /WOW_SPIRE_POLL_SECONDS must be an integer >= 20/,
+    );
+  });
+});
+
 describe("loadConfig wall of shame channel", () => {
   it("is off unless a channel is given", () => {
     expect(loadConfig({ ...minimalEnv }).discordWallOfShameChannelId).toBeNull();
