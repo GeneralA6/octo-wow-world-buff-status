@@ -1,5 +1,6 @@
 import { PacketReader } from "../net/byte-buffer.js";
 import { unitRef } from "./guid.js";
+import type { UnitPosition } from "./movement.js";
 
 /**
  * Parse an SMSG_UPDATE_OBJECT block (already decompressed) far enough to pull out
@@ -50,6 +51,9 @@ export interface WorldObjects {
   /** What each unit block said about the unit's owner, and which units left view — in block order,
    *  for a `UnitOwnerTable` to apply. */
   readonly ownerChanges: UnitOwnerChange[];
+  /** Where each other unit or player the block placed is — those coming into view, and those whose
+   *  movement it updated. Never our own. */
+  readonly positions: UnitPosition[];
 }
 
 /** A unit block's word on who the unit answers to, or a unit leaving view. */
@@ -119,6 +123,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   let self: WorldPoint | null = null;
   let selfHealth: number | null = null;
   const ownerChanges: UnitOwnerChange[] = [];
+  const positions: UnitPosition[] = [];
   const isSelf = (guid: bigint): boolean => selfGuid !== undefined && guid === selfGuid;
 
   // If a block turns out to be a shape we don't decode (or the packet is truncated),
@@ -146,6 +151,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
         if (objType === OBJTYPE_UNIT && entry > 0) units.push({ guid, entry });
         if (objType === OBJTYPE_PLAYER && pos && (selfGuid === undefined || guid === selfGuid)) self = pos;
+        if ((objType === OBJTYPE_UNIT || objType === OBJTYPE_PLAYER) && pos && !isSelf(guid)) positions.push({ guid, pos });
         // Every unit's create goes through, owner or not: it also clears whatever an earlier sighting left.
         if (objType === OBJTYPE_UNIT || objType === OBJTYPE_PLAYER) {
           ownerChanges.push({ kind: "create", guid, words: ownerWords });
@@ -157,7 +163,8 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         // rotation — so only a unit's GUID makes these words owners.
         if (ownerWords.size > 0 && isUnitGuid(guid)) ownerChanges.push({ kind: "values", guid, words: ownerWords });
       } else if (updateType === UPDATETYPE_MOVEMENT) {
-        readMovement(reader, reader.u8());
+        const pos = readMovement(reader, reader.u8());
+        if (pos && isUnitGuid(guid) && !isSelf(guid)) positions.push({ guid, pos });
       } else {
         break; // unknown block type — stop, keep what we have
       }
@@ -165,7 +172,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   } catch {
     // reader ran off the end of a block we mis-sized — keep the objects read so far.
   }
-  return { gameObjects, units, self, selfHealth, ownerChanges };
+  return { gameObjects, units, self, selfHealth, ownerChanges, positions };
 }
 
 /** Whether a GUID names a unit — a player, creature or pet — rather than a GameObject or item. */

@@ -204,6 +204,40 @@ describe("parseUpdateObject unit owners", () => {
   });
 });
 
+describe("parseUpdateObject positions", () => {
+  const INFERNAL = 0xf130_0000_5900_0abcn;
+  const GANKER = 0x555n;
+  const US = 0x77n;
+
+  function packet(count: number, write: (w: PacketWriter) => void): Buffer {
+    const w = new PacketWriter().u32LE(count).u8(0);
+    write(w);
+    return w.toBuffer();
+  }
+
+  it("places the units and players coming into view, but never us", () => {
+    const body = packet(3, (w) => {
+      w.u8(2).packedGuid(INFERNAL).u8(3).u8(0x40).f32LE(10).f32LE(20).f32LE(30).f32LE(0).u8(0); // unit
+      w.u8(2).packedGuid(GANKER).u8(4).u8(0x40).f32LE(11).f32LE(21).f32LE(31).f32LE(0).u8(0); // player
+      w.u8(2).packedGuid(US).u8(4).u8(0x40).f32LE(1).f32LE(2).f32LE(3).f32LE(0).u8(0); // us
+    });
+    const { positions, self } = parseUpdateObject(body, US);
+    expect(positions.map((p) => p.guid)).toEqual([INFERNAL, GANKER]);
+    expect(positions[0]?.pos.x).toBeCloseTo(10, 1);
+    expect(self?.x).toBeCloseTo(1, 1);
+  });
+
+  it("places a unit whose movement block alone was updated", () => {
+    const body = packet(1, (w) => {
+      w.u8(1).packedGuid(INFERNAL).u8(0x40).f32LE(50).f32LE(60).f32LE(70).f32LE(0); // MOVEMENT
+    });
+    const { positions } = parseUpdateObject(body, US);
+    expect(positions).toHaveLength(1);
+    expect(positions[0]?.guid).toBe(INFERNAL);
+    expect(positions[0]?.pos.y).toBeCloseTo(60, 1);
+  });
+});
+
 describe("parseDestroyObject", () => {
   it("reads the full GUID of the object removed", () => {
     const body = new PacketWriter().u64LE(0xf130_0000_5900_0abcn).toBuffer();
