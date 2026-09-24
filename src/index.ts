@@ -60,7 +60,7 @@ import { Banter } from "./watcher/banter.js";
 import { ListenerRoster, type ListenerVoice } from "./watcher/listener-roster.js";
 import { NearbyPlayers, RESURRECTION_BY_CLASS } from "./watcher/nearby-players.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
-import { WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
+import { WARCHIEF_DROPS_COLLECTION, WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
 import { openSpireWatch, type OpenedSpireWatch } from "./warchief/open-spire-watch.js";
 import type { SpireWatch } from "./warchief/spire-watch.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
@@ -199,8 +199,6 @@ const HEAD_INCOMING_DEDUP_MS = 15 * 60_000;
 /** Collapse a buff yell heard by more than one same-city listener into one drop. A faction's buff
  *  cannot legitimately re-drop within minutes, so this only ever fuses duplicate detections. */
 const BUFF_DEDUP_MS = 5 * 60_000;
-/** Where the Warchief's Blessing drops are kept, apart from the Rallying Cry's. */
-const WARCHIEF_DROPS_COLLECTION = "warchiefdrops";
 
 /** Consecutive reconnect failures before a supervisor alerts the errors channel that it's
  *  down (backoff caps at 60s, so this is a couple of minutes of sustained failure, not a blip). */

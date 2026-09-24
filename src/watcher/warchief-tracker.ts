@@ -12,6 +12,9 @@ import { RecentBuffs } from "./recent-buffs.js";
  * last one answers a Horde player's status.
  */
 
+/** Where the Warchief's Blessing drops are kept, apart from the Rallying Cry's. */
+export const WARCHIEF_DROPS_COLLECTION = "warchiefdrops";
+
 export interface WarchiefTrackerDeps {
   readonly store: BuffStore;
   /** A second yell, or a second listener's echo, within this window is the same drop. */
