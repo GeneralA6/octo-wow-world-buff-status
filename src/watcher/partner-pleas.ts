@@ -17,7 +17,20 @@ const LINES: readonly Line[] = [
   (partner) => `Any priests, shamans or paladins about? ${partner} could use a resurrection. Conjured water for your trouble!`,
   (partner) => `${partner} is lying here looking rather dead. Would anyone spare a resurrection?`,
   (partner) => `My partner ${partner} fell in the line of duty. Bring them back and I'll owe you a Portal.`,
+  (partner) => `Healers of the city, hear me! ${partner} has fallen and needs a resurrection.`,
+  (partner) => `${partner} is taking a very long nap on the floor. A rez would wake them right up!`,
+  (partner) => `Would a priest, shaman or paladin kindly revive ${partner}? I'll conjure you a snack.`,
+  (partner) => `${partner} tripped over an Infernal. Anyone with a resurrection to spare?`,
+  (partner) => `A resurrection for ${partner}, anyone? They promise to stand somewhere safer.`,
+  (partner) => `Please, someone revive ${partner}. It's lonely guarding this spot alone.`,
+  (partner) => `${partner} is dead but still on duty. A little rez would help them do it properly.`,
+  (partner) => `Seeking a kind healer: ${partner} needs raising. Payment in conjured water.`,
+  (partner) => `${partner} has seen the Spirit Healer's face and did not like it. A rez, please?`,
+  (partner) => `If anyone has a resurrection spell handy, ${partner} is right here and very grateful.`,
 ];
+
+/** How many plea lines there are. */
+export const PLEA_COUNT = LINES.length;
 
 /** A random plea for `partner`. `pick` chooses among `count`. */
 export function pleaFor(

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { tauntFor } from "./taunts.js";
+import { tauntCount, tauntFor } from "./taunts.js";
 
+const KINDS = ["inferno-cast", "infernal", "shunned-player"] as const;
 const first = (): number => 0;
+
+/** Every line of a kind, as said to `name`. */
+const allLines = (kind: (typeof KINDS)[number], name: string | null): string[] =>
+  Array.from({ length: tauntCount(kind) }, (_, index) => tauntFor(kind, name, () => index));
 
 describe("tauntFor", () => {
   it("names the warlock behind an Inferno when known", () => {
@@ -12,31 +17,36 @@ describe("tauntFor", () => {
     expect(tauntFor("inferno-cast", null, first)).toBe("Bold of you to bring fire to a Frost mage. Blink!");
     expect(tauntFor("inferno-cast", null, () => 1)).toBe("I'd Polymorph your Infernal, but the sheep deserve better.");
     expect(tauntFor("shunned-player", null, first)).toBe("Oh look, someone from the Wall of Shame. Invisibility, please.");
-  });
-
-  it("has a line for every kind of threat", () => {
-    for (const kind of ["inferno-cast", "infernal", "shunned-player"] as const) {
-      expect(tauntFor(kind, "Zezerver", first).length).toBeGreaterThan(0);
+    for (const kind of KINDS) {
+      for (const line of allLines(kind, null)) expect(line).not.toMatch(/null|undefined|, \./);
     }
   });
 
-  it("varies the line, and never picks past the end", () => {
-    const lines = new Set([0, 1, 2, 3, 99, -5].map((index) => tauntFor("inferno-cast", "Zezerver", () => index)));
-    expect(lines.size).toBe(4);
+  it("has at least a dozen lines for every kind of threat, all different", () => {
+    for (const kind of KINDS) {
+      const lines = allLines(kind, "Zezerver");
+      expect(lines.length).toBeGreaterThanOrEqual(13);
+      expect(new Set(lines).size).toBe(lines.length);
+    }
+  });
+
+  it("never picks past either end", () => {
+    const count = tauntCount("inferno-cast");
+    expect(tauntFor("inferno-cast", "Zezerver", () => count + 5)).toBe(tauntFor("inferno-cast", "Zezerver", () => count - 1));
+    expect(tauntFor("inferno-cast", "Zezerver", () => -5)).toBe(tauntFor("inferno-cast", "Zezerver", first));
   });
 
   it("never says how long the listener will be gone", () => {
-    for (const kind of ["inferno-cast", "infernal", "shunned-player"] as const) {
-      for (let index = 0; index < 5; index += 1) {
-        expect(tauntFor(kind, "Zezerver", () => index)).not.toMatch(/[0-9]|minute|brb|in a (bit|while)/i);
+    for (const kind of KINDS) {
+      for (const line of allLines(kind, "Zezerver")) {
+        expect(line).not.toMatch(/[0-9]|minute|brb|in a (bit|while)|back in/i);
       }
     }
   });
 
   it("keeps every line to plain ASCII and one short /say", () => {
-    for (const kind of ["inferno-cast", "infernal", "shunned-player"] as const) {
-      for (let index = 0; index < 5; index += 1) {
-        const line = tauntFor(kind, "Zezerverlongname", () => index);
+    for (const kind of KINDS) {
+      for (const line of [...allLines(kind, "Zezerverlongname"), ...allLines(kind, null)]) {
         expect(line).toMatch(/^[\x20-\x7e]+$/);
         expect(line.length).toBeLessThanOrEqual(255);
       }

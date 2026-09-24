@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PartnerPleas, pleaFor } from "./partner-pleas.js";
+import { PartnerPleas, PLEA_COUNT, pleaFor } from "./partner-pleas.js";
 
 const first = (): number => 0;
 
@@ -10,13 +10,20 @@ describe("pleaFor", () => {
     );
   });
 
-  it("varies, keeps to plain ASCII and one short /say, and never says how long", () => {
-    const lines = new Set([0, 1, 2, 3, 9].map((index) => pleaFor("Onyxiabuffoglongname", () => index)));
-    expect(lines.size).toBe(4);
-    for (const line of lines) {
+  it("has more than a dozen lines, all different, and never picks past the end", () => {
+    const lines = Array.from({ length: PLEA_COUNT }, (_, index) => pleaFor("Onyxiabuffog", () => index));
+    expect(lines.length).toBeGreaterThanOrEqual(14);
+    expect(new Set(lines).size).toBe(lines.length);
+    expect(pleaFor("Onyxiabuffog", () => PLEA_COUNT + 2)).toBe(lines.at(-1));
+  });
+
+  it("keeps to plain ASCII and one short /say, and never says how long", () => {
+    for (let index = 0; index < PLEA_COUNT; index += 1) {
+      const line = pleaFor("Onyxiabuffoglongname", () => index);
       expect(line).toMatch(/^[\x20-\x7e]+$/);
       expect(line.length).toBeLessThanOrEqual(255);
       expect(line).not.toMatch(/[0-9]|minute|hour/i);
+      expect(line).toContain("Onyxiabuffoglongname");
     }
   });
 });
