@@ -767,6 +767,16 @@ async function runConnection(
           }
         },
         onWhisper: config.whispersEnabled ? onWhisper : undefined,
+        onResurrectRequest: (resurrector) =>
+          void acceptResurrection(world, resurrector)
+            .then((by) => {
+              logger.info(`accepted a resurrection from ${by}`);
+              void notifyAdmin(
+                `💚 ${config.characterName} resurrected`,
+                `${config.characterName} was resurrected by ${by} and accepted — it is alive again.`,
+              );
+            })
+            .catch((error) => logger.warn(`could not accept a resurrection (${describeError(error)})`)),
         // Friend-op replies feed the presence sweep (route B). Only the watcher sweeps, so only its
         // client wires these; the listeners leave them unset.
         onFriendStatus: (status) => presenceSweeper?.handleFriendStatus(status),
@@ -851,6 +861,8 @@ interface ListenerHooks {
   readonly playerNames: PlayerNames;
   /** Where this listener offers its friend-list GUID lookups, for players listed by name alone. */
   readonly playerGuids: PlayerGuids;
+  /** A player resurrected this listener, and it accepted. */
+  readonly onListenerResurrected: (character: string, by: string) => void;
   /** Thrall's Warchief's Blessing yell was heard — Rend's head turned in, in Orgrimmar. */
   readonly onWarchiefBlessing: (sourceName: string, text: string) => void;
   /** Fired once this listener reaches in-world — the realm-recovery signal (see runConnection). */
@@ -861,6 +873,15 @@ interface ListenerHooks {
  *  stay out that long before logging back in. */
 interface ListenerExit {
   readonly standDownMs: number;
+}
+
+/**
+ * Accept a resurrection — from anyone: a character of ours never has a reason to stay dead, and only a
+ * player on its own side can offer one — and hand back who gave it, by name when the server says.
+ */
+async function acceptResurrection(world: WorldClient, resurrector: bigint): Promise<string> {
+  world.answerResurrection(resurrector, true);
+  return (await world.resolveName(resurrector, PLAYER_NAME_TIMEOUT_MS)) ?? `0x${resurrector.toString(16)}`;
 }
 
 /** How long a threatened listener waits for the server to confirm its logout before just leaving. */
@@ -1193,6 +1214,13 @@ async function runListener(
         },
         onMovement: (move) => threats.moved(move),
         onSpellStart: (cast) => threats.castStarted(cast),
+        onResurrectRequest: (resurrector) =>
+          void acceptResurrection(world, resurrector)
+            .then((by) => {
+              logger.info(`${listener.characterName}: accepted a resurrection from ${by}`);
+              hooks.onListenerResurrected(listener.characterName, by);
+            })
+            .catch((error) => logger.warn(`${listener.characterName}: could not accept a resurrection (${describeError(error)})`)),
         onFriendStatus: (status) => guidProbe.status(status),
         onSystemMessage: (text) => {
           if (!text) return;
@@ -2260,6 +2288,8 @@ async function main(): Promise<void> {
       playerNames,
       playerGuids,
       onWarchiefBlessing: (source, text) => recordWarchiefBlessing(source, text, listener.characterName),
+      onListenerResurrected: (character, by) =>
+        void notifyAdmin("💚 Listener resurrected", `${character} was resurrected by ${by} and accepted — it is alive again.`),
       onConnected: () => announceRealmUp(listener.characterName),
     };
     while (!shuttingDown) {
