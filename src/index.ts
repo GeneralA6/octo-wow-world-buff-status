@@ -915,6 +915,8 @@ const OWNER_NAME_RETRY_MS = 30_000;
 const CUT_SHORT_NOTE_INTERVAL_MS = 10 * 60_000;
 /** How near a player who could resurrect must stand to be asked by name — a resurrection's reach. */
 const HEALER_REACH_YD = 30;
+/** How far a /say carries — the reach within which a player hears the listeners talk about them. */
+const SAY_REACH_YD = 25;
 /** How often a listener asks passers-by to resurrect its dead partner. */
 const PARTNER_PLEA_INTERVAL_MS = 3 * 60_000;
 /** A listener kept away by the same threat reports it at most this often. */
@@ -1125,14 +1127,23 @@ async function runListener(
           // Name GUIDs for the others — the owner of an Infernal another listener fled from.
           hooks.playerNames.register(listener.characterName, (guid) => world.resolveName(guid, PLAYER_NAME_TIMEOUT_MS));
           hooks.playerGuids.register(listener.characterName, (name) => guidProbe.lookup(name));
-          // Lend its voice, for asking passers-by to resurrect a partner lying dead beside it.
+          // Lend its voice — for asking passers-by to resurrect a partner lying dead beside it, and for
+          // talking with its partner.
           hooks.onVoice(listener.characterName, {
             say: (line) => {
               try {
                 world.say(line);
               } catch (error) {
-                logger.debug(`${listener.characterName}: could not ask for a rez (${describeError(error)})`);
+                logger.debug(`${listener.characterName}: could not /say (${describeError(error)})`);
               }
+            },
+            // The players on the wall of shame close enough to hear this listener talk about them.
+            shamedNearby: () => {
+              if (!here) return [];
+              return players.around(here, SAY_REACH_YD).flatMap((near) => {
+                const name = hooks.isShunned(near.guid) ? hooks.knownName(near.guid) : undefined;
+                return name ? [{ name, classId: near.classId }] : [];
+              });
             },
             // The nearest player of this city's side who could resurrect, named — asked by name.
             healerNearby: async (exclude) => {
@@ -2283,7 +2294,8 @@ async function main(): Promise<void> {
   }, PARTNER_PLEA_INTERVAL_MS);
   partnerPleaTimer.unref?.();
   // Now and then, the two listeners of each capital talk to each other in /say — only a capital's
-  // own pair, and only while both are alive and in world.
+  // own pair, and only while both are alive and in world. With a player from the wall of shame in
+  // earshot, every other conversation or so is a joke about them.
   if (config.listenerBanterMs > 0) {
     const banter = new Banter(listenerRoster);
     banterTimer = setInterval(() => {
@@ -2291,7 +2303,9 @@ async function main(): Promise<void> {
         void banter
           .converse(faction)
           .then((held) => {
-            if (held) logger.info(`banter: ${held.between.join(" and ")} told a ${held.kind}${held.finished ? "" : ", cut short"}`);
+            if (!held) return;
+            const about = held.about ? ` about ${held.about}` : "";
+            logger.info(`banter: ${held.between.join(" and ")} told a ${held.kind}${about}${held.finished ? "" : ", cut short"}`);
           })
           .catch((error) => logger.error(`banter (${faction}): ${describeError(error)}`));
       }

@@ -57,6 +57,7 @@ function voice(healers: readonly NamedHealer[] = []) {
   return {
     say: vi.fn((_line: string) => undefined),
     healerNearby: vi.fn(async (exclude: ReadonlySet<bigint>) => healers.find((h) => !exclude.has(h.guid)) ?? null),
+    shamedNearby: () => [],
   } satisfies ListenerVoice;
 }
 

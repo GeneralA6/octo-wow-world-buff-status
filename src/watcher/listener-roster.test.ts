@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ListenerRoster, type ListenerVoice } from "./listener-roster.js";
 
-const voice = (): ListenerVoice => ({ say: vi.fn(), healerNearby: vi.fn(async () => null) });
+const voice = (): ListenerVoice => ({ say: vi.fn(), healerNearby: vi.fn(async () => null), shamedNearby: () => [] });
 
 describe("ListenerRoster", () => {
   it("offers the living listeners of a capital in world to speak, but for one", () => {

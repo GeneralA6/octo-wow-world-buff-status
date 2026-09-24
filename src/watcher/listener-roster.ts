@@ -13,11 +13,19 @@ export interface NamedHealer {
   readonly spell: string;
 }
 
-/** How a listener in world takes part: its voice, and the healers it can see. */
+/** A player on the wall of shame within earshot of a listener, by name, and their class. */
+export interface ShamedBystander {
+  readonly name: string;
+  readonly classId: number;
+}
+
+/** How a listener in world takes part: its voice, and who it can see around it. */
 export interface ListenerVoice {
   say(line: string): void;
   /** The nearest player who could resurrect, other than those in `exclude` — or null for none. */
   healerNearby(exclude: ReadonlySet<bigint>): Promise<NamedHealer | null>;
+  /** The players on the wall of shame close enough to hear its /say. */
+  shamedNearby(): readonly ShamedBystander[];
 }
 
 /** A listener that can speak right now. */

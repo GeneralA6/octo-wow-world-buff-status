@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { conversationsFor } from "./banter-lines.js";
 import { Banter, LINE_GAP_MS } from "./banter.js";
-import { ListenerRoster, type ListenerVoice } from "./listener-roster.js";
+import { ListenerRoster, type ListenerVoice, type ShamedBystander } from "./listener-roster.js";
+import { SHAME_JOKES, WARLOCK_CLASS_ID } from "./shame-jokes.js";
 
 type SayMock = ReturnType<typeof vi.fn<(line: string) => void>>;
 
-function voice(): { voice: ListenerVoice; say: SayMock } {
+/** A listener's voice, and the players from the wall of shame it can see in earshot. */
+function voice(shamed: readonly ShamedBystander[] = []): { voice: ListenerVoice; say: SayMock } {
   const say = vi.fn<(line: string) => void>();
-  return { voice: { say, healerNearby: vi.fn(async () => null) }, say };
+  return { voice: { say, healerNearby: vi.fn(async () => null), shamedNearby: () => shamed }, say };
 }
 
 /** The four listeners, all alive and in world. */
@@ -38,7 +40,13 @@ describe("Banter", () => {
     const held = await new Banter(roster, { pick: first, sleep: instantly }).converse("horde");
 
     const conversation = conversationsFor("horde")[0];
-    expect(held).toEqual({ faction: "horde", between: ["Onyxiabuffog", "Onybuffogb"], kind: conversation?.kind, finished: true });
+    expect(held).toEqual({
+      faction: "horde",
+      between: ["Onyxiabuffog", "Onybuffogb"],
+      kind: conversation?.kind,
+      about: null,
+      finished: true,
+    });
     expect(og.say.mock.calls.map(([line]) => line)).toEqual(conversation?.lines.filter(([part]) => part === "a").map(([, line]) => line));
     expect(ogb.say.mock.calls.map(([line]) => line)).toEqual(conversation?.lines.filter(([part]) => part === "b").map(([, line]) => line));
     // Stormwind's pair hears none of it, and says none of it.
@@ -179,5 +187,81 @@ describe("Banter", () => {
     // Both chose their first conversation: Orgrimmar's having held one leaves Stormwind's choice alone.
     expect(sw.say.mock.calls[0]?.[0]).toBe(conversationsFor("alliance")[0]?.lines[0]?.[1]);
     expect(og.say.mock.calls[0]?.[0]).toBe(conversationsFor("horde")[0]?.lines[0]?.[1]);
+  });
+});
+
+describe("Banter, with a player from the wall of shame in earshot", () => {
+  const WARRIOR = 1;
+  const zezerver: ShamedBystander = { name: "Zezerver", classId: WARLOCK_CLASS_ID };
+
+  /** Orgrimmar's pair, each seeing its own shamed players nearby. */
+  function orgrimmar(ogSees: readonly ShamedBystander[], ogbSees: readonly ShamedBystander[] = []) {
+    const roster = new ListenerRoster();
+    const og = voice(ogSees);
+    const ogb = voice(ogbSees);
+    roster.life("Onyxiabuffog", "horde", true);
+    roster.voice("Onyxiabuffog", og.voice);
+    roster.life("Onybuffogb", "horde", true);
+    roster.voice("Onybuffogb", ogb.voice);
+    return { roster, og, ogb };
+  }
+
+  const openingsOf = (warlockOnly: boolean, name: string): ReadonlySet<string | undefined> =>
+    new Set(SHAME_JOKES.filter((joke) => joke.warlockOnly === warlockOnly).map((joke) => joke.lines(name)[0]?.[1]));
+
+  it("makes fun of them by name when the coin says so", async () => {
+    const { roster, og, ogb } = orgrimmar([zezerver]);
+    const held = await new Banter(roster, { pick: first, sleep: instantly, tellShameJoke: () => true }).converse("horde");
+
+    expect(held).toMatchObject({ kind: "joke", about: "Zezerver", finished: true });
+    const joke = SHAME_JOKES[0]?.lines("Zezerver") ?? [];
+    expect(og.say.mock.calls.map(([line]) => line)).toEqual(joke.filter(([part]) => part === "a").map(([, line]) => line));
+    expect(ogb.say.mock.calls.map(([line]) => line)).toEqual(joke.filter(([part]) => part === "b").map(([, line]) => line));
+  });
+
+  it("goes on with a regular conversation when the coin says otherwise", async () => {
+    const { roster, og } = orgrimmar([zezerver]);
+    const held = await new Banter(roster, { pick: first, sleep: instantly, tellShameJoke: () => false }).converse("horde");
+    expect(held?.about).toBeNull();
+    expect(og.say.mock.calls[0]?.[0]).toBe(conversationsFor("horde")[0]?.lines[0]?.[1]);
+  });
+
+  it("flips no coin at all with no one from the wall in earshot", async () => {
+    const { roster } = orgrimmar([]);
+    const tellShameJoke = vi.fn(() => true);
+    const held = await new Banter(roster, { pick: first, sleep: instantly, tellShameJoke }).converse("horde");
+    expect(tellShameJoke).not.toHaveBeenCalled();
+    expect(held?.about).toBeNull();
+  });
+
+  it("jokes about a shamed player only one of the pair can see", async () => {
+    const { roster } = orgrimmar([], [zezerver]);
+    const held = await new Banter(roster, { pick: first, sleep: instantly, tellShameJoke: () => true }).converse("horde");
+    expect(held?.about).toBe("Zezerver");
+  });
+
+  it("keeps the Infernal jokes for a warlock", async () => {
+    const { roster, og } = orgrimmar([{ name: "Brawler", classId: WARRIOR }]);
+    const banter = new Banter(roster, { pick: first, sleep: instantly, tellShameJoke: () => true });
+    const forAnyone = openingsOf(false, "Brawler");
+    for (let i = 0; i < 25; i++) {
+      og.say.mockClear();
+      await banter.converse("horde");
+      expect(forAnyone.has(og.say.mock.calls[0]?.[0])).toBe(true);
+    }
+  });
+
+  it("goes through the other jokes before telling one again", async () => {
+    const { roster, og } = orgrimmar([zezerver]);
+    const banter = new Banter(roster, { pick: first, sleep: instantly, tellShameJoke: () => true });
+    const openings: string[] = [];
+    for (let i = 0; i < SHAME_JOKES.length / 2 + 1; i++) {
+      og.say.mockClear();
+      await banter.converse("horde");
+      const opening = og.say.mock.calls[0]?.[0];
+      if (opening) openings.push(opening);
+    }
+    expect(openings).toHaveLength(SHAME_JOKES.length / 2 + 1);
+    expect(new Set(openings).size).toBe(openings.length);
   });
 });
