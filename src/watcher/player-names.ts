@@ -3,15 +3,14 @@
  *
  * A listener that sees an Infernal logs straight out, so it is not connected long enough to ask who
  * raised it; it hands the owner's GUID to the rest, and one of them asks. A name query answers for
- * any GUID, near or far, so any character in world will do.
+ * any GUID, near or far, so any character in world will do — the one that fled included, once it is
+ * back. It leaves this registry when its connection closes, so it is never asked while away.
  */
 
 /** A character's way of naming a GUID — a name query on its own connection; null when unanswered. */
 export type NameResolver = (guid: bigint) => Promise<string | null>;
 
 export interface ResolveOptions {
-  /** A character not to ask — the one leaving. */
-  readonly except?: string;
   /** How many rounds to try, when nobody can answer yet. */
   readonly attempts?: number;
   /** The wait between rounds. */
@@ -44,8 +43,7 @@ export class PlayerNames {
     const attempts = options.attempts ?? 1;
     for (let round = 0; round < attempts; round += 1) {
       if (round > 0) await this.#sleep(options.retryMs ?? 0);
-      for (const [character, resolver] of [...this.#resolvers]) {
-        if (character === options.except) continue;
+      for (const resolver of [...this.#resolvers.values()]) {
         const name = await resolver(guid);
         if (name !== null) return name;
       }

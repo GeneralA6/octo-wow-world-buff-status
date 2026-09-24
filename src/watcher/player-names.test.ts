@@ -4,16 +4,12 @@ import { PlayerNames, type NameResolver } from "./player-names.js";
 const WARLOCK = 0x1234n;
 
 describe("PlayerNames", () => {
-  it("asks a character in world, passing over the one leaving", async () => {
+  it("asks a character in world", async () => {
     const names = new PlayerNames();
-    const leaving = vi.fn<NameResolver>(async () => "Warlockz");
-    const staying = vi.fn<NameResolver>(async () => "Warlockz");
-    names.register("Onyxiabuffog", leaving);
-    names.register("Onybuffogb", staying);
-
-    expect(await names.resolve(WARLOCK, { except: "Onyxiabuffog" })).toBe("Warlockz");
-    expect(leaving).not.toHaveBeenCalled();
-    expect(staying).toHaveBeenCalledWith(WARLOCK);
+    const resolver = vi.fn<NameResolver>(async () => "Warlockz");
+    names.register("Onybuffogb", resolver);
+    expect(await names.resolve(WARLOCK)).toBe("Warlockz");
+    expect(resolver).toHaveBeenCalledWith(WARLOCK);
   });
 
   it("tries the next character when one gets no answer", async () => {
@@ -31,7 +27,7 @@ describe("PlayerNames", () => {
     expect(sleep).toHaveBeenCalledWith(30_000);
   });
 
-  it("answers from a character that came into world between rounds", async () => {
+  it("answers from a character that came into world between rounds — the one that fled, say", async () => {
     const names = new PlayerNames(async () => {
       names.register("Onybuffogb", async () => "Warlockz");
     });

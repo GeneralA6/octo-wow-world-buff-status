@@ -845,9 +845,9 @@ interface ListenerExit {
 const LISTENER_LOGOUT_TIMEOUT_MS = 3_000;
 /** How long a character waits on a name query for a GUID another one saw. */
 const PLAYER_NAME_TIMEOUT_MS = 5_000;
-/** Rounds of asking our characters who owns an Infernal a listener fled from — spaced so they span
- *  the stand-down, when even the listener that fled is back to ask. */
-const OWNER_NAME_ATTEMPTS = 12;
+/** Rounds of asking our characters who owns an Infernal a listener fled from: ten minutes of them, well
+ *  past the default stand-down, so the listener that fled is back to ask even if no other one is up. */
+const OWNER_NAME_ATTEMPTS = 20;
 const OWNER_NAME_RETRY_MS = 30_000;
 /** A listener kept away by the same threat reports it at most this often. */
 const STOOD_DOWN_ALERT_INTERVAL_MS = 60 * 60_000;
@@ -2081,7 +2081,6 @@ async function main(): Promise<void> {
     if (!owner || unitRef(owner.guid).kind !== "player") return;
     void (async () => {
       const name = await playerNames.resolve(owner.guid, {
-        except: character,
         attempts: OWNER_NAME_ATTEMPTS,
         retryMs: OWNER_NAME_RETRY_MS,
       });
