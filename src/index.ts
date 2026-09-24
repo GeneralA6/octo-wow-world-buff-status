@@ -54,6 +54,8 @@ import { ShameProfiler } from "./watcher/shame-profiler.js";
 import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
 import { tauntFor } from "./watcher/taunts.js";
 import { thanksFor } from "./watcher/thanks.js";
+import { LifeSigns } from "./watcher/life-signs.js";
+import { PartnerPleas } from "./watcher/partner-pleas.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
 import { WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
@@ -862,6 +864,10 @@ interface ListenerHooks {
   readonly playerNames: PlayerNames;
   /** Where this listener offers its friend-list GUID lookups, for players listed by name alone. */
   readonly playerGuids: PlayerGuids;
+  /** This listener was found alive or dead — its partner asks passers-by for a rez while it is dead. */
+  readonly onLifeChanged: (character: string, faction: Faction | null, alive: boolean) => void;
+  /** This listener came into world and can speak, or — with null — left it. */
+  readonly onVoice: (character: string, say: ((line: string) => void) | null) => void;
   /** A player resurrected this listener, and it accepted. */
   readonly onListenerResurrected: (character: string, by: string) => void;
   /** Thrall's Warchief's Blessing yell was heard — Rend's head turned in, in Orgrimmar. */
@@ -902,6 +908,8 @@ const GUID_PROBE_TIMEOUT_MS = 3_000;
  *  past the default stand-down, so the listener that fled is back to ask even if no other one is up. */
 const OWNER_NAME_ATTEMPTS = 20;
 const OWNER_NAME_RETRY_MS = 30_000;
+/** How often a listener asks passers-by to resurrect its dead partner. */
+const PARTNER_PLEA_INTERVAL_MS = 3 * 60_000;
 /** A listener kept away by the same threat reports it at most this often. */
 const STOOD_DOWN_ALERT_INTERVAL_MS = 60 * 60_000;
 
@@ -955,6 +963,8 @@ async function runListener(
     // Who each pet, guardian and charmed unit in view answers to — sent only as it comes into view,
     // so kept from then on for a death report to name. A reconnect starts fresh.
     const unitOwners = new UnitOwnerTable();
+    // Alive or dead, from its own health — so its partner knows when to ask passers-by for a rez.
+    const lifeSigns = new LifeSigns((alive) => hooks.onLifeChanged(listener.characterName, listener.faction, alive));
     // Learns the GUID of a player listed by name alone, by briefly friending them on this account.
     const guidProbe = new GuidProbe(
       { addFriend: (name) => world.addFriend(name), delFriend: (guid) => world.delFriend(guid) },
@@ -1039,6 +1049,7 @@ async function runListener(
       listenerWhispers.stop();
       hooks.playerNames.unregister(listener.characterName);
       hooks.playerGuids.unregister(listener.characterName);
+      hooks.onVoice(listener.characterName, null);
       if (listener.faction && registeredYell && yellSink[listener.faction] === registeredYell) {
         delete yellSink[listener.faction];
       }
@@ -1091,6 +1102,14 @@ async function runListener(
           // Name GUIDs for the others — the owner of an Infernal another listener fled from.
           hooks.playerNames.register(listener.characterName, (guid) => world.resolveName(guid, PLAYER_NAME_TIMEOUT_MS));
           hooks.playerGuids.register(listener.characterName, (name) => guidProbe.lookup(name));
+          // Lend its voice, for asking passers-by to resurrect a partner lying dead beside it.
+          hooks.onVoice(listener.characterName, (line) => {
+            try {
+              world.say(line);
+            } catch (error) {
+              logger.debug(`${listener.characterName}: could not ask for a rez (${describeError(error)})`);
+            }
+          });
           // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone standing
           // in this capital — only when a faction is set AND this listener is a yeller. A second bot
           // in the same city with yeller=false stays whisper-only, so the two don't churn the single
@@ -1176,6 +1195,7 @@ async function runListener(
           // dying and releasing. Reported immediately rather than waiting out the silence window:
           // we already know the answer, and a dead listener can neither hear nor yell.
           deadReported = true;
+          lifeSigns.released();
           logger.error(
             `${listener.characterName}: a Spirit Healer is standing next to it — the character is ` +
               `DEAD and released at a graveyard, so it can neither hear the buff yell nor yell itself`,
@@ -1226,6 +1246,7 @@ async function runListener(
           void acceptResurrection(world, resurrector)
             .then((by) => {
               logger.info(`${listener.characterName}: accepted a resurrection from ${by}`);
+              lifeSigns.resurrected();
               hooks.onListenerResurrected(listener.characterName, by);
             })
             .catch((error) => logger.warn(`${listener.characterName}: could not accept a resurrection (${describeError(error)})`)),
@@ -1254,7 +1275,10 @@ async function runListener(
             }
             if (parsed.self) threats.self(parsed.self);
             for (const position of parsed.positions) threats.moved(position);
-            if (parsed.selfHealth !== null) deathWatch.health(parsed.selfHealth);
+            if (parsed.selfHealth !== null) {
+              deathWatch.health(parsed.selfHealth);
+              lifeSigns.health(parsed.selfHealth);
+            }
             if (listener.onLogin === "interact" && !interacted) {
               for (const go of parsed.gameObjects) nearby.push(go);
               if (parsed.self) selfPos = parsed.self;
@@ -1422,6 +1446,7 @@ async function main(): Promise<void> {
   let darkmoonWidget: DarkmoonWidget | null = null;
   let darkmoonRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let shameSweepTimer: ReturnType<typeof setInterval> | null = null;
+  let partnerPleaTimer: ReturnType<typeof setInterval> | null = null;
   let wallOfShame: WallOfShame | null = null;
 
   const watchOptions: RaidTrackerOptions = {
@@ -1901,6 +1926,7 @@ async function main(): Promise<void> {
     if (statusRefreshTimer) clearInterval(statusRefreshTimer);
     if (darkmoonRefreshTimer) clearInterval(darkmoonRefreshTimer);
     if (shameSweepTimer) clearInterval(shameSweepTimer);
+    if (partnerPleaTimer) clearInterval(partnerPleaTimer);
     // Exit even if a store.close() hangs, so we log out fast and don't overlap a redeploy.
     const hardExit = setTimeout(() => process.exit(0), 3_000);
     hardExit.unref?.();
@@ -2174,6 +2200,13 @@ async function main(): Promise<void> {
    *  wall. The listener that saw it has gone, so the others name the owner, trying for a few minutes
    *  in case none of them is in world yet. */
   const lastStoodDownAlert = new Map<string, number>();
+  // While a listener lies dead, its partner in the same capital asks passers-by for a resurrection.
+  const partnerPleas = new PartnerPleas();
+  partnerPleaTimer = setInterval(() => {
+    for (const plea of partnerPleas.plead()) logger.info(`${plea.by}: asked passers-by to resurrect ${plea.for}`);
+  }, PARTNER_PLEA_INTERVAL_MS);
+  partnerPleaTimer.unref?.();
+
   const onListenerThreatened = (character: string, threat: Threat): void => {
     const distance = `${Math.round(threat.distance)} yd`;
     const away = humanSpan(config.listenerStandDownMs);
@@ -2296,6 +2329,8 @@ async function main(): Promise<void> {
       playerNames,
       playerGuids,
       onWarchiefBlessing: (source, text) => recordWarchiefBlessing(source, text, listener.characterName),
+      onLifeChanged: (character, faction, alive) => partnerPleas.life(character, faction, alive),
+      onVoice: (character, say) => partnerPleas.voice(character, say),
       onListenerResurrected: (character, by) =>
         void notifyAdmin("💚 Listener resurrected", `${character} was resurrected by ${by} and accepted — it is alive again.`),
       onConnected: () => announceRealmUp(listener.characterName),
