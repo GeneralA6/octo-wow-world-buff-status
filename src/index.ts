@@ -51,7 +51,7 @@ import { DEATH_ALERT_TITLE, formatDeathAlert } from "./watcher/death-alert.js";
 import { ShameList } from "./watcher/shame-list.js";
 import { ShameProfiler } from "./watcher/shame-profiler.js";
 import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
-import { PlayerNames } from "./watcher/player-names.js";
+import { CharacterLookups, type PlayerNames } from "./watcher/character-lookups.js";
 import { InMemoryShameListStore, MongoShameListStore, type ShameListStore } from "./watcher/shame-list-store.js";
 import { WallOfShame } from "./watcher/wall-of-shame.js";
 import {
@@ -2049,7 +2049,7 @@ async function main(): Promise<void> {
 
   // Every listener in world offers its name queries here, so a GUID one of them saw — the owner of an
   // Infernal it fled from — can be named by another.
-  const playerNames = new PlayerNames();
+  const playerNames: PlayerNames = new CharacterLookups();
   /** A listener left because a threat came within reach: say so, and put an Infernal's owner on the
    *  wall. The listener that saw it has gone, so the others name the owner, trying for a few minutes
    *  in case none of them is in world yet. */
