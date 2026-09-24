@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { conversationsFor } from "./banter-lines.js";
-import { Banter, LINE_GAP_MS } from "./banter.js";
+import { Banter, DEFAULT_LINE_GAP_MS } from "./banter.js";
 import { ListenerRoster, type ListenerVoice, type ShamedBystander } from "./listener-roster.js";
 import { SHAME_JOKES, WARLOCK_CLASS_ID } from "./shame-jokes.js";
 
@@ -79,13 +79,21 @@ describe("Banter", () => {
     for (const line of said) expect(alliance.has(line)).toBe(true);
   });
 
-  it("waits ten seconds between one line and the next, and none before the first", async () => {
+  it("waits ten seconds between one line and the next by default, and none before the first", async () => {
     const { roster } = city();
     const waits: number[] = [];
     await new Banter(roster, { pick: first, sleep: async (ms) => void waits.push(ms) }).converse("horde");
     const lineCount = conversationsFor("horde")[0]?.lines.length ?? 0;
-    expect(LINE_GAP_MS).toBe(10_000);
-    expect(waits).toEqual(Array.from({ length: lineCount - 1 }, () => LINE_GAP_MS));
+    expect(DEFAULT_LINE_GAP_MS).toBe(10_000);
+    expect(waits).toEqual(Array.from({ length: lineCount - 1 }, () => DEFAULT_LINE_GAP_MS));
+  });
+
+  it("waits the gap it is given between lines", async () => {
+    const { roster } = city();
+    const waits: number[] = [];
+    await new Banter(roster, { pick: first, sleep: async (ms) => void waits.push(ms), lineGapMs: 4_000 }).converse("horde");
+    expect(waits.length).toBeGreaterThan(0);
+    expect(new Set(waits)).toEqual(new Set([4_000]));
   });
 
   it("stops when a speaker dies mid-conversation", async () => {

@@ -32,10 +32,12 @@ export interface BanterOptions {
   readonly sleep?: (ms: number) => Promise<void>;
   /** Whether, with a shamed player in earshot, this conversation is a joke about them. Even odds. */
   readonly tellShameJoke?: () => boolean;
+  /** The pause between one line of a conversation and the next, whatever their length. */
+  readonly lineGapMs?: number;
 }
 
-/** The pause between one line of a conversation and the next, whatever their length. */
-export const LINE_GAP_MS = 10_000;
+/** The pause between two lines when none is given. */
+export const DEFAULT_LINE_GAP_MS = 10_000;
 
 /** What to say, and about whom. */
 interface Tale {
@@ -48,6 +50,7 @@ export class Banter {
   readonly #pick: (count: number) => number;
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #tellShameJoke: () => boolean;
+  readonly #lineGapMs: number;
   /** Per capital, the conversations it held lately, the newest last. */
   readonly #recent = new Map<Faction, number[]>();
   /** Per capital, the shame jokes it told lately, the newest last. */
@@ -59,6 +62,7 @@ export class Banter {
     this.#pick = options.pick ?? ((count) => Math.floor(Math.random() * count));
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.#tellShameJoke = options.tellShameJoke ?? (() => Math.random() < 0.5);
+    this.#lineGapMs = options.lineGapMs ?? DEFAULT_LINE_GAP_MS;
   }
 
   /** Has two listeners of `faction`'s capital talk — or null when it hasn't two alive and in world,
@@ -101,7 +105,7 @@ export class Banter {
 
   async #perform(faction: Faction, conversation: Conversation, cast: Record<Part, Speaker>): Promise<boolean> {
     for (const [index, [part, line]] of conversation.lines.entries()) {
-      if (index > 0) await this.#sleep(LINE_GAP_MS);
+      if (index > 0) await this.#sleep(this.#lineGapMs);
       // Both must still be here, and never have gone: one that died, logged out or dropped since the
       // last line — even if already back — ends it. Half a conversation, picked up again as if nothing
       // happened, is worse than none.
