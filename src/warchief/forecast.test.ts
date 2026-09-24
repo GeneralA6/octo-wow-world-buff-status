@@ -3,9 +3,10 @@ import {
   attributeDrops,
   DEFAULT_ATTRIBUTION_OPTIONS,
   evaluateForecast,
-  expectedWithinMs,
+  blessingOutlook,
   lagSpread,
   type FinishedRun,
+  type ForecastEvaluation,
 } from "./forecast.js";
 
 const MIN = 60_000;
@@ -94,17 +95,26 @@ describe("lagSpread", () => {
   });
 });
 
-describe("expectedWithinMs", () => {
+describe("blessingOutlook", () => {
+  /** A score whose explained blessings came these many minutes after their runs left. */
+  const scored = (lagMinutes: readonly number[]): ForecastEvaluation => ({
+    drops: lagMinutes.length,
+    attributed: lagMinutes.length,
+    midRun: lagMinutes.filter((m) => m < 0).length,
+    runs: lagMinutes.length,
+    runsWithDrop: lagMinutes.length,
+    lag: lagSpread(lagMinutes.map((m) => m * MIN)),
+  });
+
   it("quotes the fallback until enough blessings have been explained", () => {
-    expect(expectedWithinMs([5 * MIN, 6 * MIN], 45 * MIN)).toBe(45 * MIN);
+    expect(blessingOutlook(scored([5, 6]), 45 * MIN)).toEqual({ withinMs: 45 * MIN, learned: false });
   });
 
   it("learns the window most blessings land in, rounded up to five minutes", () => {
-    const lags = [2, 8, 11, 14, 21, 26, 40].map((m) => m * MIN);
-    expect(expectedWithinMs(lags, 45 * MIN)).toBe(25 * MIN); // p75 = 23.5m
+    expect(blessingOutlook(scored([2, 8, 11, 14, 21, 26, 40]), 45 * MIN)).toEqual({ withinMs: 25 * MIN, learned: true });
   });
 
   it("never quotes less than five minutes, even when blessings come mid-run", () => {
-    expect(expectedWithinMs([-20, -10, -5, -3, -1].map((m) => m * MIN), 45 * MIN)).toBe(5 * MIN);
+    expect(blessingOutlook(scored([-20, -10, -5, -3, -1]), 45 * MIN).withinMs).toBe(5 * MIN);
   });
 });

@@ -143,14 +143,20 @@ export function evaluateForecast(
 /** Below this many explained blessings the lag is anecdote, and the forecast quotes its fallback. */
 export const MIN_LAGS_TO_LEARN = 5;
 
+export interface BlessingOutlook {
+  /** How long after a run leaves its blessing is expected. */
+  readonly withinMs: number;
+  /** Learned from the blessings explained so far, rather than the first guess. */
+  readonly learned: boolean;
+}
+
 /**
- * How long after a run leaves its blessing should be expected: the 75th percentile of the lags seen
- * so far, rounded up to the next five minutes, once there are enough of them — a window most
- * blessings land inside without waiting on the slowest. `fallbackMs` until then.
+ * How long after a run leaves its blessing should be expected: the 75th percentile of the lags the
+ * score has seen, rounded up to the next five minutes, once enough blessings are explained — a
+ * window most land inside without waiting on the slowest. `fallbackMs` until then.
  */
-export function expectedWithinMs(lagsMs: readonly number[], fallbackMs: number): number {
-  const spread = lagsMs.length >= MIN_LAGS_TO_LEARN ? lagSpread(lagsMs) : null;
-  if (spread === null) return fallbackMs;
+export function blessingOutlook(score: ForecastEvaluation, fallbackMs: number): BlessingOutlook {
+  if (score.attributed < MIN_LAGS_TO_LEARN || score.lag === null) return { withinMs: fallbackMs, learned: false };
   const fiveMinutes = 5 * 60_000;
-  return Math.max(fiveMinutes, Math.ceil(spread.p75Ms / fiveMinutes) * fiveMinutes);
+  return { withinMs: Math.max(fiveMinutes, Math.ceil(score.lag.p75Ms / fiveMinutes) * fiveMinutes), learned: true };
 }
