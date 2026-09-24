@@ -484,6 +484,24 @@ describe("loadConfig darkmoon on-site watch", () => {
   });
 });
 
+describe("loadConfig warchief's blessing channel", () => {
+  it("falls back to the Onyxia channel unless a channel is given", () => {
+    expect(loadConfig({ ...minimalEnv }).discordWarchiefChannelId).toBeNull();
+  });
+
+  it("takes the channel id", () => {
+    expect(
+      loadConfig({ ...minimalEnv, DISCORD_WARCHIEF_CHANNEL_ID: "1552723662099062834" }).discordWarchiefChannelId,
+    ).toBe("1552723662099062834");
+  });
+
+  it("rejects anything that is not a Discord snowflake", () => {
+    expect(() => loadConfig({ ...minimalEnv, DISCORD_WARCHIEF_CHANNEL_ID: "#warchief" })).toThrow(
+      /DISCORD_WARCHIEF_CHANNEL_ID must be a numeric Discord channel id/,
+    );
+  });
+});
+
 describe("loadConfig wall of shame channel", () => {
   it("is off unless a channel is given", () => {
     expect(loadConfig({ ...minimalEnv }).discordWallOfShameChannelId).toBeNull();

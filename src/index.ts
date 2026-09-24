@@ -20,6 +20,7 @@ import {
   formatFeedbackPost,
   formatGuildWelcome,
   formatHeadIncoming,
+  formatWarchiefBlessing,
 } from "./notify/format.js";
 import { InMemoryFeedbackStore, MongoFeedbackStore, type FeedbackStore } from "./feedback/store.js";
 import { AlertDelivery } from "./notify/alert-delivery.js";
@@ -52,6 +53,8 @@ import { ShameList } from "./watcher/shame-list.js";
 import { ShameProfiler } from "./watcher/shame-profiler.js";
 import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
 import { tauntFor } from "./watcher/taunts.js";
+import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
+import { WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
 import { GuidProbe } from "./watcher/guid-probe.js";
 import { InMemoryShameListStore, MongoShameListStore, type ShameListStore } from "./watcher/shame-list-store.js";
@@ -188,6 +191,8 @@ const HEAD_INCOMING_DEDUP_MS = 15 * 60_000;
 /** Collapse a buff yell heard by more than one same-city listener into one drop. A faction's buff
  *  cannot legitimately re-drop within minutes, so this only ever fuses duplicate detections. */
 const BUFF_DEDUP_MS = 5 * 60_000;
+/** Where the Warchief's Blessing drops are kept, apart from the Rallying Cry's. */
+const WARCHIEF_DROPS_COLLECTION = "warchiefdrops";
 
 /** Consecutive reconnect failures before a supervisor alerts the errors channel that it's
  *  down (backoff caps at 60s, so this is a couple of minutes of sustained failure, not a blip). */
@@ -250,6 +255,8 @@ function connectSocket(host: string, port: number, timeoutMs = 15_000): Promise<
  *  watcher fills this sink when in world so the listener's recordBuff can reach it. */
 interface BuffDropSink {
   notify: ((faction: Faction, appliedAt: Date, savedHead: boolean) => void) | null;
+  /** Whispers the Warchief's Blessing to Horde subscribers, while the watcher can whisper. */
+  notifyWarchief: (() => void) | null;
 }
 
 /** Runs one /who and returns the result — a socket's queued lookup. */
@@ -388,6 +395,7 @@ async function runConnection(
       router.setFactionLookup(null); // and stop the /who-based faction detection
       router.setFactionDetect(null);
       buffDropSink.notify = null; // and stop routing buff-drop whispers until reconnected
+      buffDropSink.notifyWarchief = null;
       presenceSweeper = null; // its world client is going away; broadcasts fall back to whispering all
       if (error) reject(error);
       else resolve();
@@ -651,6 +659,10 @@ async function runConnection(
               void raidService.announceBuffDrop(faction).catch((error) =>
                 logger.error(`buff-drop announce: ${describeError(error)}`),
               );
+            buffDropSink.notifyWarchief = () =>
+              void raidService.announceWarchiefBlessing().catch((error) =>
+                logger.error(`warchief's blessing announce: ${describeError(error)}`),
+              );
           }
           router.setFactionLookup((name) => void lookupFaction(name));
           router.setFactionDetect(detectFaction);
@@ -839,6 +851,8 @@ interface ListenerHooks {
   readonly playerNames: PlayerNames;
   /** Where this listener offers its friend-list GUID lookups, for players listed by name alone. */
   readonly playerGuids: PlayerGuids;
+  /** Thrall's Warchief's Blessing yell was heard — Rend's head turned in, in Orgrimmar. */
+  readonly onWarchiefBlessing: (sourceName: string, text: string) => void;
   /** Fired once this listener reaches in-world — the realm-recovery signal (see runConnection). */
   readonly onConnected: () => void;
 }
@@ -1145,8 +1159,13 @@ async function runListener(
           // visible rather than silently dropped. buff-yell.test.ts proves the matcher
           // against the EXPECTED string; only a real yell validates it against the
           // ACTUAL server text. Also confirms the listener receives MonsterYell at all.
-          logger.info(`heard yell from ${senderName}: ${JSON.stringify(text)}${faction ? ` -> BUFF ${faction}` : ""}`);
+          const warchief = isWarchiefBlessingYell(text);
+          logger.info(
+            `heard yell from ${senderName}: ${JSON.stringify(text)}` +
+              (faction ? ` -> BUFF ${faction}` : warchief ? " -> WARCHIEF'S BLESSING" : ""),
+          );
           if (faction) onBuffApplied(faction, senderName, text);
+          if (warchief) hooks.onWarchiefBlessing(senderName, text);
         },
         // A player whispered this parked character → transfer it to Bufftracker, which
         // answers (and introduces itself on the player's first contact). The listener is
@@ -1422,9 +1441,13 @@ async function main(): Promise<void> {
   // The bot posts to a single Onyxia notification channel (no DMs, no webhook). Faction alerts
   // ping @alliance / @horde — a Discord-side opt-in, unrelated to any in-game character's side.
   const dm = new DiscordDmSender(config.discordBotToken);
-  const push = async (message: NotifyMessage, factions: readonly Faction[] = []): Promise<void> => {
-    if (!config.discordOnyxiaChannelId) {
-      logger.debug(`onyxia notify (no channel set): ${message.title}`);
+  const postAlert = async (
+    channelId: string | null,
+    message: NotifyMessage,
+    factions: readonly Faction[],
+  ): Promise<void> => {
+    if (!channelId) {
+      logger.debug(`notify (no channel set): ${message.title}`);
       return;
     }
     const roleIds = factions
@@ -1432,9 +1455,14 @@ async function main(): Promise<void> {
       .filter((id): id is string => id !== null);
     const mention = roleIds.map((id) => `<@&${id}>`).join(" ");
     const content = `${mention ? mention + " " : ""}**${message.title}**\n${message.body}`;
-    const result = await dm.postToChannel(config.discordOnyxiaChannelId, content, roleIds);
-    if (!result.ok) logger.error(`onyxia notify failed (${result.kind}): ${message.title}`);
+    const result = await dm.postToChannel(channelId, content, roleIds);
+    if (!result.ok) logger.error(`notify failed (${result.kind}): ${message.title}`);
   };
+  const push = (message: NotifyMessage, factions: readonly Faction[] = []): Promise<void> =>
+    postAlert(config.discordOnyxiaChannelId, message, factions);
+  // The Warchief's Blessing is Horde-only: its own channel when set, pinging only the Horde role.
+  const pushWarchief = (message: NotifyMessage): Promise<void> =>
+    postAlert(config.discordWarchiefChannelId ?? config.discordOnyxiaChannelId, message, ["horde"]);
   // Operational/error notices (auth failures, store outages, self-heal, "bot stopped") — always
   // logged, and posted to the dedicated errors channel when one is configured. Never DMed, and
   // never to the public buff channel (which is for buff content, not error spam).
@@ -1486,6 +1514,15 @@ async function main(): Promise<void> {
       logger.info("buffs: recording drop times to MongoDB");
     } catch (error) {
       logger.error(`buffs: MongoDB connect failed (${describeError(error)}); recording in memory`);
+    }
+  }
+  // Warchief's Blessing drops, kept apart from the Rallying Cry's in their own collection.
+  let warchiefStore: BuffStore = new InMemoryBuffStore();
+  if (mongo) {
+    try {
+      warchiefStore = await MongoBuffStore.open(mongo.db, undefined, WARCHIEF_DROPS_COLLECTION);
+    } catch (error) {
+      logger.error(`warchief's blessing: MongoDB connect failed (${describeError(error)}); recording in memory`);
     }
   }
   // Per-cycle park-alert dedup, so a redeploy/wipe/churn can't re-broadcast — Mongo when
@@ -1670,7 +1707,7 @@ async function main(): Promise<void> {
   }
 
   // The watcher fills this once in world, so a listener-heard buff drop can be whispered.
-  const buffDropSink: BuffDropSink = { notify: null };
+  const buffDropSink: BuffDropSink = { notify: null, notifyWarchief: null };
   // The watcher stamps this each /who poll; recordBuff (on a listener) reads it to classify a drop.
   const lairActivity = newLairActivity();
   // Filled from every watcher /who (they all carry the realm-wide online count) and read by the
@@ -1702,6 +1739,14 @@ async function main(): Promise<void> {
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
     void push(formatBuffDropped(faction, drop.origin === "saved"), [faction]); // channel, pinging that side's role
     buffDropSink.notify?.(faction, drop.appliedAt, drop.origin === "saved");
+  };
+  // The Warchief's Blessing: Thrall's yell in Orgrimmar, Horde-only. Announced to the Horde alone —
+  // the Warchief channel pinging the Horde role, and a whisper to Horde subscribers.
+  const warchiefTracker = new WarchiefBlessingTracker({ store: warchiefStore, dedupWindowMs: BUFF_DEDUP_MS, logger });
+  const recordWarchiefBlessing = (sourceName: string, text: string, detectedBy: string): void => {
+    if (warchiefTracker.record({ sourceName, text, detectedBy }, Date.now()) === null) return; // an echo
+    void pushWarchief(formatWarchiefBlessing());
+    buffDropSink.notifyWarchief?.();
   };
 
   // A player's feedback: persist it (for review) and post it to the feedback channel,
@@ -1738,6 +1783,7 @@ async function main(): Promise<void> {
       const nowMs = Date.now();
       return Promise.all(FACTIONS.map((faction) => buffTracker.cooldownState(faction, nowMs)));
     },
+    warchiefBlessingAgo: () => warchiefTracker.lastDropAgo(Date.now()),
     areaName: config.watchAreaName,
     guildName: config.guildName,
     community: config.community,
@@ -1826,6 +1872,7 @@ async function main(): Promise<void> {
       store.close(),
       snapshots.close(),
       buffStore.close(),
+      warchiefStore.close(),
       broadcasts.close(),
       durationStore.close(),
       knowledgeStore.close(),
@@ -2212,6 +2259,7 @@ async function main(): Promise<void> {
       knownName: (guid) => shameList.byGuid(guid)?.name,
       playerNames,
       playerGuids,
+      onWarchiefBlessing: (source, text) => recordWarchiefBlessing(source, text, listener.characterName),
       onConnected: () => announceRealmUp(listener.characterName),
     };
     while (!shuttingDown) {
