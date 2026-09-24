@@ -92,7 +92,7 @@ export function formedRaidEvent(peak: number, number: number | null): RaidEvent 
 
 /** The guild most players belong to, and how many — for a readable summary. */
 export function dominantGuild(
-  players: readonly WhoPlayer[],
+  players: readonly Pick<WhoPlayer, "guild">[],
 ): { guild: string; count: number } | null {
   const counts = new Map<string, number>();
   for (const player of players) {
