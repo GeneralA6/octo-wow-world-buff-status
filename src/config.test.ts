@@ -570,8 +570,8 @@ describe("loadConfig listener threats", () => {
 });
 
 describe("loadConfig listener banter", () => {
-  it("defaults to a conversation in each capital every five minutes", () => {
-    expect(loadConfig({ ...minimalEnv }).listenerBanterMs).toBe(5 * 60_000);
+  it("defaults to a conversation in each capital every two minutes", () => {
+    expect(loadConfig({ ...minimalEnv }).listenerBanterMs).toBe(2 * 60_000);
   });
 
   it("takes an interval in minutes, or 0 to keep the listeners quiet", () => {

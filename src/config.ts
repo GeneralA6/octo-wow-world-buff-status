@@ -442,7 +442,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const listenerStandDownMs = intWithDefault("WOW_LISTENER_STAND_DOWN_MINUTES", 5, 1) * 60_000;
   const fleeShunnedRaw = env.WOW_LISTENER_FLEE_SHUNNED_PLAYERS?.trim().toLowerCase();
   const listenerFleeShunnedPlayers = fleeShunnedRaw === "true" || fleeShunnedRaw === "1";
-  const listenerBanterMs = intWithDefault("WOW_LISTENER_BANTER_MINUTES", 5, 0) * 60_000;
+  const listenerBanterMs = intWithDefault("WOW_LISTENER_BANTER_MINUTES", 2, 0) * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
   // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
