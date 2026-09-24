@@ -129,10 +129,11 @@ const MOVEFLAG_SWIMMING = 0x00200000;
 const MOVEFLAG_SPLINE_ENABLED = 0x00400000;
 const MOVEFLAG_SPLINE_ELEVATION = 0x02000000;
 
-// Spline "final facing" bits — which single final field follows the spline flags.
-const SPLINE_FINAL_POINT = 0x00008000;
-const SPLINE_FINAL_TARGET = 0x00010000;
-const SPLINE_FINAL_ANGLE = 0x00020000;
+// Spline "final facing" bits — which single final field follows the spline flags. The 1.12 values
+// (cmangos-classic MoveSplineFlag); TBC moved them down a bit, to 0x8000/0x10000/0x20000.
+const SPLINE_FINAL_POINT = 0x00010000;
+const SPLINE_FINAL_TARGET = 0x00020000;
+const SPLINE_FINAL_ANGLE = 0x00040000;
 
 /**
  * Parse a nearby-objects update. `selfGuid`, when given, is our own character's GUID: only
@@ -284,11 +285,11 @@ function readLiving(reader: PacketReader, moveFlags: number): Movement {
  */
 function readSpline(reader: PacketReader): WorldPoint | null {
   const splineFlags = reader.u32LE();
-  if (splineFlags & SPLINE_FINAL_ANGLE) reader.f32LE();
-  else if (splineFlags & SPLINE_FINAL_TARGET) reader.u64LE();
-  else if (splineFlags & SPLINE_FINAL_POINT) {
+  // In the server's own order (PacketBuilder::WriteCreate): a point, else a target, else an angle.
+  if (splineFlags & SPLINE_FINAL_POINT) {
     reader.f32LE(); reader.f32LE(); reader.f32LE();
-  }
+  } else if (splineFlags & SPLINE_FINAL_TARGET) reader.u64LE();
+  else if (splineFlags & SPLINE_FINAL_ANGLE) reader.f32LE();
   reader.u32LE(); // time passed
   reader.u32LE(); // duration
   reader.u32LE(); // spline id

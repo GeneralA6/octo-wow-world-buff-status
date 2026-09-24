@@ -291,6 +291,36 @@ describe("parseUpdateObject positions", () => {
     expect(positions[0]?.destination?.x).toBeCloseTo(2, 1);
   });
 
+  it("reads past a path that ends facing a point, a target or an angle, to the objects after it", () => {
+    const WALKER = 0xf130_000d_b001_614bn;
+    const facings: readonly [string, number, (w: PacketWriter) => void][] = [
+      ["point", 0x00010000, (w) => void w.f32LE(5).f32LE(6).f32LE(7)],
+      ["target", 0x00020000, (w) => void w.u64LE(GANKER)],
+      ["angle", 0x00040000, (w) => void w.f32LE(1.5)],
+    ];
+    for (const [facing, flag, writeFacing] of facings) {
+      const body = packet(2, (w) => {
+        w.u8(2).packedGuid(WALKER).u8(3).u8(0x70); // CREATE, a unit, LIVING | HAS_POSITION | ALL
+        w.u32LE(0x00400101).u32LE(0); // walking forward on a spline; time
+        w.f32LE(90).f32LE(0).f32LE(0).f32LE(0); // at 90 yd, orientation
+        w.u32LE(0); // fall time
+        for (let i = 0; i < 6; i += 1) w.f32LE(2.5); // speeds
+        w.u32LE(flag | 0x100); // spline flags: walking, and how it ends facing
+        writeFacing(w);
+        w.u32LE(0).u32LE(12_000).u32LE(5).u32LE(1); // time passed, duration, id, 1 point
+        w.f32LE(45).f32LE(0).f32LE(0); // the point
+        w.f32LE(20).f32LE(0).f32LE(0); // where it ends
+        w.u32LE(1); // UPDATEFLAG_ALL's word
+        w.u8(0); // no values
+        w.u8(2).packedGuid(INFERNAL).u8(3).u8(0x40).f32LE(10).f32LE(20).f32LE(30).f32LE(0).u8(0); // after it
+      });
+      const { positions, incomplete } = parseUpdateObject(body, US);
+      expect({ facing, incomplete }).toEqual({ facing, incomplete: null });
+      expect(positions.map((p) => p.guid)).toEqual([WALKER, INFERNAL]);
+      expect(positions[0]?.destination?.x).toBeCloseTo(20, 1);
+    }
+  });
+
   it("reads another player's race, class and health, but never ours", () => {
     const player = (w: PacketWriter, guid: bigint, health: number): void => {
       w.u8(2).packedGuid(guid).u8(4).u8(0x40).f32LE(1).f32LE(2).f32LE(3).f32LE(0);
