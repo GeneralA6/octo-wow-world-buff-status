@@ -7,7 +7,9 @@ import type { WorldPoint } from "./update-object.js";
  *   MSG_MOVE_* (a player's own movement, relayed): packedGuid, then MovementInfo — u32 flags,
  *     u32 time, f32 x, y, z, orientation, and more — of which only the position is read.
  *   SMSG_MONSTER_MOVE (a creature setting off on a path): packedGuid, f32 x, y, z — where it is
- *     now — then the path, which is not read.
+ *     now — u32 spline id, u8 move type (1 = stop; 2/3/4 add a facing spot, target or angle), then
+ *     u32 flags, u32 duration, u32 point count and the path's end point, x, y, z. A creature walks
+ *     the whole path on that one packet, so where it is going matters as much as where it starts.
  *
  * These are the stock 1.12 opcodes and layouts, which the rest of this protocol matches on OctoWoW,
  * but no capture of these packets has confirmed them here. So a position that is no plausible place
@@ -44,6 +46,8 @@ export const PLAYER_MOVEMENT_OPCODES: ReadonlySet<number> = new Set([
 export interface UnitPosition {
   readonly guid: bigint;
   readonly pos: WorldPoint;
+  /** Where a creature's path ends — it will be walking there — or null when not on one. */
+  readonly destination: WorldPoint | null;
 }
 
 /** A relayed player movement: who moved and where they are, or null for an implausible position. */
@@ -52,20 +56,56 @@ export function parsePlayerMovement(body: Buffer): UnitPosition | null {
   const guid = reader.packedGuid();
   reader.u32LE(); // movement flags
   reader.u32LE(); // time
-  return located(guid, reader);
+  const pos = readPoint(reader);
+  return pos ? { guid, pos, destination: null } : null;
 }
 
-/** A creature setting off: which one and where it is now, or null for an implausible position. */
+// SMSG_MONSTER_MOVE move types that carry extra facing data before the path.
+const MONSTER_MOVE_STOP = 1;
+const MONSTER_MOVE_FACING_SPOT = 2;
+const MONSTER_MOVE_FACING_TARGET = 3;
+const MONSTER_MOVE_FACING_ANGLE = 4;
+
+/**
+ * A creature setting off: which one, where it is now, and where its path ends — or null for an
+ * implausible position. A path that cannot be read leaves the destination null rather than
+ * losing the position.
+ */
 export function parseMonsterMove(body: Buffer): UnitPosition | null {
   const reader = new PacketReader(body);
-  return located(reader.packedGuid(), reader);
+  const guid = reader.packedGuid();
+  const pos = readPoint(reader);
+  if (!pos) return null;
+  let destination: WorldPoint | null = null;
+  try {
+    destination = readDestination(reader);
+  } catch {
+    // a path shorter than its layout — keep where the creature is
+  }
+  return { guid, pos, destination };
+}
+
+function readDestination(reader: PacketReader): WorldPoint | null {
+  reader.u32LE(); // spline id
+  const type = reader.u8();
+  if (type === MONSTER_MOVE_STOP) return null;
+  if (type === MONSTER_MOVE_FACING_SPOT) {
+    reader.f32LE();
+    reader.f32LE();
+    reader.f32LE();
+  } else if (type === MONSTER_MOVE_FACING_TARGET) reader.u64LE();
+  else if (type === MONSTER_MOVE_FACING_ANGLE) reader.f32LE();
+  reader.u32LE(); // spline flags
+  reader.u32LE(); // duration
+  if (reader.u32LE() === 0) return null; // no points
+  return readPoint(reader);
 }
 
 /** Past this on any axis a coordinate is no place in the 1.12 world — a misread, not a position. */
 const WORLD_EXTENT = 20_000;
 
-function located(guid: bigint, reader: PacketReader): UnitPosition | null {
-  const pos = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
-  const plausible = [pos.x, pos.y, pos.z].every((value) => Number.isFinite(value) && Math.abs(value) <= WORLD_EXTENT);
-  return plausible ? { guid, pos } : null;
+function readPoint(reader: PacketReader): WorldPoint | null {
+  const point = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
+  const plausible = [point.x, point.y, point.z].every((v) => Number.isFinite(v) && Math.abs(v) <= WORLD_EXTENT);
+  return plausible ? point : null;
 }

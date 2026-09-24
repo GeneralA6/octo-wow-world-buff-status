@@ -28,32 +28,32 @@ describe("ThreatWatch", () => {
     const owner: UnitOwner = { relation: "controlled", guid: WARLOCK, current: true };
     const { watch, threats } = setup([], new Map([[INFERNAL, owner]]));
     watch.self(at(0));
-    watch.moved({ guid: INFERNAL, pos: at(20) });
+    watch.moved({ guid: INFERNAL, pos: at(20), destination: null });
     expect(threats).toEqual([{ kind: "infernal", guid: INFERNAL, owner, distance: 20 }]);
   });
 
   it("lets an Infernal across the square be, and reports it once it walks within reach", () => {
     const { watch, threats } = setup([]);
     watch.self(at(0));
-    watch.moved({ guid: INFERNAL, pos: at(60) });
+    watch.moved({ guid: INFERNAL, pos: at(60), destination: null });
     expect(threats).toEqual([]);
-    watch.moved({ guid: INFERNAL, pos: at(0, 25) });
+    watch.moved({ guid: INFERNAL, pos: at(0, 25), destination: null });
     expect(threats).toEqual([{ kind: "infernal", guid: INFERNAL, owner: null, distance: 25 }]);
   });
 
   it("reports a player on the wall of shame within reach, but not anyone else", () => {
     const { watch, threats } = setup([GANKER]);
     watch.self(at(0));
-    watch.moved({ guid: RAIDER, pos: at(1) });
-    watch.moved({ guid: GRUNT, pos: at(1) });
+    watch.moved({ guid: RAIDER, pos: at(1), destination: null });
+    watch.moved({ guid: GRUNT, pos: at(1), destination: null });
     expect(threats).toEqual([]);
-    watch.moved({ guid: GANKER, pos: at(0, 0, 10) });
+    watch.moved({ guid: GANKER, pos: at(0, 0, 10), destination: null });
     expect(threats).toEqual([{ kind: "shunned-player", guid: GANKER, distance: 10 }]);
   });
 
   it("judges what it saw before it knew where we stand", () => {
     const { watch, threats } = setup([]);
-    watch.moved({ guid: INFERNAL, pos: at(5) });
+    watch.moved({ guid: INFERNAL, pos: at(5), destination: null });
     expect(threats).toEqual([]);
     watch.self(at(0));
     expect(threats).toHaveLength(1);
@@ -62,14 +62,36 @@ describe("ThreatWatch", () => {
   it("reports only the first threat — the answer to it is to leave", () => {
     const { watch, threats } = setup([GANKER]);
     watch.self(at(0));
-    watch.moved({ guid: INFERNAL, pos: at(5) });
-    watch.moved({ guid: GANKER, pos: at(5) });
+    watch.moved({ guid: INFERNAL, pos: at(5), destination: null });
+    watch.moved({ guid: GANKER, pos: at(5), destination: null });
     expect(threats).toHaveLength(1);
+  });
+
+  it("catches an Infernal as it sets off toward us from across the square", () => {
+    const { watch, threats } = setup([]);
+    watch.self(at(0));
+    watch.moved({ guid: INFERNAL, pos: at(80), destination: at(2) });
+    expect(threats).toEqual([{ kind: "infernal", guid: INFERNAL, owner: null, distance: 2 }]);
+  });
+
+  it("catches an Infernal whose path passes by within reach", () => {
+    const { watch, threats } = setup([]);
+    watch.self(at(0));
+    watch.moved({ guid: INFERNAL, pos: at(-80, 10), destination: at(80, 10) });
+    expect(threats).toHaveLength(1);
+    expect(threats[0]?.distance).toBeCloseTo(10, 5);
+  });
+
+  it("lets a path that stays across the square be", () => {
+    const { watch, threats } = setup([]);
+    watch.self(at(0));
+    watch.moved({ guid: INFERNAL, pos: at(80, 60), destination: at(-80, 60) });
+    expect(threats).toEqual([]);
   });
 
   it("forgets a unit that left view", () => {
     const { watch, threats } = setup([]);
-    watch.moved({ guid: INFERNAL, pos: at(5) });
+    watch.moved({ guid: INFERNAL, pos: at(5), destination: null });
     watch.gone(INFERNAL);
     watch.self(at(0));
     expect(threats).toEqual([]);

@@ -37,14 +37,16 @@ export interface ThreatWatchOptions {
  *
  * Only within `radiusYd` — a capital is busy, and a threat across the square is not yet one. Both
  * kinds are remembered while in view, and judged again as they move and once our own position is
- * known, so one walking closer is caught when it crosses the line.
+ * known, so one walking closer is caught when it crosses the line. A creature walks a whole path on
+ * one packet, so its path is judged whole: one that sets off from across the square toward us, or
+ * past us, is caught as it sets off rather than when it has already arrived.
  */
 export class ThreatWatch {
   readonly #deps: ThreatWatchDeps;
   readonly #radiusYd: number;
   #self: WorldPoint | null = null;
-  /** Where each unit that would be a threat up close was last seen. */
-  readonly #watched = new Map<bigint, WorldPoint>();
+  /** Where each unit that would be a threat up close was last seen, and where it was heading. */
+  readonly #watched = new Map<bigint, UnitPosition>();
   #reported = false;
 
   constructor(deps: ThreatWatchDeps, options: ThreatWatchOptions) {
@@ -55,14 +57,14 @@ export class ThreatWatch {
   /** Where we stand. */
   self(pos: WorldPoint): void {
     this.#self = pos;
-    for (const [guid, where] of this.#watched) this.#judge(guid, where);
+    for (const position of this.#watched.values()) this.#judge(position);
   }
 
   /** A unit came into view or moved. */
-  moved({ guid, pos }: UnitPosition): void {
-    if (!this.#isThreatening(guid)) return;
-    this.#watched.set(guid, pos);
-    this.#judge(guid, pos);
+  moved(position: UnitPosition): void {
+    if (!this.#isThreatening(position.guid)) return;
+    this.#watched.set(position.guid, position);
+    this.#judge(position);
   }
 
   /** A unit left view or was destroyed. */
@@ -76,9 +78,9 @@ export class ThreatWatch {
     return ref.kind === "player" && this.#deps.isShunned(guid);
   }
 
-  #judge(guid: bigint, pos: WorldPoint): void {
+  #judge({ guid, pos, destination }: UnitPosition): void {
     if (this.#reported || this.#self === null) return;
-    const distance = distanceBetween(this.#self, pos);
+    const distance = destination ? distanceToPath(this.#self, pos, destination) : distanceBetween(this.#self, pos);
     if (distance > this.#radiusYd) return;
     this.#reported = true;
     this.#deps.onThreat(
@@ -91,4 +93,16 @@ export class ThreatWatch {
 
 function distanceBetween(a: WorldPoint, b: WorldPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+/** How near a straight walk from `from` to `to` comes to `point`. */
+function distanceToPath(point: WorldPoint, from: WorldPoint, to: WorldPoint): number {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dz = to.z - from.z;
+  const lengthSq = dx * dx + dy * dy + dz * dz;
+  if (lengthSq === 0) return distanceBetween(point, from);
+  const along = ((point.x - from.x) * dx + (point.y - from.y) * dy + (point.z - from.z) * dz) / lengthSq;
+  const t = Math.min(1, Math.max(0, along));
+  return distanceBetween(point, { x: from.x + t * dx, y: from.y + t * dy, z: from.z + t * dz });
 }

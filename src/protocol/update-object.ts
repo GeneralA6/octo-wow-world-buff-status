@@ -151,7 +151,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
         if (objType === OBJTYPE_UNIT && entry > 0) units.push({ guid, entry });
         if (objType === OBJTYPE_PLAYER && pos && (selfGuid === undefined || guid === selfGuid)) self = pos;
-        if ((objType === OBJTYPE_UNIT || objType === OBJTYPE_PLAYER) && pos && !isSelf(guid)) positions.push({ guid, pos });
+        if ((objType === OBJTYPE_UNIT || objType === OBJTYPE_PLAYER) && pos && !isSelf(guid)) positions.push({ guid, pos, destination: null });
         // Every unit's create goes through, owner or not: it also clears whatever an earlier sighting left.
         if (objType === OBJTYPE_UNIT || objType === OBJTYPE_PLAYER) {
           ownerChanges.push({ kind: "create", guid, words: ownerWords });
@@ -164,7 +164,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         if (ownerWords.size > 0 && isUnitGuid(guid)) ownerChanges.push({ kind: "values", guid, words: ownerWords });
       } else if (updateType === UPDATETYPE_MOVEMENT) {
         const pos = readMovement(reader, reader.u8());
-        if (pos && isUnitGuid(guid) && !isSelf(guid)) positions.push({ guid, pos });
+        if (pos && isUnitGuid(guid) && !isSelf(guid)) positions.push({ guid, pos, destination: null });
       } else {
         break; // unknown block type — stop, keep what we have
       }

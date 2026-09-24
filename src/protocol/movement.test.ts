@@ -33,18 +33,42 @@ describe("parsePlayerMovement", () => {
 });
 
 describe("parseMonsterMove", () => {
-  it("reads which creature set off and where it is now", () => {
-    const body = new PacketWriter()
-      .packedGuid(INFERNAL)
-      .f32LE(1630)
-      .f32LE(-4370)
-      .f32LE(32)
-      .u32LE(77) // spline id — the path that follows is not read
-      .u8(0)
-      .toBuffer();
-    const move = parseMonsterMove(body);
+  /** A creature at (1630, -4370, 32) setting off: `facing` writes the move type and its extra data. */
+  function path(facing: (w: PacketWriter) => void, points: readonly (readonly [number, number, number])[]): Buffer {
+    const w = new PacketWriter().packedGuid(INFERNAL).f32LE(1630).f32LE(-4370).f32LE(32).u32LE(77);
+    facing(w);
+    w.u32LE(0).u32LE(4000).u32LE(points.length); // flags, duration, point count
+    for (const [x, y, z] of points) w.f32LE(x).f32LE(y).f32LE(z);
+    return w.toBuffer();
+  }
+
+  it("reads which creature set off, where it is now, and where its path ends", () => {
+    const move = parseMonsterMove(path((w) => w.u8(0), [[1600, -4380, 31]]));
     expect(move?.guid).toBe(INFERNAL);
     expect(move?.pos.x).toBeCloseTo(1630, 1);
+    expect(move?.destination?.x).toBeCloseTo(1600, 1);
+    expect(move?.destination?.y).toBeCloseTo(-4380, 1);
+  });
+
+  it("reads past the facing a path can carry", () => {
+    const spot = parseMonsterMove(path((w) => w.u8(2).f32LE(1).f32LE(2).f32LE(3), [[1600, -4380, 31]]));
+    const target = parseMonsterMove(path((w) => w.u8(3).u64LE(0x555n), [[1600, -4380, 31]]));
+    const angle = parseMonsterMove(path((w) => w.u8(4).f32LE(1.5), [[1600, -4380, 31]]));
+    for (const move of [spot, target, angle]) expect(move?.destination?.x).toBeCloseTo(1600, 1);
+  });
+
+  it("has no destination when the creature stops", () => {
+    const body = new PacketWriter().packedGuid(INFERNAL).f32LE(1630).f32LE(-4370).f32LE(32).u32LE(77).u8(1).toBuffer();
+    const move = parseMonsterMove(body);
+    expect(move?.pos.x).toBeCloseTo(1630, 1);
+    expect(move?.destination).toBeNull();
+  });
+
+  it("keeps where the creature is when its path cannot be read", () => {
+    const body = new PacketWriter().packedGuid(INFERNAL).f32LE(1630).f32LE(-4370).f32LE(32).u32LE(77).toBuffer();
+    const move = parseMonsterMove(body);
+    expect(move?.pos.x).toBeCloseTo(1630, 1);
+    expect(move?.destination).toBeNull();
   });
 });
 
