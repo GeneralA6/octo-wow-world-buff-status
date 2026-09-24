@@ -110,6 +110,7 @@ import {
 import { RaidAlertPolicy } from "./watcher/raid-alert-policy.js";
 import { CommandRouter } from "./chat/command-router.js";
 import { Outreach } from "./chat/outreach.js";
+import { OwnCharacters, ownCharacterNames } from "./chat/own-characters.js";
 import { InMemoryIntroStore, MongoIntroStore, type IntroStore } from "./chat/intro-store.js";
 import { InMemoryUserLedger, MongoUserLedger, type UserLedger } from "./subscribers/user-ledger.js";
 import { InMemoryGuildieStore, MongoGuildieStore, type GuildieStore } from "./subscribers/guildie-store.js";
@@ -456,7 +457,13 @@ async function runConnection(
       () => whisperQueue,
     );
 
+    const ownCharacters = OwnCharacters.of(config);
     const onWhisper = (sender: string, text: string): void => {
+      // One of our listeners is never a player — answering it starts the characters talking to each other.
+      if (ownCharacters.has(sender)) {
+        logger.debug(`whisper from our own ${sender} ignored: ${JSON.stringify(text)}`);
+        return;
+      }
       logger.info(`whisper from ${sender}: ${JSON.stringify(text)}`);
       void (async () => {
         try {
@@ -840,6 +847,7 @@ async function runListener(
 
   const target = resolveWorldTarget(config, realms, logger);
   const socket = await connectSocket(target.host, target.port);
+  const ownCharacters = OwnCharacters.of(config);
 
   await new Promise<void>((resolve, reject) => {
     let readyTimer: NodeJS.Timeout | null = null;
@@ -1046,6 +1054,12 @@ async function runListener(
         // answers (and introduces itself on the player's first contact). The listener is
         // just the ear; Bufftracker does the thinking and the whispering back.
         onWhisper: (sender, text) => {
+          // Bufftracker answering a listener, or another listener, is never a player: routed on, it
+          // comes back as Bufftracker's next question, and the characters talk to each other for good.
+          if (ownCharacters.has(sender)) {
+            logger.debug(`whisper from our own ${sender} ignored: ${JSON.stringify(text)}`);
+            return;
+          }
           logger.info(`whisper from ${sender}: ${JSON.stringify(text)} -> routed to ${config.characterName}`);
           // The listener serves one faction's capital, so its whisperer is that faction in
           // practice (safe to assume even on a cross-faction realm) — pass it as a faction hint so
@@ -1332,6 +1346,15 @@ async function main(): Promise<void> {
   const store = config.whispersEnabled
     ? await openStore(mongo, config, logger, notifyAdmin)
     : new InMemorySubscriberStore();
+  // Our own characters are never subscribers. One that is — Bufftracker signed itself up while its
+  // characters were answering each other — would be whispered its own alerts, so it is taken off.
+  for (const name of ownCharacterNames(config)) {
+    const removed = await store.remove(name).catch((error: unknown) => {
+      logger.error(`subscribers: could not take our own ${name} off (${describeError(error)})`);
+      return false;
+    });
+    if (removed) logger.warn(`subscribers: took our own character ${name} off the subscriber list`);
+  }
 
   // Raw /who snapshots for offline replay/stats — Mongo when configured, else memory.
   let snapshots: SnapshotStore = new InMemorySnapshotStore();
