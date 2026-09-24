@@ -9,6 +9,7 @@ import {
   buildDelFriend,
   buildGuildChat,
   buildJoinChannel,
+  buildSay,
   buildWhisper,
   buildYell,
   isMonsterChatType,
@@ -253,6 +254,13 @@ export class WorldClient {
   }
 
   /** /yell — heard by everyone nearby in the zone (used to broadcast in a capital). */
+  /** Say something to everyone standing close by. */
+  say(message: string): void {
+    if (!this.#ready) throw new Error("cannot say before the character is in world");
+    this.#logger.info(`say: ${JSON.stringify(message)}`);
+    this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildSay(message));
+  }
+
   yell(message: string): void {
     if (!this.#ready) throw new Error("cannot yell before the character is in world");
     this.#logger.info(`yell: ${JSON.stringify(message)}`);

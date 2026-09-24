@@ -100,6 +100,15 @@ export function buildWhisper(target: string, message: string, language: number =
     .toBuffer();
 }
 
+/** Build a CMSG_MESSAGECHAT /say — heard by everyone standing close by, no target. */
+export function buildSay(message: string, language: number = LANG_UNIVERSAL): Buffer {
+  return new PacketWriter()
+    .u32LE(ChatType.Say)
+    .u32LE(language)
+    .cString(escapeChatText(message))
+    .toBuffer();
+}
+
 /** Build a CMSG_MESSAGECHAT /yell — heard by everyone nearby in the zone, no target. */
 export function buildYell(message: string, language: number = LANG_UNIVERSAL): Buffer {
   return new PacketWriter()
