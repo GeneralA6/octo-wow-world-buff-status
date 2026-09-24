@@ -71,12 +71,12 @@ describe("Banter", () => {
     for (const line of said) expect(alliance.has(line)).toBe(true);
   });
 
-  it("waits five seconds between one line and the next, and none before the first", async () => {
+  it("waits ten seconds between one line and the next, and none before the first", async () => {
     const { roster } = city();
     const waits: number[] = [];
     await new Banter(roster, { pick: first, sleep: async (ms) => void waits.push(ms) }).converse("horde");
     const lineCount = conversationsFor("horde")[0]?.lines.length ?? 0;
-    expect(LINE_GAP_MS).toBe(5_000);
+    expect(LINE_GAP_MS).toBe(10_000);
     expect(waits).toEqual(Array.from({ length: lineCount - 1 }, () => LINE_GAP_MS));
   });
 

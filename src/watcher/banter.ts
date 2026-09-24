@@ -26,7 +26,7 @@ export interface BanterOptions {
 }
 
 /** The pause between one line of a conversation and the next, whatever their length. */
-export const LINE_GAP_MS = 5_000;
+export const LINE_GAP_MS = 10_000;
 
 export class Banter {
   readonly #roster: ListenerRoster;
