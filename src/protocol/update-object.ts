@@ -110,6 +110,8 @@ const OBJTYPE_PLAYER = 4;
 const OBJTYPE_GAMEOBJECT = 5;
 
 const UPDATEFLAG_TRANSPORT = 0x02;
+/** The unit is attacking something: whom follows, as a packed GUID (0 when no one). */
+const UPDATEFLAG_HAS_ATTACKING_TARGET = 0x04;
 const UPDATEFLAG_HIGHGUID = 0x08;
 const UPDATEFLAG_ALL = 0x10;
 const UPDATEFLAG_LIVING = 0x20;
@@ -251,8 +253,10 @@ function readMovement(reader: PacketReader, flags: number): Movement {
     pos = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
     reader.f32LE(); // orientation
   }
-  if (flags & UPDATEFLAG_ALL) reader.u32LE();
+  // In the server's own order (cmangos-classic Object::BuildMovementUpdate).
   if (flags & UPDATEFLAG_HIGHGUID) reader.u32LE();
+  if (flags & UPDATEFLAG_ALL) reader.u32LE();
+  if (flags & UPDATEFLAG_HAS_ATTACKING_TARGET) reader.packedGuid();
   if (flags & UPDATEFLAG_TRANSPORT) reader.u32LE();
   return { pos, destination };
 }

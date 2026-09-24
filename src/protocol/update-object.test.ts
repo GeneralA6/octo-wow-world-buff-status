@@ -321,6 +321,25 @@ describe("parseUpdateObject positions", () => {
     }
   });
 
+  it("reads past a unit that is attacking something, or no one, to the objects after it", () => {
+    for (const target of [US, 0n]) {
+      const body = packet(2, (w) => {
+        w.u8(2).packedGuid(GANKER).u8(4).u8(0x74); // CREATE, a player, LIVING | HAS_POSITION | ALL | attacking
+        w.u32LE(0).u32LE(0); // standing still; time
+        w.f32LE(12).f32LE(0).f32LE(0).f32LE(0); // at 12 yd, orientation
+        w.u32LE(0); // fall time
+        for (let i = 0; i < 6; i += 1) w.f32LE(7); // speeds
+        w.u32LE(1); // UPDATEFLAG_ALL's word
+        w.packedGuid(target); // whom it is attacking
+        w.u8(0); // no values
+        w.u8(2).packedGuid(INFERNAL).u8(3).u8(0x40).f32LE(10).f32LE(20).f32LE(30).f32LE(0).u8(0); // after it
+      });
+      const { positions, incomplete } = parseUpdateObject(body, US);
+      expect({ target, incomplete }).toEqual({ target, incomplete: null });
+      expect(positions.map((p) => p.guid)).toEqual([GANKER, INFERNAL]);
+    }
+  });
+
   it("reads another player's race, class and health, but never ours", () => {
     const player = (w: PacketWriter, guid: bigint, health: number): void => {
       w.u8(2).packedGuid(guid).u8(4).u8(0x40).f32LE(1).f32LE(2).f32LE(3).f32LE(0);
