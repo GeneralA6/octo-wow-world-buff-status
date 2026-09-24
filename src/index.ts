@@ -58,7 +58,7 @@ import { LifeSigns } from "./watcher/life-signs.js";
 import { PartnerPleas } from "./watcher/partner-pleas.js";
 import { Banter } from "./watcher/banter.js";
 import { ListenerRoster, type ListenerVoice } from "./watcher/listener-roster.js";
-import { NearbyHealers, RESURRECTION_BY_CLASS } from "./watcher/nearby-healers.js";
+import { NearbyPlayers, RESURRECTION_BY_CLASS } from "./watcher/nearby-players.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
 import { WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
@@ -970,9 +970,10 @@ async function runListener(
     // Who each pet, guardian and charmed unit in view answers to — sent only as it comes into view,
     // so kept from then on for a death report to name. A reconnect starts fresh.
     const unitOwners = new UnitOwnerTable();
-    // Where this listener stands, and the players around it who could resurrect a dead partner.
+    // Where this listener stands, and the players around it — who could resurrect a dead partner, and
+    // who is in earshot.
     let here: WorldPoint | null = null;
-    const healers = new NearbyHealers();
+    const players = new NearbyPlayers();
     // Alive or dead, from its own health — so its partner knows when to ask passers-by for a rez.
     const lifeSigns = new LifeSigns((alive) => hooks.onLifeChanged(listener.characterName, listener.faction, alive));
     // Learns the GUID of a player listed by name alone, by briefly friending them on this account.
@@ -1136,7 +1137,7 @@ async function runListener(
             // The nearest player of this city's side who could resurrect, named — asked by name.
             healerNearby: async (exclude) => {
               if (!here || !listener.faction) return null;
-              const near = healers.nearest(here, HEALER_REACH_YD, listener.faction, exclude);
+              const near = players.nearestHealer(here, HEALER_REACH_YD, listener.faction, exclude);
               const spell = near ? RESURRECTION_BY_CLASS.get(near.classId) : undefined;
               if (!near || !spell) return null;
               const name = await world.resolveName(near.guid, PLAYER_NAME_TIMEOUT_MS);
@@ -1276,11 +1277,11 @@ async function runListener(
         onObjectDestroyed: (guid) => {
           unitOwners.forget(guid);
           threats.gone(guid);
-          healers.gone(guid);
+          players.gone(guid);
         },
         onMovement: (move) => {
           threats.moved(move);
-          healers.moved(move);
+          players.moved(move);
         },
         onSpellStart: (cast) => threats.castStarted(cast),
         onResurrectRequest: (resurrector) =>
@@ -1328,7 +1329,7 @@ async function runListener(
               unitOwners.apply(change);
               if (change.kind === "out-of-range") {
                 threats.gone(change.guid);
-                healers.gone(change.guid);
+                players.gone(change.guid);
               }
             }
             if (parsed.self) {
@@ -1336,10 +1337,10 @@ async function runListener(
               threats.self(parsed.self);
             }
             // Players first, so a healer coming into view is known before their position is placed.
-            for (const player of parsed.players) healers.seen(player);
+            for (const player of parsed.players) players.seen(player);
             for (const position of parsed.positions) {
               threats.moved(position);
-              healers.moved(position);
+              players.moved(position);
             }
             if (parsed.selfHealth !== null) {
               deathWatch.health(parsed.selfHealth);
