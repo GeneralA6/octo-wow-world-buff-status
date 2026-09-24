@@ -24,6 +24,14 @@ describe("InMemorySpireSnapshotStore", () => {
     const got = await store.between(new Date(1000), new Date(4000));
     expect(got.map((s) => s.ts.getTime() / 1000)).toEqual([1, 2, 3]);
   });
+
+  it("says when the oldest reading kept was taken, or null before any", async () => {
+    const store = new InMemorySpireSnapshotStore();
+    expect(await store.firstTakenAt()).toBeNull();
+    await store.record(snap(3, ["c"]));
+    await store.record(snap(2, ["b"]));
+    expect(await store.firstTakenAt()).toEqual(new Date(2000));
+  });
 });
 
 describe("MongoSpireSnapshotStore", () => {
@@ -39,6 +47,9 @@ describe("MongoSpireSnapshotStore", () => {
           .filter((d) => d.ts >= from && d.ts < to)
           .sort((a, b) => a.ts.getTime() - b.ts.getTime())
           .map((d) => ({ ts: d.ts, complete: d.complete, players: [...d.players] })),
+      ),
+      oldest: vi.fn(async () =>
+        docs.length > 0 ? new Date(Math.min(...docs.map((d) => d.ts.getTime()))) : null,
       ),
       close: vi.fn(async () => {}),
     };
@@ -70,6 +81,15 @@ describe("MongoSpireSnapshotStore", () => {
     await store.record(snap(9, ["z"]));
     const got = await store.between(new Date(0), new Date(5000));
     expect(got.map((s) => s.players.map((p) => p.name))).toEqual([["a"], ["b"]]);
+  });
+
+  it("reads where its coverage begins through the port", async () => {
+    const db = fakeDb();
+    const store = new MongoSpireSnapshotStore(db);
+    expect(await store.firstTakenAt()).toBeNull();
+    await store.record(snap(7, ["a"]));
+    await store.record(snap(5, ["b"]));
+    expect(await store.firstTakenAt()).toEqual(new Date(5000));
   });
 
   it("releases through the port on close", async () => {

@@ -22,6 +22,8 @@ export interface SpireSnapshotStore {
   record(snapshot: SpireSnapshot): Promise<void>;
   /** Every snapshot taken in [from, to), oldest first — the order a replay feeds them in. */
   between(from: Date, to: Date): Promise<SpireSnapshot[]>;
+  /** When the oldest reading still kept was taken — where the watch's coverage begins — or null. */
+  firstTakenAt(): Promise<Date | null>;
   close(): Promise<void>;
 }
 
@@ -45,6 +47,11 @@ export class InMemorySpireSnapshotStore implements SpireSnapshotStore {
       .sort((a, b) => a.ts.getTime() - b.ts.getTime());
   }
 
+  async firstTakenAt(): Promise<Date | null> {
+    const times = this.#all.map((s) => s.ts.getTime());
+    return times.length > 0 ? new Date(Math.min(...times)) : null;
+  }
+
   async close(): Promise<void> {
     // nothing to release
   }
@@ -61,6 +68,8 @@ export interface SpireSnapshotDb {
   insert(doc: SpireSnapshotDoc): Promise<void>;
   /** Documents with from <= ts < to, ascending by ts. */
   range(from: Date, to: Date): Promise<SpireSnapshotDoc[]>;
+  /** The oldest document's ts, or null when there are none. */
+  oldest(): Promise<Date | null>;
   close(): Promise<void>;
 }
 
@@ -85,6 +94,7 @@ export class MongoSpireSnapshotStore implements SpireSnapshotStore {
           .find({ ts: { $gte: from, $lt: to } }, { projection: { _id: 0 } })
           .sort({ ts: 1 })
           .toArray(),
+      oldest: async () => (await collection.findOne({}, { sort: { ts: 1 }, projection: { ts: 1 } }))?.ts ?? null,
       close: releaseSharedClient,
     };
     return new MongoSpireSnapshotStore(db);
@@ -98,6 +108,10 @@ export class MongoSpireSnapshotStore implements SpireSnapshotStore {
   async between(from: Date, to: Date): Promise<SpireSnapshot[]> {
     const docs = await this.#db.range(from, to);
     return docs.map(copy);
+  }
+
+  async firstTakenAt(): Promise<Date | null> {
+    return this.#db.oldest();
   }
 
   async close(): Promise<void> {
