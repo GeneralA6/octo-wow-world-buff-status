@@ -41,6 +41,12 @@ export class ShameList {
     return this.#guids.has(guid.toString());
   }
 
+  /** The listed player with this GUID, if any. */
+  byGuid(guid: bigint): ShamedPlayer | undefined {
+    const id = guid.toString();
+    return this.players.find((player) => player.guid === id);
+  }
+
   /** The players, in the order they first killed a listener. */
   get players(): readonly ShamedPlayer[] {
     return [...this.#players.values()];

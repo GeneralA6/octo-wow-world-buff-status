@@ -522,6 +522,30 @@ describe("loadConfig darkmoon board channel", () => {
   });
 });
 
+describe("loadConfig listener threats", () => {
+  it("defaults to leaving for five minutes when a threat comes within 40 yards", () => {
+    const config = loadConfig({ ...minimalEnv });
+    expect(config.listenerThreatRadiusYd).toBe(40);
+    expect(config.listenerStandDownMs).toBe(5 * 60_000);
+  });
+
+  it("takes overrides in yards and minutes", () => {
+    const config = loadConfig({
+      ...minimalEnv,
+      WOW_LISTENER_THREAT_RADIUS_YARDS: "25",
+      WOW_LISTENER_STAND_DOWN_MINUTES: "10",
+    });
+    expect(config.listenerThreatRadiusYd).toBe(25);
+    expect(config.listenerStandDownMs).toBe(10 * 60_000);
+  });
+
+  it("rejects a radius too small to leave in time", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_LISTENER_THREAT_RADIUS_YARDS: "2" })).toThrow(
+      /WOW_LISTENER_THREAT_RADIUS_YARDS must be an integer >= 5/,
+    );
+  });
+});
+
 describe("loadConfig listener silence", () => {
   it("defaults to reporting a listener that has heard nothing for six hours", () => {
     expect(loadConfig({ ...minimalEnv }).listenerSilenceMs).toBe(6 * 60 * 60_000);

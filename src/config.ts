@@ -70,6 +70,11 @@ export interface BotConfig {
   /** Silence this long from a parked listener means it cannot hear the capital it is meant to
    *  be standing in — the one failure that produces no symptom of its own. */
   readonly listenerSilenceMs: number;
+  /** How close an Infernal, or a player on the wall of shame, may come to a parked listener before
+   *  it logs out — near enough to be meant for it, far enough to be gone before it is in reach. */
+  readonly listenerThreatRadiusYd: number;
+  /** How long a listener that logged out for a threat stays out before logging back in. */
+  readonly listenerStandDownMs: number;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   /** Members a cohort must reach for a raid to count as forming ("about to start") — when the
@@ -423,6 +428,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   // hears nothing for hours is not where it needs to be. Generous by default: the quietest
   // correctly-parked character measured here heard roughly one yell an hour.
   const listenerSilenceMs = intWithDefault("WOW_LISTENER_SILENCE_HOURS", 6, 1) * 60 * 60_000;
+  // An Infernal's Immolation only reaches a few yards, and a capital square is wide: 40 yards is near
+  // enough to be meant for the listener and leaves time to log out (instant in a city) first.
+  const listenerThreatRadiusYd = intWithDefault("WOW_LISTENER_THREAT_RADIUS_YARDS", 40, 5);
+  const listenerStandDownMs = intWithDefault("WOW_LISTENER_STAND_DOWN_MINUTES", 5, 1) * 60_000;
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
   // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
@@ -583,6 +592,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     darkmoonCorroboration,
     darkmoonWatchLocation,
     listenerSilenceMs,
+    listenerThreatRadiusYd,
+    listenerStandDownMs,
     watchAreaId,
     watchAreaName,
     minRaidSize,

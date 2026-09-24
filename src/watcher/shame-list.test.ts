@@ -16,6 +16,13 @@ describe("ShameList", () => {
     expect(list.hasGuid(0x666n)).toBe(false);
   });
 
+  it("finds a listed player by GUID", async () => {
+    const list = new ShameList(new InMemoryShameListStore([ganker]));
+    await list.load();
+    expect(list.byGuid(GANKER_GUID)?.name).toBe("Ganker");
+    expect(list.byGuid(0x666n)).toBeUndefined();
+  });
+
   it("matches a player's name whatever the case", async () => {
     const list = new ShameList(new InMemoryShameListStore([ganker]));
     await list.load();
