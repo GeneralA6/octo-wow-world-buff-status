@@ -36,6 +36,7 @@ import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.j
 import { buildCreatureQuery, parseCreatureQueryResponse } from "../protocol/creature-query.js";
 import { parseDestroyObject } from "../protocol/update-object.js";
 import { parseMonsterMove, parsePlayerMovement, PLAYER_MOVEMENT_OPCODES, type UnitPosition } from "../protocol/movement.js";
+import { parseSpellStart, type SpellCast } from "../protocol/spell-cast.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
 import {
@@ -104,6 +105,8 @@ export interface WorldClientHandlers {
   onObjectDestroyed?: (guid: bigint) => void;
   /** A player or creature near us moved: where it is now (see protocol/movement.ts). */
   onMovement?: (move: UnitPosition) => void;
+  /** Someone near us started casting a spell — who, which, and where it is aimed. */
+  onSpellStart?: (cast: SpellCast) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
   /** Server sent warden data — anticheat is active and unhandled. */
@@ -417,6 +420,9 @@ export class WorldClient {
         case WorldOpcode.SMSG_MONSTER_MOVE:
           this.#handleMovement(body, parseMonsterMove);
           break;
+        case WorldOpcode.SMSG_SPELL_START:
+          this.#handleSpellStart(body);
+          break;
         case WorldOpcode.SMSG_LOGOUT_RESPONSE:
           this.#handleLogoutResponse(body);
           break;
@@ -712,6 +718,14 @@ export class WorldClient {
     // Accepted is followed by SMSG_LOGOUT_COMPLETE; only a refusal settles the logout here.
     const reason = body.length >= 4 ? body.readUInt32LE(0) : 0;
     if (reason !== 0) this.#pendingLogout?.("refused");
+  }
+
+  #handleSpellStart(body: Buffer): void {
+    try {
+      this.#handlers.onSpellStart?.(parseSpellStart(body));
+    } catch (error) {
+      this.#logger.debug(`world: could not read spell start: ${(error as Error).message}`);
+    }
   }
 
   #handleMovement(body: Buffer, parse: (body: Buffer) => UnitPosition | null): void {

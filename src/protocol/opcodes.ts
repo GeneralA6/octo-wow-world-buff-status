@@ -72,6 +72,8 @@ export enum WorldOpcode {
   SMSG_MONSTER_MOVE = 0xdd,
   /** Same, zlib-compressed (u32 uncompressed length + deflate); common on login. */
   SMSG_COMPRESSED_UPDATE_OBJECT = 0x1f6,
+  /** Someone near us started casting — who, which spell, where it is aimed (spell-cast.ts). */
+  SMSG_SPELL_START = 0x131,
   // The combat log — every hit a nearby unit takes. Stock 1.12 values; layouts in combat-log.ts.
   /** A unit started swinging at another (u64 attacker, u64 victim). */
   SMSG_ATTACKSTART = 0x143,

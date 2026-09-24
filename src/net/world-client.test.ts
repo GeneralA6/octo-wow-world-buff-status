@@ -7,6 +7,7 @@ import type { WhoResult } from "../protocol/who.js";
 import type { IncomingChat, MonsterChat } from "../protocol/chat.js";
 import type { CombatEvent } from "../protocol/combat-log.js";
 import type { UnitPosition } from "../protocol/movement.js";
+import type { SpellCast } from "../protocol/spell-cast.js";
 import { PacketReader, PacketWriter } from "./byte-buffer.js";
 import type { NodeSocketLike } from "./socket.js";
 import { WorldClient, type WorldClientHandlers } from "./world-client.js";
@@ -780,6 +781,26 @@ describe("WorldClient (against a scripted mock server)", () => {
       expect(moves.map((move) => move.guid)).toEqual([0x555n, 0xf130_0000_5900_0abcn]);
       expect(moves[1]?.pos.z).toBeCloseTo(31, 1);
 
+      client.close();
+    });
+
+    it("routes a spell someone starts casting to onSpellStart", async () => {
+      const casts: SpellCast[] = [];
+      const { socket, client } = await connect({ onSpellStart: (cast) => casts.push(cast) });
+      const inferno = new PacketWriter()
+        .packedGuid(0x2f1an)
+        .packedGuid(0x2f1an)
+        .u32LE(1122)
+        .u16LE(0x2)
+        .u32LE(2000)
+        .u16LE(0x40)
+        .f32LE(10)
+        .f32LE(20)
+        .f32LE(30)
+        .toBuffer();
+      socket.pushPacket(WorldOpcode.SMSG_SPELL_START, inferno);
+      await settle();
+      expect(casts).toEqual([{ caster: 0x2f1an, spellId: 1122, destination: { x: 10, y: 20, z: 30 } }]);
       client.close();
     });
 
