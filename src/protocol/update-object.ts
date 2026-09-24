@@ -54,6 +54,19 @@ export interface WorldObjects {
   /** Where each other unit or player the block placed is — those coming into view, and those whose
    *  movement it updated. Never our own. */
   readonly positions: UnitPosition[];
+  /** Where the packet stopped being readable, when it did — every block after it is lost. Null when
+   *  the whole packet was read. */
+  readonly incomplete: UpdateParseStop | null;
+}
+
+/** A packet the parser could not read to the end: at which block, of how many, and what that was. */
+export interface UpdateParseStop {
+  /** The 0-based block the parser stopped in. */
+  readonly block: number;
+  readonly of: number;
+  /** What the block in hand was, as far as it got: its update type, object type, flags, GUID. */
+  readonly what: string;
+  readonly reason: string;
 }
 
 /** A unit block's word on who the unit answers to, or a unit leaving view. */
@@ -125,12 +138,17 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   const ownerChanges: UnitOwnerChange[] = [];
   const positions: UnitPosition[] = [];
   const isSelf = (guid: bigint): boolean => selfGuid !== undefined && guid === selfGuid;
+  let incomplete: UpdateParseStop | null = null;
+  // The block in hand, described as it is read — for saying where a packet broke.
+  let block = 0;
+  let what = "";
 
   // If a block turns out to be a shape we don't decode (or the packet is truncated),
   // keep the GameObjects read so far rather than losing the whole packet.
   try {
-    for (let i = 0; i < count; i += 1) {
+    for (; block < count; block += 1) {
       const updateType = reader.u8();
+      what = `update type ${updateType}`;
       if (updateType === UPDATETYPE_OUT_OF_RANGE || updateType === UPDATETYPE_NEAR) {
         const n = reader.u32LE();
         for (let j = 0; j < n; j += 1) {
@@ -142,9 +160,11 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         continue;
       }
       const guid = reader.packedGuid();
+      what += `, guid 0x${guid.toString(16)}`;
       if (updateType === UPDATETYPE_CREATE || updateType === UPDATETYPE_CREATE2) {
         const objType = reader.u8();
         const flags = reader.u8();
+        what += `, object type ${objType}, update flags 0x${flags.toString(16)}`;
         const { pos, destination } = readMovement(reader, flags);
         const { entry, health, ownerWords } = readValues(reader);
         if (isSelf(guid) && health !== null) selfHealth = health;
@@ -166,13 +186,20 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         const { pos, destination } = readMovement(reader, reader.u8());
         if (pos && isUnitGuid(guid) && !isSelf(guid)) positions.push({ guid, pos, destination });
       } else {
-        break; // unknown block type — stop, keep what we have
+        // An unknown block type — stop, keep what we have.
+        incomplete = { block, of: count, what, reason: "unknown update type" };
+        break;
       }
     }
-  } catch {
-    // reader ran off the end of a block we mis-sized — keep the objects read so far.
+  } catch (error) {
+    // The reader ran off the end of a block we mis-sized — keep the objects read so far.
+    incomplete = { block, of: count, what, reason: error instanceof Error ? error.message : String(error) };
   }
-  return { gameObjects, units, self, selfHealth, ownerChanges, positions };
+  // Every block read, yet bytes left: one was read at the wrong size without running off the end.
+  if (!incomplete && reader.remaining > 0) {
+    incomplete = { block: count, of: count, what: "after the last block", reason: `${reader.remaining} bytes left over` };
+  }
+  return { gameObjects, units, self, selfHealth, ownerChanges, positions, incomplete };
 }
 
 /** Whether a GUID names a unit — a player, creature or pet — rather than a GameObject or item. */
@@ -196,22 +223,12 @@ function readMovement(reader: PacketReader, flags: number): Movement {
   let destination: WorldPoint | null = null;
   if (flags & UPDATEFLAG_LIVING) {
     const moveFlags = reader.u32LE();
-    reader.u32LE(); // time
-    pos = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
-    reader.f32LE(); // orientation
-    if (moveFlags & MOVEFLAG_ONTRANSPORT) {
-      reader.packedGuid();
-      reader.f32LE(); reader.f32LE(); reader.f32LE(); reader.f32LE(); // transport x,y,z,o
-      reader.u32LE(); // transport time
+    try {
+      ({ pos, destination } = readLiving(reader, moveFlags));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`${reason} (movement flags 0x${moveFlags.toString(16)})`);
     }
-    if (moveFlags & MOVEFLAG_SWIMMING) reader.f32LE(); // pitch
-    reader.u32LE(); // fall time
-    if (moveFlags & MOVEFLAG_FALLING) {
-      reader.f32LE(); reader.f32LE(); reader.f32LE(); reader.f32LE(); // jump velocity/angles/speed
-    }
-    if (moveFlags & MOVEFLAG_SPLINE_ELEVATION) reader.f32LE();
-    for (let i = 0; i < 6; i += 1) reader.f32LE(); // walk/run/... speeds
-    if (moveFlags & MOVEFLAG_SPLINE_ENABLED) destination = readSpline(reader);
   } else if (flags & UPDATEFLAG_HAS_POSITION) {
     pos = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
     reader.f32LE(); // orientation
@@ -219,6 +236,27 @@ function readMovement(reader: PacketReader, flags: number): Movement {
   if (flags & UPDATEFLAG_ALL) reader.u32LE();
   if (flags & UPDATEFLAG_HIGHGUID) reader.u32LE();
   if (flags & UPDATEFLAG_TRANSPORT) reader.u32LE();
+  return { pos, destination };
+}
+
+/** The LIVING part of a movement block, after its movement flags. */
+function readLiving(reader: PacketReader, moveFlags: number): Movement {
+  reader.u32LE(); // time
+  const pos = { x: reader.f32LE(), y: reader.f32LE(), z: reader.f32LE() };
+  reader.f32LE(); // orientation
+  if (moveFlags & MOVEFLAG_ONTRANSPORT) {
+    reader.packedGuid();
+    reader.f32LE(); reader.f32LE(); reader.f32LE(); reader.f32LE(); // transport x,y,z,o
+    reader.u32LE(); // transport time
+  }
+  if (moveFlags & MOVEFLAG_SWIMMING) reader.f32LE(); // pitch
+  reader.u32LE(); // fall time
+  if (moveFlags & MOVEFLAG_FALLING) {
+    reader.f32LE(); reader.f32LE(); reader.f32LE(); reader.f32LE(); // jump velocity/angles/speed
+  }
+  if (moveFlags & MOVEFLAG_SPLINE_ELEVATION) reader.f32LE();
+  for (let i = 0; i < 6; i += 1) reader.f32LE(); // walk/run/... speeds
+  const destination = moveFlags & MOVEFLAG_SPLINE_ENABLED ? readSpline(reader) : null;
   return { pos, destination };
 }
 

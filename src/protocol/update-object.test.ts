@@ -68,6 +68,42 @@ describe("parseUpdateObject (real grid packet with pathing NPCs)", () => {
   });
 });
 
+describe("parseUpdateObject incomplete packets", () => {
+  it("reads a whole packet without complaint", () => {
+    expect(parseUpdateObject(Buffer.from(REAL_OBJ, "hex")).incomplete).toBeNull();
+  });
+
+  it("says where a packet stopped being readable, and what it was reading", () => {
+    const { incomplete } = parseUpdateObject(Buffer.from(BIG_GRID, "hex"));
+    expect(incomplete).not.toBeNull();
+    expect(incomplete?.of).toBe(0xec); // the block count the packet announced
+    expect(incomplete?.block).toBeGreaterThan(0);
+    expect(incomplete?.block).toBeLessThan(0xec);
+    expect(incomplete?.what).toMatch(/^update type \d+, guid 0x[0-9a-f]+/);
+    expect(incomplete?.reason).toMatch(/read past end/);
+  });
+
+  it("names an update type it does not know", () => {
+    const body = new PacketWriter().u32LE(2).u8(0).u8(9).packedGuid(0x555n).toBuffer();
+    expect(parseUpdateObject(body).incomplete).toEqual({
+      block: 0,
+      of: 2,
+      what: "update type 9, guid 0x555",
+      reason: "unknown update type",
+    });
+  });
+
+  it("flags bytes left over after the last block — one was read at the wrong size", () => {
+    const body = new PacketWriter().u32LE(0).u8(0).u32LE(0xdead).toBuffer();
+    expect(parseUpdateObject(body).incomplete?.reason).toBe("4 bytes left over");
+  });
+
+  it("names the movement flags of a movement block it could not read", () => {
+    const body = new PacketWriter().u32LE(1).u8(0).u8(2).packedGuid(0x555n).u8(3).u8(0x20).u32LE(0x400000).u32LE(0).toBuffer();
+    expect(parseUpdateObject(body).incomplete?.reason).toMatch(/movement flags 0x400000/);
+  });
+});
+
 describe("parseUpdateObject paths (real grid packet)", () => {
   it("reads where a walking NPC's path ends, and no path for one standing still", () => {
     const { positions } = parseUpdateObject(Buffer.from(BIG_GRID, "hex"));
