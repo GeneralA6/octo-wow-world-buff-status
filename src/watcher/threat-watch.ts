@@ -1,11 +1,15 @@
 import { unitRef } from "../protocol/guid.js";
 import type { UnitPosition } from "../protocol/movement.js";
+import type { SpellCast } from "../protocol/spell-cast.js";
 import type { UnitOwner } from "../protocol/unit-owner.js";
 import type { WorldPoint } from "../protocol/update-object.js";
 
 /** The creature a warlock's Inferno raises — the Infernal whose Immolation killed both Orgrimmar
  *  listeners. Its entry sits in its GUID, so it is known on sight with nothing to ask. */
 export const INFERNAL_ENTRY = 89;
+/** The warlock spell that drops one: aimed at a spot up to thirty yards from the caster, landing two
+ *  seconds after the cast begins. */
+export const INFERNO_SPELL_ID = 1122;
 
 export type Threat =
   | {
@@ -15,7 +19,14 @@ export type Threat =
       readonly owner: UnitOwner | null;
       readonly distance: number;
     }
-  | { readonly kind: "shunned-player"; readonly guid: bigint; readonly distance: number };
+  | { readonly kind: "shunned-player"; readonly guid: bigint; readonly distance: number }
+  | {
+      readonly kind: "inferno-cast";
+      /** The player casting it, wherever they stand. */
+      readonly guid: bigint;
+      /** From us to where it will land. */
+      readonly distance: number;
+    };
 
 export interface ThreatWatchDeps {
   /** Whether a player is on the wall of shame, by GUID. */
@@ -40,6 +51,10 @@ export interface ThreatWatchOptions {
  * known, so one walking closer is caught when it crosses the line. A creature walks a whole path on
  * one packet, so its path is judged whole: one that sets off from across the square toward us, or
  * past us, is caught as it sets off rather than when it has already arrived.
+ *
+ * Best of all is the Inferno cast itself: it is aimed at a spot, so the warlock can stand well off,
+ * and the Infernal it drops arrives with nobody yet named as its owner. The cast says both where it
+ * will land and who is casting it, two seconds before it does.
  */
 export class ThreatWatch {
   readonly #deps: ThreatWatchDeps;
@@ -65,6 +80,15 @@ export class ThreatWatch {
     if (!this.#isThreatening(position.guid)) return;
     this.#watched.set(position.guid, position);
     this.#judge(position);
+  }
+
+  /** Someone near us started casting. An Inferno aimed within reach is a threat, whoever casts it. */
+  castStarted({ caster, spellId, destination }: SpellCast): void {
+    if (this.#reported || spellId !== INFERNO_SPELL_ID || !destination || this.#self === null) return;
+    const distance = distanceBetween(this.#self, destination);
+    if (distance > this.#radiusYd) return;
+    this.#reported = true;
+    this.#deps.onThreat({ kind: "inferno-cast", guid: caster, distance });
   }
 
   /** A unit left view or was destroyed. */

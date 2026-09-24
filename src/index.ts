@@ -924,9 +924,13 @@ async function runListener(
         ownerOf: (guid) => unitOwners.ownerOf(guid),
         onThreat: (threat) => {
           standDownMs = config.listenerStandDownMs;
-          const what = threat.kind === "infernal" ? "an Infernal" : "a player on the wall of shame";
+          const what = {
+            infernal: "an Infernal came",
+            "inferno-cast": "an Inferno is being cast to land",
+            "shunned-player": "a player on the wall of shame came",
+          }[threat.kind];
           logger.warn(
-            `${listener.characterName}: ${what} came within ${Math.round(threat.distance)} yd — logging out for ` +
+            `${listener.characterName}: ${what} within ${Math.round(threat.distance)} yd — logging out for ` +
               humanSpan(standDownMs),
           );
           hooks.onListenerThreatened(listener.characterName, threat);
@@ -1158,6 +1162,7 @@ async function runListener(
           threats.gone(guid);
         },
         onMovement: (move) => threats.moved(move),
+        onSpellStart: (cast) => threats.castStarted(cast),
         onFriendStatus: (status) => guidProbe.status(status),
         onSystemMessage: (text) => {
           if (!text) return;
@@ -2092,24 +2097,31 @@ async function main(): Promise<void> {
       alert(`${character} logged out for ${away}: ${name}, from the wall of shame, came within ${distance}.`);
       return;
     }
-    const owner = threat.owner;
-    alert(
-      `${character} logged out for ${away}: an Infernal came within ${distance}` +
-        (owner ? ` — its owner is being named.` : ` — nobody was named as its owner.`),
-    );
+    let culprit: bigint | null;
+    let why: string;
+    if (threat.kind === "inferno-cast") {
+      culprit = threat.guid;
+      why = `cast Inferno within ${distance} of ${character}`;
+      alert(`${character} logged out for ${away}: an Inferno was cast to land within ${distance} — its caster is being named.`);
+    } else {
+      culprit = threat.owner?.guid ?? null;
+      why = `brought an Infernal within ${distance} of ${character}`;
+      alert(
+        `${character} logged out for ${away}: an Infernal came within ${distance}` +
+          (culprit !== null ? ` — its owner is being named.` : ` — nobody was named as its owner.`),
+      );
+    }
     // Named again on every sighting: a player already on the wall is left as they are, and one whose
     // name could not be found last time gets another try.
-    if (!owner || unitRef(owner.guid).kind !== "player") return;
+    if (culprit === null || unitRef(culprit).kind !== "player") return;
+    const guid = culprit;
     void (async () => {
-      const name = await playerNames.resolve(owner.guid, {
-        attempts: OWNER_NAME_ATTEMPTS,
-        retryMs: OWNER_NAME_RETRY_MS,
-      });
+      const name = await playerNames.resolve(guid, { attempts: OWNER_NAME_ATTEMPTS, retryMs: OWNER_NAME_RETRY_MS });
       if (name === null) {
-        logger.warn(`shame list: the owner 0x${owner.guid.toString(16)} of the Infernal near ${character} was never named`);
+        logger.warn(`shame list: 0x${guid.toString(16)}, who ${why}, was never named`);
         return;
       }
-      await shamePlayer(name, owner.guid, `brought an Infernal within ${distance} of ${character}`);
+      await shamePlayer(name, guid, why);
     })();
   };
 

@@ -89,6 +89,22 @@ describe("ThreatWatch", () => {
     expect(threats).toEqual([]);
   });
 
+  it("reports an Inferno aimed within reach, naming the caster however far off they stand", () => {
+    const { watch, threats } = setup([]);
+    watch.self(at(0));
+    watch.castStarted({ caster: WARLOCK, spellId: 1122, destination: at(3) });
+    expect(threats).toEqual([{ kind: "inferno-cast", guid: WARLOCK, distance: 3 }]);
+  });
+
+  it("lets an Inferno aimed across the square be, and ignores every other spell", () => {
+    const { watch, threats } = setup([]);
+    watch.self(at(0));
+    watch.castStarted({ caster: WARLOCK, spellId: 1122, destination: at(70) });
+    watch.castStarted({ caster: WARLOCK, spellId: 5740, destination: at(1) }); // Rain of Fire
+    watch.castStarted({ caster: WARLOCK, spellId: 1122, destination: null });
+    expect(threats).toEqual([]);
+  });
+
   it("forgets a unit that left view", () => {
     const { watch, threats } = setup([]);
     watch.moved({ guid: INFERNAL, pos: at(5), destination: null });
