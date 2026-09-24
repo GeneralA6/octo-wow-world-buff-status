@@ -83,6 +83,9 @@ export interface CommandDeps {
   readonly raidNumber?: () => number | null;
   /** Per-faction buff cooldown for status — how long until a fresh Rallying Cry can drop. */
   readonly buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
+  /** How long ago the Warchief's Blessing last dropped in Orgrimmar, or null if none was seen — for
+   *  a Horde player's status. Undefined = not tracked, and the line is left out. */
+  readonly warchiefBlessingAgo?: () => Promise<number | null>;
   /** Where the Darkmoon Faire is, for the "darkmoon" command. Undefined = the tracker isn't
    *  wired and the command says so instead of answering from a guess. */
   readonly faireAnswer?: () => FaireAnswer;
@@ -238,7 +241,7 @@ export class CommandRouter {
    *  Rallying Cry last dropped in THEIR capital(s) only — not both, since a player can only use
    *  their own side's buff. */
   async #status(sender: string, sourceFaction: Faction | null = null): Promise<string[]> {
-    const { activeRaids, areaName, raidElapsed, raidNumber, buffCooldowns } = this.#deps;
+    const { activeRaids, areaName, raidElapsed, raidNumber, buffCooldowns, warchiefBlessingAgo } = this.#deps;
     const raids = activeRaids();
     const elapsed = raidElapsed?.() ?? null;
     const number = raidNumber?.() ?? null;
@@ -249,8 +252,8 @@ export class CommandRouter {
       const id = number !== null ? `raid #${number}` : raids.map((raid) => raid.label).join(", ");
       lines.push(`${areaName} now: ${id}${elapsed !== null ? ` (in for ~${humanClock(elapsed)})` : ""}.`);
     }
+    const factions = buffCooldowns || warchiefBlessingAgo ? await this.#relevantFactions(sender, sourceFaction) : [];
     if (buffCooldowns) {
-      const factions = await this.#relevantFactions(sender, sourceFaction);
       const part = (await buffCooldowns())
         .filter((cd) => factions.includes(cd.faction))
         .map((cd) => {
@@ -266,6 +269,15 @@ export class CommandRouter {
         })
         .join(" | ");
       if (part) lines.push(`Rallying Cry - ${part}.`);
+    }
+    // Horde-only: Rend's head, turned in to Thrall in Orgrimmar.
+    if (warchiefBlessingAgo && factions.includes("horde")) {
+      const ago = await warchiefBlessingAgo();
+      lines.push(
+        ago === null
+          ? `Warchief's Blessing - none seen yet in ${CITY_FOR.horde}.`
+          : `Warchief's Blessing - last dropped in ${CITY_FOR.horde} ~${humanClock(ago)} ago.`,
+      );
     }
     return lines;
   }
