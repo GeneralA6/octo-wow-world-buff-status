@@ -55,7 +55,8 @@ import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
 import { tauntFor } from "./watcher/taunts.js";
 import { thanksFor } from "./watcher/thanks.js";
 import { LifeSigns } from "./watcher/life-signs.js";
-import { PartnerPleas } from "./watcher/partner-pleas.js";
+import { PartnerPleas, type PartnerVoice } from "./watcher/partner-pleas.js";
+import { NearbyHealers, RESURRECTION_BY_CLASS } from "./watcher/nearby-healers.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
 import { WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
@@ -867,7 +868,7 @@ interface ListenerHooks {
   /** This listener was found alive or dead — its partner asks passers-by for a rez while it is dead. */
   readonly onLifeChanged: (character: string, faction: Faction | null, alive: boolean) => void;
   /** This listener came into world and can speak, or — with null — left it. */
-  readonly onVoice: (character: string, say: ((line: string) => void) | null) => void;
+  readonly onVoice: (character: string, voice: PartnerVoice | null) => void;
   /** A player resurrected this listener, and it accepted. */
   readonly onListenerResurrected: (character: string, by: string) => void;
   /** Thrall's Warchief's Blessing yell was heard — Rend's head turned in, in Orgrimmar. */
@@ -910,6 +911,8 @@ const OWNER_NAME_ATTEMPTS = 20;
 const OWNER_NAME_RETRY_MS = 30_000;
 /** How often a listener notes, at most, that object updates are being cut short. */
 const CUT_SHORT_NOTE_INTERVAL_MS = 10 * 60_000;
+/** How near a player who could resurrect must stand to be asked by name — a resurrection's reach. */
+const HEALER_REACH_YD = 30;
 /** How often a listener asks passers-by to resurrect its dead partner. */
 const PARTNER_PLEA_INTERVAL_MS = 3 * 60_000;
 /** A listener kept away by the same threat reports it at most this often. */
@@ -965,6 +968,9 @@ async function runListener(
     // Who each pet, guardian and charmed unit in view answers to — sent only as it comes into view,
     // so kept from then on for a death report to name. A reconnect starts fresh.
     const unitOwners = new UnitOwnerTable();
+    // Where this listener stands, and the players around it who could resurrect a dead partner.
+    let here: WorldPoint | null = null;
+    const healers = new NearbyHealers();
     // Alive or dead, from its own health — so its partner knows when to ask passers-by for a rez.
     const lifeSigns = new LifeSigns((alive) => hooks.onLifeChanged(listener.characterName, listener.faction, alive));
     // Learns the GUID of a player listed by name alone, by briefly friending them on this account.
@@ -1117,12 +1123,23 @@ async function runListener(
           hooks.playerNames.register(listener.characterName, (guid) => world.resolveName(guid, PLAYER_NAME_TIMEOUT_MS));
           hooks.playerGuids.register(listener.characterName, (name) => guidProbe.lookup(name));
           // Lend its voice, for asking passers-by to resurrect a partner lying dead beside it.
-          hooks.onVoice(listener.characterName, (line) => {
-            try {
-              world.say(line);
-            } catch (error) {
-              logger.debug(`${listener.characterName}: could not ask for a rez (${describeError(error)})`);
-            }
+          hooks.onVoice(listener.characterName, {
+            say: (line) => {
+              try {
+                world.say(line);
+              } catch (error) {
+                logger.debug(`${listener.characterName}: could not ask for a rez (${describeError(error)})`);
+              }
+            },
+            // The nearest player of this city's side who could resurrect, named — asked by name.
+            healerNearby: async (exclude) => {
+              if (!here || !listener.faction) return null;
+              const near = healers.nearest(here, HEALER_REACH_YD, listener.faction, exclude);
+              const spell = near ? RESURRECTION_BY_CLASS.get(near.classId) : undefined;
+              if (!near || !spell) return null;
+              const name = await world.resolveName(near.guid, PLAYER_NAME_TIMEOUT_MS);
+              return name ? { guid: near.guid, name, spell } : null;
+            },
           });
           // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone standing
           // in this capital — only when a faction is set AND this listener is a yeller. A second bot
@@ -1257,8 +1274,12 @@ async function runListener(
         onObjectDestroyed: (guid) => {
           unitOwners.forget(guid);
           threats.gone(guid);
+          healers.gone(guid);
         },
-        onMovement: (move) => threats.moved(move),
+        onMovement: (move) => {
+          threats.moved(move);
+          healers.moved(move);
+        },
         onSpellStart: (cast) => threats.castStarted(cast),
         onResurrectRequest: (resurrector) =>
           void acceptResurrection(world, resurrector)
@@ -1303,10 +1324,21 @@ async function runListener(
             // Owners first, so an Infernal arriving in this same packet is judged with its owner known.
             for (const change of parsed.ownerChanges) {
               unitOwners.apply(change);
-              if (change.kind === "out-of-range") threats.gone(change.guid);
+              if (change.kind === "out-of-range") {
+                threats.gone(change.guid);
+                healers.gone(change.guid);
+              }
             }
-            if (parsed.self) threats.self(parsed.self);
-            for (const position of parsed.positions) threats.moved(position);
+            if (parsed.self) {
+              here = parsed.self;
+              threats.self(parsed.self);
+            }
+            // Players first, so a healer coming into view is known before their position is placed.
+            for (const player of parsed.players) healers.seen(player);
+            for (const position of parsed.positions) {
+              threats.moved(position);
+              healers.moved(position);
+            }
             if (parsed.selfHealth !== null) {
               deathWatch.health(parsed.selfHealth);
               lifeSigns.health(parsed.selfHealth);
@@ -2235,7 +2267,12 @@ async function main(): Promise<void> {
   // While a listener lies dead, its partner in the same capital asks passers-by for a resurrection.
   const partnerPleas = new PartnerPleas();
   partnerPleaTimer = setInterval(() => {
-    for (const plea of partnerPleas.plead()) logger.info(`${plea.by}: asked passers-by to resurrect ${plea.for}`);
+    void partnerPleas
+      .plead()
+      .then((pleas) => {
+        for (const plea of pleas) logger.info(`${plea.by}: asked ${plea.healer ?? "passers-by"} to resurrect ${plea.for}`);
+      })
+      .catch((error) => logger.error(`partner pleas: ${describeError(error)}`));
   }, PARTNER_PLEA_INTERVAL_MS);
   partnerPleaTimer.unref?.();
 
