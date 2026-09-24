@@ -291,6 +291,20 @@ describe("parseUpdateObject positions", () => {
     expect(positions[0]?.destination?.x).toBeCloseTo(2, 1);
   });
 
+  it("reads another player's race, class and health, but never ours", () => {
+    const player = (w: PacketWriter, guid: bigint, health: number): void => {
+      w.u8(2).packedGuid(guid).u8(4).u8(0x40).f32LE(1).f32LE(2).f32LE(3).f32LE(0);
+      // Two mask words: health is field 22, race/class/gender/power field 36.
+      w.u8(2).u32LE(1 << 22).u32LE(1 << (36 - 32));
+      w.u32LE(health).u32LE(0x00010502); // an Orc (2) Priest (5)
+    };
+    const body = packet(2, (w) => {
+      player(w, GANKER, 1200);
+      player(w, US, 900);
+    });
+    expect(parseUpdateObject(body, US).players).toEqual([{ guid: GANKER, raceId: 2, classId: 5, health: 1200 }]);
+  });
+
   it("places a unit whose movement block alone was updated", () => {
     const body = packet(1, (w) => {
       w.u8(1).packedGuid(INFERNAL).u8(0x40).f32LE(50).f32LE(60).f32LE(70).f32LE(0); // MOVEMENT

@@ -54,9 +54,19 @@ export interface WorldObjects {
   /** Where each other unit or player the block placed is — those coming into view, and those whose
    *  movement it updated. Never our own. */
   readonly positions: UnitPosition[];
+  /** The other players coming into view, and their race and class. Never us. */
+  readonly players: WorldPlayer[];
   /** Where the packet stopped being readable, when it did — every block after it is lost. Null when
    *  the whole packet was read. */
   readonly incomplete: UpdateParseStop | null;
+}
+
+/** Another player coming into view: their race and class, and their health — 0 when dead. */
+export interface WorldPlayer {
+  readonly guid: bigint;
+  readonly raceId: number;
+  readonly classId: number;
+  readonly health: number;
 }
 
 /** A packet the parser could not read to the end: at which block, of how many, and what that was. */
@@ -84,6 +94,8 @@ export type UnitOwnerChange =
 // Values-block field indices (1.12).
 const OBJECT_FIELD_ENTRY = 3;
 const UNIT_FIELD_HEALTH = 22;
+/** A unit's race, class, gender and power type, one byte each, lowest first. */
+const UNIT_FIELD_BYTES_0 = 36;
 // A unit's owners — each a 64-bit GUID over two words, low word first.
 /** Who holds it by a charm: Mind Control, Enslave Demon, a warlock's hold on its Inferno. */
 export const UNIT_FIELD_CHARMEDBY = 10;
@@ -137,6 +149,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   let selfHealth: number | null = null;
   const ownerChanges: UnitOwnerChange[] = [];
   const positions: UnitPosition[] = [];
+  const players: WorldPlayer[] = [];
   const isSelf = (guid: bigint): boolean => selfGuid !== undefined && guid === selfGuid;
   let incomplete: UpdateParseStop | null = null;
   // The block in hand, described as it is read — for saying where a packet broke.
@@ -166,8 +179,12 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
         const flags = reader.u8();
         what += `, object type ${objType}, update flags 0x${flags.toString(16)}`;
         const { pos, destination } = readMovement(reader, flags);
-        const { entry, health, ownerWords } = readValues(reader);
+        const { entry, health, ownerWords, bytes0 } = readValues(reader);
         if (isSelf(guid) && health !== null) selfHealth = health;
+        // Another player: who they are — what they can do for us — read from their race and class.
+        if (objType === OBJTYPE_PLAYER && !isSelf(guid) && bytes0 !== null) {
+          players.push({ guid, raceId: bytes0 & 0xff, classId: (bytes0 >>> 8) & 0xff, health: health ?? 0 });
+        }
         if (objType === OBJTYPE_GAMEOBJECT && pos) gameObjects.push({ guid, entry, pos });
         if (objType === OBJTYPE_UNIT && entry > 0) units.push({ guid, entry });
         if (objType === OBJTYPE_PLAYER && pos && (selfGuid === undefined || guid === selfGuid)) self = pos;
@@ -199,7 +216,7 @@ export function parseUpdateObject(body: Buffer, selfGuid?: bigint): WorldObjects
   if (!incomplete && reader.remaining > 0) {
     incomplete = { block: count, of: count, what: "after the last block", reason: `${reader.remaining} bytes left over` };
   }
-  return { gameObjects, units, self, selfHealth, ownerChanges, positions, incomplete };
+  return { gameObjects, units, self, selfHealth, ownerChanges, positions, players, incomplete };
 }
 
 /** Whether a GUID names a unit — a player, creature or pet — rather than a GameObject or item. */
@@ -294,6 +311,8 @@ interface ValueFields {
   readonly health: number | null;
   /** The words at the unit owner indices, by index — meaningful only when the block is a unit's. */
   readonly ownerWords: Map<number, number>;
+  /** UNIT_FIELD_BYTES_0 — race, class, gender, power type — or null when the block did not carry it. */
+  readonly bytes0: number | null;
 }
 
 /** Read a values block, keeping the few fields we act on. */
@@ -303,16 +322,18 @@ function readValues(reader: PacketReader): ValueFields {
   for (let i = 0; i < blockCount; i += 1) mask.push(reader.u32LE());
   let entry = 0;
   let health: number | null = null;
+  let bytes0: number | null = null;
   const ownerWords = new Map<number, number>();
   for (let idx = 0; idx < blockCount * 32; idx += 1) {
     if (((mask[idx >>> 5] ?? 0) >>> (idx & 31)) & 1) {
       const value = reader.u32LE();
       if (idx === OBJECT_FIELD_ENTRY) entry = value;
       else if (idx === UNIT_FIELD_HEALTH) health = value;
+      else if (idx === UNIT_FIELD_BYTES_0) bytes0 = value;
       else if (idx >= UNIT_FIELD_CHARMEDBY && idx < OWNER_FIELDS_END) ownerWords.set(idx, value);
     }
   }
-  return { entry, health, ownerWords };
+  return { entry, health, ownerWords, bytes0 };
 }
 
 /** The GameObject nearest a point (by squared distance), or null if there are none. */
