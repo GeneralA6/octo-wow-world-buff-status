@@ -114,6 +114,91 @@ const HORDE: readonly Conversation[] = [
       ["b", "Durotar is red and dry, but no demon owns it. That will do."],
     ],
   },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Did you know the Dark Lady was a high elf once?"],
+      ["b", "Ranger-General of Silvermoon, before Arthas came."],
+      ["a", "She fought him at every gate of Quel'Thalas. He made her a banshee for it."],
+      ["b", "Now she rules beneath his father's city and hunts him from below."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "I asked a Forsaken in the Undercity what he misses most."],
+      ["b", "His heartbeat?"],
+      ["a", "His daughter. She lives in Southshore now, and runs when she sees him."],
+      ["b", "The plague took his life. The living took the rest."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Thrall's parents were murdered when he was still a babe."],
+      ["b", "Durotan and Draka. Gul'dan sent the assassins."],
+      ["a", "A human lord found him in the snow and raised him to fight in the pits of Durnholde."],
+      ["b", "And the slave became Warchief. The world has a sense of humor."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Thrall wears Doomhammer's armor, you know."],
+      ["b", "The old Warchief's? How did he come by it?"],
+      ["a", "Orgrim fell beside him freeing the camps, a lance through his back."],
+      ["b", "He gave Thrall the hammer and the Horde with his last breath."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The village down the coast is named for Sen'jin."],
+      ["b", "Vol'jin's father?"],
+      ["a", "Murlocs took him for their sea witch the night the Darkspear escaped with Thrall."],
+      ["b", "He never left that island. His people did, and they never forgot him."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "Remember the lazy peons in the Valley of Trials?"],
+      ["b", "The ones you wake with a blackjack?"],
+      ["a", "Foreman Thazz'ril swears it builds character."],
+      ["b", "It built a headache. I was one of the peons."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Why does the tauren at the inn never order the steak?"],
+      ["b", "Says it reminds him of his uncle."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "How can you tell a goblin is cheating you?"],
+      ["b", "He's offering you a discount."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "The zeppelin to the Undercity is late again."],
+      ["b", "Goblin engineering. It either arrives or it explodes."],
+      ["a", "Last week it did both."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "You know the Burning Blade are hiding right under our feet?"],
+      ["b", "Ragefire Chasm. Cultists in the Warchief's own cellar."],
+      ["a", "Every new recruit gets sent down to clear them out."],
+      ["b", "And every week they're back. Like rats with daggers."],
+    ],
+  },
 ];
 
 const ALLIANCE: readonly Conversation[] = [
@@ -210,6 +295,91 @@ const ALLIANCE: readonly Conversation[] = [
       ["b", "It rose, all right. Just not the way he meant."],
     ],
   },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Jaina Proudmoore stood by while the orcs killed her father."],
+      ["b", "Admiral Proudmoore? He sailed on Durotar with the whole fleet."],
+      ["a", "She begged him to leave the peace alone. He wouldn't listen."],
+      ["b", "Theramore has its peace. Kul Tiras has a grudge."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Anduin Lothar fell at the foot of Blackrock Spire."],
+      ["b", "The Lion of Azeroth. Doomhammer struck him down himself."],
+      ["a", "Turalyon took up his sword and won the war anyway."],
+      ["b", "And the prince carries Lothar's name now. Big boots to fill."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Turalyon and Alleria led the Sons of Lothar through the Dark Portal."],
+      ["b", "To end the orcs for good. What happened?"],
+      ["a", "Ner'zhul tore Draenor apart and the portal fell. They never came home."],
+      ["b", "Some say they still fight out there. Some say that is just hope."],
+    ],
+  },
+  {
+    kind: "chat",
+    lines: [
+      ["a", "Have you met Verna Furlbrow's horse in Westfall?"],
+      ["b", "Old Blanchy? The one everyone steals oats for?"],
+      ["a", "Half the heroes of Stormwind started out feeding that horse."],
+      ["b", "And she still looks hungry every time I pass."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "How can you tell a gnome engineer built something?"],
+      ["b", "It's on fire, and he's taking notes."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Why is there always a night elf dancing on the mailbox?"],
+      ["b", "Ten thousand years of practice. It has to go somewhere."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Magni still believes his daughter was kidnapped."],
+      ["b", "Moira? She married the Dark Iron emperor."],
+      ["a", "He sent a whole army into Blackrock Depths to bring her home."],
+      ["b", "Hard to rescue someone who locked the door herself."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "King Magni lost his brother in Northrend."],
+      ["b", "Muradin? He went north with Prince Arthas."],
+      ["a", "He found the cursed blade first. It took him before it took the prince."],
+      ["b", "They say Magni still raises a mug to him every night."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Remind me never to rest at the Lion's Pride Inn."],
+      ["b", "In Goldshire? What happened?"],
+      ["a", "Nothing I can repeat in front of the guards."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The Dragonmaw kept the Dragonqueen chained in Grim Batol."],
+      ["b", "Alexstrasza? For how long?"],
+      ["a", "Years. They took her young as they hatched and rode them into war."],
+      ["b", "The Wetlands still smell of smoke when the wind turns."],
+    ],
+  },
 ];
 
 const SHARED: readonly Conversation[] = [
@@ -302,6 +472,88 @@ const SHARED: readonly Conversation[] = [
       ["b", "Struck down by his own student."],
       ["a", "Arthas, for his father's throne. The paladins still keep a vigil at his tomb."],
       ["b", "Some debts even the Light cannot collect."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "How does a mage win every argument?"],
+      ["b", "Polymorph. It is very hard to argue as a sheep."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "What's a mage's favorite part of a raid?"],
+      ["b", "The water break. Suddenly everyone remembers my name."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Why do warlocks never get invited to parties?"],
+      ["b", "They always bring an Infernal."],
+      ["a", "And then act surprised when it sets the whole city on fire."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "What loot does a hunter need from a raid?"],
+      ["b", "All of it. Ask him, he already rolled need."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Karazhan still stands empty in Deadwind Pass."],
+      ["b", "Medivh's tower? Since the Guardian died?"],
+      ["a", "Sargeras hid in him from birth. He opened the Dark Portal for the orcs."],
+      ["b", "His best friend had to kill him to end it. The tower remembers."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "The night elves traded forever to beat Archimonde."],
+      ["b", "At Mount Hyjal? What did they give up?"],
+      ["a", "Their World Tree, and the immortality it gave them. They age now, like the rest of us."],
+      ["b", "Ten thousand years, spent in one morning."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Deathwing was a guardian of this world once."],
+      ["b", "The Earth-Warder? Before the madness?"],
+      ["a", "Neltharion. He forged the Dragon Soul to protect the world, then turned it on everyone."],
+      ["b", "And his daughter's head hangs at our gate. Like father, like daughter."],
+    ],
+  },
+  {
+    kind: "joke",
+    lines: [
+      ["a", "Ever been to Gadgetzan?"],
+      ["b", "Once. A goblin robbed me, then sold me my own purse back."],
+      ["a", "That's not robbery. That's commerce."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Have you heard the tale of the Ashbringer?"],
+      ["b", "Mograine's blade? The Scourge fled at the sight of it."],
+      ["a", "His own son lured him out alone and gave him to the Scourge."],
+      ["b", "The greatest paladin of his age, sold for an inheritance."],
+    ],
+  },
+  {
+    kind: "story",
+    lines: [
+      ["a", "Fandral Staghelm lost his son at the Scarab Wall."],
+      ["b", "In the Qiraji war, a thousand years ago?"],
+      ["a", "Their general tore Valstann apart in front of him."],
+      ["b", "Fandral broke the Scepter the day they sealed the gate. Some wounds don't close."],
     ],
   },
 ];
