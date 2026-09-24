@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { inflateSync } from "node:zlib";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { FatalError } from "../errors.js";
-import { AUTH_OK, ChatType, CLIENT_BUILD, GuildEvent, WorldOpcode } from "../protocol/opcodes.js";
+import { AUTH_OK, ChatType, CLIENT_BUILD, GuildEvent, LANG_ADDON, WorldOpcode } from "../protocol/opcodes.js";
 import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResult } from "../protocol/who.js";
 import {
   buildAddFriend,
@@ -513,11 +513,17 @@ export class WorldClient {
         this.#handlers.onSystemMessage?.(chat.text.trim());
         return;
       }
+      // An addon's data riding a chat type is nobody talking. Answered as a whisper, OctoRadio's
+      // "SAIO" broadcast once set every character of ours talking to the others without end.
+      if (chat.language === LANG_ADDON) return;
       if (PLAYER_CHAT_TYPES.has(chat.type)) {
         this.#handlers.onPlayerChat?.(chat);
         return;
       }
       if (chat.type !== ChatType.Whisper) return; // only inbound whispers are commands
+      // A whisper from ourselves is never a player asking something; answering one whispers
+      // ourselves again, and the server delivers that too.
+      if (chat.senderGuid === this.#selfGuid) return;
       const text = chat.text.trim();
       if (!text) return;
 

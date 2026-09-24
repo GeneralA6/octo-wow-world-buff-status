@@ -153,6 +153,9 @@ export enum FriendsResult {
 
 /** Universal language — readable by everyone, so a whisper is never garbled. */
 export const LANG_UNIVERSAL = 0;
+/** The "language" addon messages travel in — an addon's data riding a chat type, never a person
+ *  talking. OctoRadio's "SAIO" payload arrives this way as a whisper. */
+export const LANG_ADDON = 0xffffffff;
 
 /** SMSG_AUTH_RESPONSE result byte we treat as "you are in". */
 export const AUTH_OK = 0x0c;

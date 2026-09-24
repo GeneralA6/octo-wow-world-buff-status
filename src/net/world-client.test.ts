@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
-import { AUTH_OK, ChatType, GuildEvent, WorldOpcode } from "../protocol/opcodes.js";
+import { AUTH_OK, ChatType, GuildEvent, LANG_ADDON, WorldOpcode } from "../protocol/opcodes.js";
 import type { WhoResult } from "../protocol/who.js";
 import type { IncomingChat, MonsterChat } from "../protocol/chat.js";
 import type { CombatEvent } from "../protocol/combat-log.js";
@@ -51,12 +51,12 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     this.#names.set(guid, name);
   }
 
-  /** Deliver an incoming whisper from `senderGuid` to the client. */
-  pushWhisper(senderGuid: bigint, text: string): void {
+  /** Deliver an incoming whisper from `senderGuid` to the client, in `language` (Common by default). */
+  pushWhisper(senderGuid: bigint, text: string, language: number = 7): void {
     const msg = Buffer.from(text, "utf8");
     const body = new PacketWriter()
       .u8(ChatType.Whisper)
-      .u32LE(7)
+      .u32LE(language)
       .u64LE(senderGuid)
       .u32LE(msg.length + 1)
       .bytes(msg)
@@ -735,6 +735,26 @@ describe("WorldClient (against a scripted mock server)", () => {
       expect(destroyed).toEqual([]);
       expect(errors).toEqual([]);
       expect(client.isReady).toBe(true);
+
+      client.close();
+    });
+
+    it("never takes an addon's data, or a whisper from ourselves, for someone talking to us", async () => {
+      const whispers: string[] = [];
+      const chat: IncomingChat[] = [];
+      const { socket, client } = await connect({
+        onWhisper: (_sender, text) => whispers.push(text),
+        onPlayerChat: (line) => chat.push(line),
+      });
+      socket.setName(0x555n, "Raider");
+
+      socket.pushWhisper(0x555n, 'SAIO\t\u0001\u0001{{2,"OctoRadio","NowPlaying"}}', LANG_ADDON);
+      socket.pushWhisper(0xabcdn, "No raid in Onyxia's Lair right now."); // our own echo
+      socket.pushWhisper(0x555n, "status"); // a player — still answered
+      await settle();
+      await settle();
+      expect(whispers).toEqual(["status"]);
+      expect(chat).toEqual([]);
 
       client.close();
     });
