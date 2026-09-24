@@ -35,6 +35,7 @@ import {
 import { buildNameQuery, parseNameQueryResponse } from "../protocol/name-query.js";
 import { buildCreatureQuery, parseCreatureQueryResponse } from "../protocol/creature-query.js";
 import { parseDestroyObject } from "../protocol/update-object.js";
+import { parseMonsterMove, parsePlayerMovement, PLAYER_MOVEMENT_OPCODES, type UnitPosition } from "../protocol/movement.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { NodeSocketLike } from "./socket.js";
 import {
@@ -101,6 +102,8 @@ export interface WorldClientHandlers {
   onWorldObjects?: (body: Buffer) => void;
   /** An object nearby was removed from the world (despawned, dismissed) rather than walking out of view. */
   onObjectDestroyed?: (guid: bigint) => void;
+  /** A player or creature near us moved: where it is now (see protocol/movement.ts). */
+  onMovement?: (move: UnitPosition) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
   /** Server sent warden data — anticheat is active and unhandled. */
@@ -109,6 +112,9 @@ export interface WorldClientHandlers {
    *  latency. Fires once per matched pong (~every pingIntervalMs). */
   onLatency?: (rttMs: number) => void;
 }
+
+/** How a logout request ended — see `WorldClient.logout`. */
+export type LogoutOutcome = "logged-out" | "refused" | "timed-out" | "not-in-world";
 
 /** Player chat the rest of the zone can hear — the lines worth keeping as context. */
 const PLAYER_CHAT_TYPES: ReadonlySet<number> = new Set([ChatType.Say, ChatType.Yell, ChatType.Emote]);
@@ -165,6 +171,10 @@ export class WorldClient {
   readonly #pendingWhispers = new Map<bigint, string[]>();
   /** Name queries sent on request (not for a whisper) and not answered yet. */
   readonly #pendingNames = new Set<bigint>();
+  /** Callers waiting on a name query's answer, by guid — see `resolveName`. */
+  readonly #nameWaiters = new Map<bigint, ((name: string | null) => void)[]>();
+  /** Settles the logout in progress — see `logout`. */
+  #pendingLogout: ((outcome: LogoutOutcome) => void) | null = null;
 
   constructor(options: WorldClientOptions) {
     this.#socket = options.socket;
@@ -320,6 +330,9 @@ export class WorldClient {
     if (this.#pingTimer) clearInterval(this.#pingTimer);
     this.#pingTimer = null;
     this.#rejectWho("world connection closed");
+    for (const waiters of this.#nameWaiters.values()) for (const waiter of waiters) waiter(null);
+    this.#nameWaiters.clear();
+    this.#pendingLogout?.("timed-out");
     if (!this.#closed) {
       this.#closed = true;
       this.#handlers.onClose?.();
@@ -401,6 +414,16 @@ export class WorldClient {
         case WorldOpcode.SMSG_DESTROY_OBJECT:
           this.#handleDestroyObject(body);
           break;
+        case WorldOpcode.SMSG_MONSTER_MOVE:
+          this.#handleMovement(body, parseMonsterMove);
+          break;
+        case WorldOpcode.SMSG_LOGOUT_RESPONSE:
+          this.#handleLogoutResponse(body);
+          break;
+        case WorldOpcode.SMSG_LOGOUT_COMPLETE:
+          this.#ready = false;
+          this.#pendingLogout?.("logged-out");
+          break;
         case WorldOpcode.SMSG_CREATURE_QUERY_RESPONSE:
           this.#handleCreatureQueryResponse(body);
           break;
@@ -433,7 +456,8 @@ export class WorldClient {
           this.#handlers.onWarden?.();
           break;
         default:
-          this.#logger.debug(`world: ignoring opcode 0x${opcode.toString(16)}`);
+          if (PLAYER_MOVEMENT_OPCODES.has(opcode)) this.#handleMovement(body, parsePlayerMovement);
+          else this.#logger.debug(`world: ignoring opcode 0x${opcode.toString(16)}`);
       }
     } catch (error) {
       this.#handlers.onError?.(error instanceof Error ? error : new Error(String(error)));
@@ -635,6 +659,70 @@ export class WorldClient {
     this.#send(WorldOpcode.CMSG_NAME_QUERY, buildNameQuery(guid));
   }
 
+  /**
+   * A player's name, asking the server when it is not known yet — for a caller that needs the answer
+   * rather than a later look in `playerName`. Null when no answer comes within `timeoutMs`, or the
+   * character is not in world to ask.
+   */
+  resolveName(guid: bigint, timeoutMs: number): Promise<string | null> {
+    const known = this.#nameCache.get(guid);
+    if (known !== undefined) return Promise.resolve(known);
+    if (!this.#ready) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const waiter = (name: string | null): void => {
+        clearTimeout(timer);
+        resolve(name);
+      };
+      const timer = setTimeout(() => {
+        const left = (this.#nameWaiters.get(guid) ?? []).filter((other) => other !== waiter);
+        if (left.length > 0) this.#nameWaiters.set(guid, left);
+        else this.#nameWaiters.delete(guid);
+        resolve(null);
+      }, timeoutMs);
+      timer.unref?.();
+      this.#nameWaiters.set(guid, [...(this.#nameWaiters.get(guid) ?? []), waiter]);
+      this.queryName(guid);
+    });
+  }
+
+  /**
+   * Log the character out properly. In a rest area — a capital — that is instant; a disconnect
+   * alone would leave it standing in the world for a while. Settles "logged-out" once the server
+   * confirms, "refused" when it will not (in combat, say), "timed-out" when it does not answer in
+   * `timeoutMs`, and "not-in-world" when there is nobody to log out. The connection is left open
+   * for the caller to close.
+   */
+  logout(timeoutMs: number): Promise<LogoutOutcome> {
+    if (!this.#ready || this.#closed) return Promise.resolve("not-in-world");
+    this.#pendingLogout?.("timed-out");
+    return new Promise((resolve) => {
+      const settle = (outcome: LogoutOutcome): void => {
+        clearTimeout(timer);
+        if (this.#pendingLogout === settle) this.#pendingLogout = null;
+        resolve(outcome);
+      };
+      const timer = setTimeout(() => settle("timed-out"), timeoutMs);
+      timer.unref?.();
+      this.#pendingLogout = settle;
+      this.#send(WorldOpcode.CMSG_LOGOUT_REQUEST, Buffer.alloc(0));
+    });
+  }
+
+  #handleLogoutResponse(body: Buffer): void {
+    // Accepted is followed by SMSG_LOGOUT_COMPLETE; only a refusal settles the logout here.
+    const reason = body.length >= 4 ? body.readUInt32LE(0) : 0;
+    if (reason !== 0) this.#pendingLogout?.("refused");
+  }
+
+  #handleMovement(body: Buffer, parse: (body: Buffer) => UnitPosition | null): void {
+    try {
+      const move = parse(body);
+      if (move) this.#handlers.onMovement?.(move);
+    } catch (error) {
+      this.#logger.debug(`world: could not read movement: ${(error as Error).message}`);
+    }
+  }
+
   /** Ask what an NPC entry is called. `guid` is any live instance of it. */
   queryCreature(entry: number, guid: bigint): void {
     if (!this.#ready) return;
@@ -655,6 +743,9 @@ export class WorldClient {
       const { guid, name } = parseNameQueryResponse(body);
       this.#nameCache.set(guid, name);
       this.#pendingNames.delete(guid);
+      const waiters = this.#nameWaiters.get(guid);
+      this.#nameWaiters.delete(guid);
+      for (const waiter of waiters ?? []) waiter(name);
       const queued = this.#pendingWhispers.get(guid);
       if (!queued) return;
       this.#pendingWhispers.delete(guid);

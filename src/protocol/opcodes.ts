@@ -27,6 +27,11 @@ export enum WorldOpcode {
   SMSG_CHAR_ENUM = 0x3b,
   CMSG_PLAYER_LOGIN = 0x3d,
   CMSG_LOGOUT_REQUEST = 0x4b,
+  /** The answer to a logout request: u32 reason (0 = accepted), u8 instant. A refusal — in combat,
+   *  say — has a non-zero reason. */
+  SMSG_LOGOUT_RESPONSE = 0x4c,
+  /** The character has left the world. */
+  SMSG_LOGOUT_COMPLETE = 0x4d,
   CMSG_NAME_QUERY = 0x50,
   SMSG_NAME_QUERY_RESPONSE = 0x51,
   /** Ask what a CREATURE entry is called (u32 entry + u64 guid). The client's own way of
@@ -63,6 +68,8 @@ export enum WorldOpcode {
   SMSG_UPDATE_OBJECT = 0xa9,
   /** An object left the world — a despawn, a dismissed pet (body: u64 guid). */
   SMSG_DESTROY_OBJECT = 0xaa,
+  /** A creature near us set off on a path — where it is now, and where it is going (movement.ts). */
+  SMSG_MONSTER_MOVE = 0xdd,
   /** Same, zlib-compressed (u32 uncompressed length + deflate); common on login. */
   SMSG_COMPRESSED_UPDATE_OBJECT = 0x1f6,
   // The combat log — every hit a nearby unit takes. Stock 1.12 values; layouts in combat-log.ts.

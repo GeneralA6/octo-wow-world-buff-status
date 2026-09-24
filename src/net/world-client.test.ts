@@ -6,6 +6,7 @@ import { AUTH_OK, ChatType, GuildEvent, LANG_ADDON, WorldOpcode } from "../proto
 import type { WhoResult } from "../protocol/who.js";
 import type { IncomingChat, MonsterChat } from "../protocol/chat.js";
 import type { CombatEvent } from "../protocol/combat-log.js";
+import type { UnitPosition } from "../protocol/movement.js";
 import { PacketReader, PacketWriter } from "./byte-buffer.js";
 import type { NodeSocketLike } from "./socket.js";
 import { WorldClient, type WorldClientHandlers } from "./world-client.js";
@@ -44,6 +45,13 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
   constructor(characters: { guid: bigint; name: string }[]) {
     super();
     this.#characters = characters;
+  }
+
+  #namesSilenced = false;
+
+  /** Stop answering name queries, as a server that never replies would. */
+  silenceNameQueries(): void {
+    this.#namesSilenced = true;
   }
 
   /** Teach the mock a guid→name mapping for name-query replies. */
@@ -194,6 +202,7 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
       case WorldOpcode.CMSG_NAME_QUERY: {
         const guid = new PacketReader(body).u64LE();
         this.nameQueries.push(guid);
+        if (this.#namesSilenced) break;
         const name = this.#names.get(guid) ?? "Unknown";
         this.#sendServer(
           WorldOpcode.SMSG_NAME_QUERY_RESPONSE,
@@ -756,6 +765,59 @@ describe("WorldClient (against a scripted mock server)", () => {
       expect(whispers).toEqual(["status"]);
       expect(chat).toEqual([]);
 
+      client.close();
+    });
+
+    it("routes a player's movement and a creature's path to onMovement", async () => {
+      const moves: UnitPosition[] = [];
+      const { socket, client } = await connect({ onMovement: (move) => moves.push(move) });
+
+      const heartbeat = new PacketWriter().packedGuid(0x555n).u32LE(1).u32LE(99).f32LE(10).f32LE(20).f32LE(30).f32LE(0).toBuffer();
+      socket.pushPacket(0xee, heartbeat); // MSG_MOVE_HEARTBEAT
+      const path = new PacketWriter().packedGuid(0xf130_0000_5900_0abcn).f32LE(11).f32LE(21).f32LE(31).u32LE(1).u8(0).toBuffer();
+      socket.pushPacket(WorldOpcode.SMSG_MONSTER_MOVE, path);
+      await settle();
+      expect(moves.map((move) => move.guid)).toEqual([0x555n, 0xf130_0000_5900_0abcn]);
+      expect(moves[1]?.pos.z).toBeCloseTo(31, 1);
+
+      client.close();
+    });
+
+    it("logs out properly, and says when the server refuses", async () => {
+      const { socket, client } = await connect({});
+      const accepted = client.logout(1_000);
+      socket.pushPacket(WorldOpcode.SMSG_LOGOUT_RESPONSE, new PacketWriter().u32LE(0).u8(1).toBuffer());
+      socket.pushPacket(WorldOpcode.SMSG_LOGOUT_COMPLETE, Buffer.alloc(0));
+      expect(await withTimeout(accepted)).toBe("logged-out");
+      expect(await client.logout(1_000)).toBe("not-in-world"); // already out
+      client.close();
+
+      const second = await connect({});
+      const refused = second.client.logout(1_000);
+      second.socket.pushPacket(WorldOpcode.SMSG_LOGOUT_RESPONSE, new PacketWriter().u32LE(1).u8(0).toBuffer()); // in combat
+      expect(await withTimeout(refused)).toBe("refused");
+      second.client.close();
+    });
+
+    it("gives up on a logout the server never answers", async () => {
+      const { client } = await connect({});
+      expect(await withTimeout(client.logout(20))).toBe("timed-out");
+      client.close();
+    });
+
+    it("resolves a player's name for a caller who waits on it", async () => {
+      const { socket, client } = await connect({});
+      socket.setName(0x555n, "Ganker");
+      expect(await withTimeout(client.resolveName(0x555n, 1_000))).toBe("Ganker");
+      expect(await client.resolveName(0x555n, 1_000)).toBe("Ganker"); // known: not asked again
+      expect(socket.nameQueries).toEqual([0x555n]);
+      client.close();
+    });
+
+    it("answers null when a name does not come back in time", async () => {
+      const { socket, client } = await connect({});
+      socket.silenceNameQueries();
+      expect(await withTimeout(client.resolveName(0x777n, 20))).toBeNull();
       client.close();
     });
 
