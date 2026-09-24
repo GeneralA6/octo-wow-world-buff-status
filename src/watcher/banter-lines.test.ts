@@ -4,8 +4,8 @@ import { conversationsFor } from "./banter-lines.js";
 const FACTIONS = ["horde", "alliance"] as const;
 
 describe("conversationsFor", () => {
-  it("gives each capital forty-odd conversations — its side's and everyone's", () => {
-    for (const faction of FACTIONS) expect(conversationsFor(faction).length).toBeGreaterThanOrEqual(40);
+  it("gives each capital sixty-odd conversations — its side's and everyone's", () => {
+    for (const faction of FACTIONS) expect(conversationsFor(faction).length).toBeGreaterThanOrEqual(60);
   });
 
   it("keeps each side's own stories to its own capital", () => {
@@ -28,6 +28,14 @@ describe("conversationsFor", () => {
         expect(conversation.lines.length).toBeGreaterThanOrEqual(2);
         expect(new Set(conversation.lines.map(([part]) => part))).toEqual(new Set(["a", "b"]));
       }
+    }
+  });
+
+  it("mixes quick exchanges with longer tales of six lines", () => {
+    for (const faction of FACTIONS) {
+      const lengths = conversationsFor(faction).map((c) => c.lines.length);
+      expect(lengths.filter((length) => length <= 3).length).toBeGreaterThanOrEqual(10);
+      expect(lengths.filter((length) => length >= 6).length).toBeGreaterThanOrEqual(6);
     }
   });
 
