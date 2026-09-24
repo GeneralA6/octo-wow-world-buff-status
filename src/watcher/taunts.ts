@@ -6,26 +6,27 @@ import type { Threat } from "./threat-watch.js";
  * never abusive, one short /say. Named when the bot already knows who it is; the line reads right
  * without a name too.
  *
- * Plain ASCII only: the game's chat font has no em dash or curly quotes.
+ * Plain ASCII only: the game's chat font has no em dash or curly quotes. And never how long it will
+ * be gone: that would only tell the warlock when to come back.
  */
 
 type Line = (name: string | null) => string;
 
 const LINES: Readonly<Record<Threat["kind"], readonly Line[]>> = {
   "inferno-cast": [
-    (name) => `Nice try${name ? `, ${name}` : ""}. Your Infernal can have the spot - back in 5.`,
+    (name) => `Nice try${name ? `, ${name}` : ""}. Your Infernal can have the spot.`,
     (name) => `Saw that Inferno coming a mile off${name ? `, ${name}` : ""}. The Wall of Shame says hi.`,
     (name) => `Missed me${name ? `, ${name}` : ""}! Enjoy guarding an empty spot.`,
     (name) => `${name ? `${name}, an` : "An"} Inferno? Again? I'll be back when you run out of shards.`,
   ],
   infernal: [
-    (name) => `Cute pet${name ? `, ${name}` : ""}. Not today - brb.`,
-    () => `An Infernal? How original. See you in 5.`,
+    (name) => `Cute pet${name ? `, ${name}` : ""}. Not today.`,
+    () => `An Infernal? How original. See you around.`,
     (name) => `${name ? `${name}, your` : "Your"} Infernal can stand here all it likes. I'll wait.`,
   ],
   "shunned-player": [
     (name) => `Oh look, ${name ?? "someone"} from the Wall of Shame. I'll come back when you're gone.`,
-    (name) => `${name ?? "You"} again? I'll wait. brb`,
+    (name) => `${name ?? "You"} again? I'll wait.`,
     (name) => `Not falling for it twice${name ? `, ${name}` : ""}. See you never.`,
   ],
 };
