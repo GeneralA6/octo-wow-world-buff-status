@@ -48,6 +48,7 @@ import { ListenerDeathWatch } from "./watcher/listener-death-watch.js";
 import { formatDeathReport, type DeathAccount } from "./watcher/death-report.js";
 import { DEATH_ALERT_TITLE, formatDeathAlert } from "./watcher/death-alert.js";
 import { ShameList } from "./watcher/shame-list.js";
+import { ShameProfiler } from "./watcher/shame-profiler.js";
 import { InMemoryShameListStore, MongoShameListStore, type ShameListStore } from "./watcher/shame-list-store.js";
 import { WallOfShame } from "./watcher/wall-of-shame.js";
 import {
@@ -170,6 +171,9 @@ const LISTENER_SILENCE_GRACE_MS = 15 * 60_000;
 const LISTENER_DEATH_WINDOW_MS = 30_000;
 /** Wait this long after a death before reporting it, so attackers' names can resolve. */
 const LISTENER_DEATH_REPORT_DELAY_MS = 2_000;
+/** How often players on the wall of shame whose race and class are still unknown are looked up again —
+ *  a killer who logged off straight after the kill is found the next time they are online. */
+const SHAME_PROFILE_SWEEP_MS = 10 * 60_000;
 /** Room for a death alert in one Discord post, after the bold title line `notifyAdmin` puts on top. */
 const DEATH_ALERT_MAX_LENGTH = DISCORD_MESSAGE_LIMIT - `**${DEATH_ALERT_TITLE}**\n`.length;
 const HEAD_INCOMING_DEDUP_MS = 15 * 60_000;
@@ -1256,6 +1260,7 @@ async function main(): Promise<void> {
   let statusRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let darkmoonWidget: DarkmoonWidget | null = null;
   let darkmoonRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  let shameSweepTimer: ReturnType<typeof setInterval> | null = null;
   let wallOfShame: WallOfShame | null = null;
 
   const watchOptions: RaidTrackerOptions = {
@@ -1707,6 +1712,7 @@ async function main(): Promise<void> {
     logger.info(`shutting down (${signal})`);
     if (statusRefreshTimer) clearInterval(statusRefreshTimer);
     if (darkmoonRefreshTimer) clearInterval(darkmoonRefreshTimer);
+    if (shameSweepTimer) clearInterval(shameSweepTimer);
     // Exit even if a store.close() hangs, so we log out fast and don't overlap a redeploy.
     const hardExit = setTimeout(() => process.exit(0), 3_000);
     hardExit.unref?.();
@@ -1918,10 +1924,21 @@ async function main(): Promise<void> {
       logger: prefixed(logger, "wall of shame"),
     });
     await wallOfShame.load();
-    void wallOfShame.show(shameList.names);
+    void wallOfShame.show(shameList.players);
   } else if (wallChannelId && !dm.isConfigured) {
     logger.warn("DISCORD_WALL_OF_SHAME_CHANNEL_ID is set but no DISCORD_BOT_TOKEN — the wall of shame is off");
   }
+  // Who each listed player is — faction, race and class — from a /who on a listener's socket, so the
+  // raid poll is never delayed. A killer who logged off before the first look is looked for on every
+  // sweep until they are seen online.
+  const shameProfiler = new ShameProfiler({
+    list: shameList,
+    who: () => listenerWho.any(),
+    onDescribed: () => void wallOfShame?.show(shameList.players),
+    logger,
+  });
+  shameSweepTimer = setInterval(() => void shameProfiler.sweep(), SHAME_PROFILE_SWEEP_MS);
+  shameSweepTimer.unref?.();
   /** Put the player behind a listener's death on the shame list, and the wall. The report waited for
    *  names to resolve; one that still has none cannot be listed, so it is only logged. */
   const shameCulprit = async (character: string, death: DeathAccount): Promise<void> => {
@@ -1938,7 +1955,9 @@ async function main(): Promise<void> {
     });
     if (!added) return;
     logger.warn(`shame list: ${culprit.name} killed ${character} and is now on the wall of shame`);
-    void wallOfShame?.show(shameList.names);
+    void wallOfShame?.show(shameList.players);
+    // They are almost surely still online seconds after the kill — look them up now.
+    void shameProfiler.profile(culprit.name);
     // No more buff alerts either: the subscription goes, and the router refuses a new one.
     const unsubscribed = await store.remove(culprit.name).catch((error: unknown) => {
       logger.error(`shame list: could not unsubscribe ${culprit.name} (${describeError(error)})`);

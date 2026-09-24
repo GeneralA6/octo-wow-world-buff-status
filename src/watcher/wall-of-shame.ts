@@ -5,11 +5,14 @@ import {
   type CreateResult,
   type DmResult,
 } from "../notify/discord-dm.js";
+import { describeCharacter } from "./character.js";
+import type { ShamedPlayer } from "./shame-list-store.js";
 import type { WallOfShameStore } from "./wall-of-shame-store.js";
 
 /**
- * The wall of shame: ONE pinned message showing the shame list (see shame-list.ts) — every player
- * who has killed a bot listener, a "- Name" line each, in the order they first did it.
+ * The wall of shame: ONE pinned message showing the shame list (see shame-list.ts) — a short intro
+ * saying why, then every player who has killed a bot listener, in the order they first did it, with
+ * their faction, race and class once a /who has seen them.
  *
  * Edited in place, never reposted, for the reason the other boards are: the message id is kept, so
  * a redeploy edits the same message instead of orphaning it and pinning a second. A message someone
@@ -32,21 +35,36 @@ export interface WallOfShameDeps {
   readonly logger: Logger;
 }
 
-/** The wall's text, one "- Name" line per player, holding as many as fit in `maxLength`. */
+/** What the wall says before its list: who these players are, and what it cost. */
+export const WALL_INTRO = [
+  "**🪦 Wall of Shame**",
+  "These players killed one of our buff listeners — the characters parked in Stormwind and Orgrimmar " +
+    "that hear the Rallying Cry and tell everyone when it drops. Each kill left that city without buff " +
+    "alerts until the listener was revived.",
+  "Killing one, by your own hand or your pet's or summon's, puts you on this list and bans you from the " +
+    "tracker: no more alerts, and no more answers.",
+  "",
+].join("\n");
+
+/** A player's line: "- Name — Horde Orc Warlock", or just the name until a /who has seen them. */
+export function wallLine(player: ShamedPlayer): string {
+  return player.details ? `- ${player.name} — ${describeCharacter(player.details)}` : `- ${player.name}`;
+}
+
+/** The wall's text — the intro, then a line per player — holding as many players as fit in `maxLength`. */
 export function renderWall(
-  names: readonly string[],
+  players: readonly ShamedPlayer[],
   maxLength: number = DISCORD_MESSAGE_LIMIT,
 ): { readonly content: string; readonly shown: number } {
-  const lines: string[] = [];
-  let length = 0;
-  for (const name of names) {
-    const line = `- ${name}`;
-    const added = (lines.length > 0 ? 1 : 0) + line.length;
-    if (length + added > maxLength) break;
+  const lines = [WALL_INTRO];
+  let length = WALL_INTRO.length;
+  for (const player of players) {
+    const line = wallLine(player);
+    if (length + 1 + line.length > maxLength) break;
     lines.push(line);
-    length += added;
+    length += 1 + line.length;
   }
-  return { content: lines.join("\n"), shown: lines.length };
+  return { content: lines.join("\n"), shown: lines.length - 1 };
 }
 
 function describe(result: DmResult | CreateResult): string {
@@ -72,22 +90,22 @@ export class WallOfShame {
   }
 
   /**
-   * Show these players on the wall — after one is added, and on boot, so a message deleted while
-   * the bot was down comes back.
+   * Show these players on the wall — after one is added or described, and on boot, so a message
+   * deleted while the bot was down comes back.
    */
-  show(names: readonly string[]): Promise<void> {
-    this.#queue = this.#queue.then(() => this.#render(names)).catch((error) =>
+  show(players: readonly ShamedPlayer[]): Promise<void> {
+    this.#queue = this.#queue.then(() => this.#render(players)).catch((error) =>
       this.#deps.logger.error(`wall of shame threw: ${error instanceof Error ? error.message : String(error)}`),
     );
     return this.#queue;
   }
 
-  async #render(names: readonly string[]): Promise<void> {
-    // Nobody to name yet, and Discord refuses an empty message: the wall goes up with its first name.
-    if (names.length === 0) return;
-    const { content, shown } = renderWall(names);
-    if (shown < names.length) {
-      this.#deps.logger.warn(`wall of shame: ${names.length - shown} players do not fit in one message`);
+  async #render(players: readonly ShamedPlayer[]): Promise<void> {
+    // Nobody to name yet: the wall goes up with its first player.
+    if (players.length === 0) return;
+    const { content, shown } = renderWall(players);
+    if (shown < players.length) {
+      this.#deps.logger.warn(`wall of shame: ${players.length - shown} players do not fit in one message`);
     }
     const message: ChannelMessage = { content };
 

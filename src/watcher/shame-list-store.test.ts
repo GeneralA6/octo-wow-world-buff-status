@@ -1,22 +1,47 @@
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryShameListStore, MongoShameListStore, type ShameListDb } from "./shame-list-store.js";
+import {
+  InMemoryShameListStore,
+  MongoShameListStore,
+  playersOf,
+  type ShamedPlayer,
+  type ShameListDb,
+} from "./shame-list-store.js";
+
+const ganker: ShamedPlayer = { name: "Ganker", details: { raceId: 2, classId: 9 } };
 
 describe("InMemoryShameListStore", () => {
   it("starts empty and returns what was saved", async () => {
     const store = new InMemoryShameListStore();
     expect(await store.load()).toEqual([]);
-    await store.save(["Ganker"]);
-    expect(await store.load()).toEqual(["Ganker"]);
+    await store.save([ganker]);
+    expect(await store.load()).toEqual([ganker]);
+  });
+});
+
+describe("playersOf", () => {
+  it("reads the players a document holds", () => {
+    expect(playersOf({ players: [ganker] })).toEqual([ganker]);
+  });
+
+  it("reads the names-only list the first release wrote, with no details yet", () => {
+    expect(playersOf({ names: ["Ganker", "Warlockz"] })).toEqual([
+      { name: "Ganker", details: null },
+      { name: "Warlockz", details: null },
+    ]);
+  });
+
+  it("is empty with no document", () => {
+    expect(playersOf(null)).toEqual([]);
   });
 });
 
 describe("MongoShameListStore", () => {
   const fakeDb = () => {
-    let held: readonly string[] = [];
+    let held: readonly ShamedPlayer[] = [];
     const db = {
       get: vi.fn(async () => held),
-      set: vi.fn(async (names: readonly string[]) => {
-        held = names;
+      set: vi.fn(async (players: readonly ShamedPlayer[]) => {
+        held = players;
       }),
       close: vi.fn(async () => undefined),
     } satisfies ShameListDb;
@@ -27,9 +52,9 @@ describe("MongoShameListStore", () => {
     const db = fakeDb();
     const store = new MongoShameListStore(db);
     expect(await store.load()).toEqual([]);
-    await store.save(["Ganker", "Warlockz"]);
-    expect(db.set).toHaveBeenCalledWith(["Ganker", "Warlockz"]);
-    expect(await store.load()).toEqual(["Ganker", "Warlockz"]);
+    await store.save([ganker]);
+    expect(db.set).toHaveBeenCalledWith([ganker]);
+    expect(await store.load()).toEqual([ganker]);
   });
 
   it("releases the client on close", async () => {
