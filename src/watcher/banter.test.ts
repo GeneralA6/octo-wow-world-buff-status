@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { conversationsFor } from "./banter-lines.js";
-import { Banter, pauseBefore } from "./banter.js";
+import { Banter, LINE_GAP_MS } from "./banter.js";
 import { ListenerRoster, type ListenerVoice } from "./listener-roster.js";
 
 type SayMock = ReturnType<typeof vi.fn<(line: string) => void>>;
@@ -71,12 +71,13 @@ describe("Banter", () => {
     for (const line of said) expect(alliance.has(line)).toBe(true);
   });
 
-  it("paces each answer by the line it follows and the line it types", async () => {
+  it("waits five seconds between one line and the next, and none before the first", async () => {
     const { roster } = city();
     const waits: number[] = [];
     await new Banter(roster, { pick: first, sleep: async (ms) => void waits.push(ms) }).converse("horde");
-    const lines = conversationsFor("horde")[0]?.lines.map(([, line]) => line) ?? [];
-    expect(waits).toEqual(lines.slice(1).map((line, i) => pauseBefore(lines[i] ?? "", line)));
+    const lineCount = conversationsFor("horde")[0]?.lines.length ?? 0;
+    expect(LINE_GAP_MS).toBe(5_000);
+    expect(waits).toEqual(Array.from({ length: lineCount - 1 }, () => LINE_GAP_MS));
   });
 
   it("stops when a speaker dies mid-conversation", async () => {
@@ -141,17 +142,5 @@ describe("Banter", () => {
     // Both chose their first conversation: Orgrimmar's having held one leaves Stormwind's choice alone.
     expect(sw.say.mock.calls[0]?.[0]).toBe(conversationsFor("alliance")[0]?.lines[0]?.[1]);
     expect(og.say.mock.calls[0]?.[0]).toBe(conversationsFor("horde")[0]?.lines[0]?.[1]);
-  });
-});
-
-describe("pauseBefore", () => {
-  it("takes the time to read the line before and type this one", () => {
-    // A joke's punchline: read 34 characters, type 35.
-    expect(pauseBefore("Why don't the Forsaken play cards?", "Their poker face keeps falling off.")).toBe(1_000 + 40 * 34 + 200 * 35);
-  });
-
-  it("gives even a one-word answer a moment, and a long line no more than twenty seconds", () => {
-    expect(pauseBefore("Go on.", "No.")).toBe(5_000);
-    expect(pauseBefore("x".repeat(100), "x".repeat(100))).toBe(20_000);
   });
 });
