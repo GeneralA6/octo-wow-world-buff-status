@@ -63,6 +63,7 @@ import { NearbyPlayers, RESURRECTION_BY_CLASS } from "./watcher/nearby-players.j
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
 import { WARCHIEF_DROPS_COLLECTION, WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
 import { openSpireWatch, type OpenedSpireWatch } from "./warchief/open-spire-watch.js";
+import { rotatingWho } from "./watcher/who-rotation.js";
 import type { SpireWatch } from "./warchief/spire-watch.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
 import { GuidProbe } from "./watcher/guid-probe.js";
@@ -533,10 +534,11 @@ async function runConnection(
     });
     // Blackrock Spire, for the Warchief's Blessing shadow forecast. Read on the lair poll's turn (see
     // readSpire) rather than a timer of its own, so its /who never lands on top of the lair's — the
-    // server throttles /who per IP, and the lair is the reading that matters.
+    // lair is the reading that matters. And asked through the listeners' sockets in turn, never this
+    // one: the realm drops a character's /who sent this soon after its last (see who-rotation.ts).
     const spireSource: RosterSource | null = spireWatch
       ? new WhoRosterSource({
-          who: queuedWho,
+          who: rotatingWho(() => listenerWho.all()),
           extraWho: () => listenerWho.all(),
           areaId: config.spireAreaId,
           areaName: "Blackrock Spire",
