@@ -117,6 +117,15 @@ export class ThreatWatch {
     this.#watched.delete(guid);
   }
 
+  /**
+   * Report again — the last threat could not be left behind (a refused logout, mid-fight). Whatever
+   * is still within reach is judged at once, from where it was last seen; anything later, as it comes.
+   */
+  rearm(): void {
+    this.#reported = false;
+    for (const position of this.#watched.values()) this.#judge(position);
+  }
+
   #isThreatening(guid: bigint): boolean {
     if (isInfernal(guid)) return true;
     return unitRef(guid).kind === "player" && this.#fleeShunnedPlayers && this.#deps.isShunned(guid);

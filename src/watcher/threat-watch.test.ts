@@ -150,4 +150,24 @@ describe("ThreatWatch", () => {
     watch.self(at(0));
     expect(threats).toEqual([]);
   });
+
+  it("once rearmed, reports at once an Infernal still within reach, from where it was last seen", () => {
+    const { watch, threats } = setup([]);
+    watch.self(at(0));
+    watch.moved({ guid: INFERNAL, pos: at(5), destination: null });
+    expect(threats).toHaveLength(1);
+    watch.rearm();
+    expect(threats).toHaveLength(2);
+    expect(threats[1]).toMatchObject({ kind: "infernal", guid: INFERNAL, distance: 5 });
+  });
+
+  it("once rearmed with nothing within reach, waits for the next threat to come", () => {
+    const { watch, threats } = setup([]);
+    watch.self(at(0));
+    watch.struckBy(INFERNAL);
+    watch.rearm(); // the Infernal that struck was never placed: nothing to judge yet
+    expect(threats).toHaveLength(1);
+    watch.struckBy(INFERNAL);
+    expect(threats).toHaveLength(2);
+  });
 });
