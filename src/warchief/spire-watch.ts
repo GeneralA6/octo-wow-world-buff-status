@@ -59,6 +59,8 @@ export interface SpireWatchDeps {
   readonly fallbackWithinMs?: number;
   /** A gap between readings past which the watch was blind — the tracker's own blackout. */
   readonly readingGapMs?: number;
+  /** How far back `warmUp` replays the kept readings — as long as a run can last. */
+  readonly warmUpMs?: number;
 }
 
 /** What the score is worked out from: the finished runs, the blessings, and when the Spire was read. */
@@ -124,6 +126,7 @@ export class SpireWatch {
   readonly #attribution: AttributionOptions;
   readonly #fallbackWithinMs: number;
   readonly #readingGapMs: number;
+  readonly #warmUpMs: number;
   #lastScoreLogAt: number | null = null;
 
   constructor(deps: SpireWatchDeps) {
@@ -136,6 +139,28 @@ export class SpireWatch {
     this.#attribution = deps.attribution ?? DEFAULT_ATTRIBUTION_OPTIONS;
     this.#fallbackWithinMs = deps.fallbackWithinMs ?? DEFAULT_FALLBACK_WITHIN_MS;
     this.#readingGapMs = deps.readingGapMs ?? DEFAULT_SPIRE_RUN_OPTIONS.blackoutMs;
+    this.#warmUpMs = deps.warmUpMs ?? DEFAULT_SPIRE_RUN_OPTIONS.maxRunMs;
+  }
+
+  /**
+   * Pick up where the last process left off: replay the kept readings of the last few hours through
+   * the tracker, silently — what they showed was posted and kept at the time. Without it a restart
+   * forgets every run under way, and one still inside is found again as if it had just been seen,
+   * its real start lost. Call once, before the first reading. Returns how many readings it replayed.
+   */
+  async warmUp(now: number): Promise<number> {
+    const readings = await this.#snapshots.between(new Date(now - this.#warmUpMs), new Date(now));
+    for (const reading of readings) {
+      this.#tracker.observe({ present: reading.players, complete: reading.complete, at: reading.ts.getTime() });
+    }
+    const underWay = this.#tracker.activeRuns();
+    this.#logger.info(
+      `spire: picked up from ${readings.length} kept readings` +
+        (underWay.length > 0
+          ? ` — ${underWay.map((run) => `a run in since ${clock(run.startedAt)}`).join(", ")} still under way`
+          : ""),
+    );
+    return readings.length;
   }
 
   /** One Spire reading from the poll. */

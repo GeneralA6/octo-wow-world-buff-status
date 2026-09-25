@@ -70,6 +70,9 @@ export async function openSpireWatch(wiring: SpireWatchWiring): Promise<OpenedSp
     notify: wiring.notify,
     logger,
   });
+  await watch
+    .warmUp(Date.now())
+    .catch((error) => logger.error(`spire: could not pick up from the kept readings (${describeError(error)})`));
   return {
     watch,
     close: async () => {

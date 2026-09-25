@@ -13,6 +13,7 @@ describe("openSpireWatch", () => {
   it("keeps everything in memory without MongoDB, and says so", async () => {
     const log = logger();
     await openSpireWatch({ database: null, blessings: async () => [], notify: vi.fn(async () => {}), logger: log });
+    expect(log.info).toHaveBeenCalledWith("spire: picked up from 0 kept readings");
     expect(log.info).toHaveBeenCalledWith("spire readings: no MongoDB — keeping it in memory, lost on restart");
     expect(log.info).toHaveBeenCalledWith("spire runs: no MongoDB — keeping it in memory, lost on restart");
   });

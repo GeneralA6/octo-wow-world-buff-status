@@ -167,6 +167,30 @@ describe("SpireWatch", () => {
     expect(scoreLines).toHaveLength(2); // minute 0 and minute 60
   });
 
+  it("picks up a run under way from the kept readings after a restart, with its real start", async () => {
+    const first = setup();
+    await first.play(raid("r", 2, 45), 0, 20);
+    // Restart: a new watch over the same stores.
+    const notices: ShadowNotice[] = [];
+    const logger = { info: vi.fn(), debug: vi.fn(), error: vi.fn() };
+    const watch = new SpireWatch({
+      tracker: new SpireRunTracker(),
+      snapshots: first.snapshots,
+      runs: first.runs,
+      blessings: async () => [],
+      notify: async (notice) => {
+        notices.push(notice);
+      },
+      logger,
+    });
+    expect(await watch.warmUp(T0 + 25 * MIN)).toBe(21);
+    expect(logger.info).toHaveBeenCalledWith("spire: picked up from 21 kept readings — a run in since 14:15Z still under way");
+    for (let minute = 25; minute <= 55; minute += 1) await watch.observe(view(raid("r", 2, 45), minute));
+    // Not announced again as new, and it leaves dated from its real start: 43m in, not 20m.
+    expect(titles(notices)).toEqual(["🏁 UBRS run left Blackrock Spire (shadow)"]);
+    expect(notices[0]?.body).toContain("left after 43m");
+  });
+
   it("keeps going when the channel refuses a notice", async () => {
     const { play, notify, logger } = setup();
     notify.mockRejectedValue(new Error("discord 500"));
