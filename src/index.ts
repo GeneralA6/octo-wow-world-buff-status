@@ -51,7 +51,8 @@ import { formatDeathReport, type DeathAccount } from "./watcher/death-report.js"
 import { DEATH_ALERT_TITLE, formatDeathAlert } from "./watcher/death-alert.js";
 import { ShameList } from "./watcher/shame-list.js";
 import { ShameProfiler } from "./watcher/shame-profiler.js";
-import { ThreatWatch, type Threat } from "./watcher/threat-watch.js";
+import { ThreatWatch, describeThreat, type Threat } from "./watcher/threat-watch.js";
+import { StandDown } from "./watcher/stand-down.js";
 import { tauntFor } from "./watcher/taunts.js";
 import { thanksFor } from "./watcher/thanks.js";
 import { LifeSigns } from "./watcher/life-signs.js";
@@ -891,8 +892,9 @@ interface ListenerHooks {
   readonly onListenerDead: (character: string) => Promise<void>;
   /** Raise the alarm the moment a parked listener is killed, naming who did it. */
   readonly onListenerKilled: (character: string, death: DeathAccount) => Promise<void>;
-  /** A threat came within reach, and the listener is logging out for a while. */
-  readonly onListenerThreatened: (character: string, threat: Threat) => void;
+  /** A threat came within reach: the listener logged out for a while ("left"), or — already in a
+   *  fight, its logout refused — stays connected ("cornered"). */
+  readonly onListenerThreatened: (character: string, threat: Threat, stood: "left" | "cornered") => void;
   /** Whether a player is on the wall of shame, by GUID — one who is counts as a threat nearby. */
   readonly isShunned: (guid: bigint) => boolean;
   /** A player's name when the bot already knows it — from the wall of shame — for the parting /say. */
@@ -937,6 +939,8 @@ async function acceptResurrection(world: WorldClient, resurrector: bigint): Prom
 
 /** How long a threatened listener waits for the server to confirm its logout before just leaving. */
 const LISTENER_LOGOUT_TIMEOUT_MS = 3_000;
+/** How soon a listener that could not log out, mid-fight, tries again — the fight may be over. */
+const LISTENER_LOGOUT_RETRY_MS = 10_000;
 /** How long a character waits on a name query for a GUID another one saw. */
 const PLAYER_NAME_TIMEOUT_MS = 5_000;
 /** How long a listener waits for the server's answer when friending a player to learn their GUID. */
@@ -1011,7 +1015,12 @@ async function runListener(
     let here: WorldPoint | null = null;
     const players = new NearbyPlayers();
     // Alive or dead, from its own health — so its partner knows when to ask passers-by for a rez.
-    const lifeSigns = new LifeSigns((alive) => hooks.onLifeChanged(listener.characterName, listener.faction, alive));
+    // Not known until the first health reading, which counts as alive.
+    let alive: boolean | null = null;
+    const lifeSigns = new LifeSigns((now) => {
+      alive = now;
+      hooks.onLifeChanged(listener.characterName, listener.faction, now);
+    });
     // Learns the GUID of a player listed by name alone, by briefly friending them on this account.
     const guidProbe = new GuidProbe(
       { addFriend: (name) => world.addFriend(name), delFriend: (guid) => world.delFriend(guid) },
@@ -1037,35 +1046,52 @@ async function runListener(
           );
         },
         onThreat: (threat) => {
-          standDownMs = config.listenerStandDownMs;
-          const what = {
-            infernal: "an Infernal came",
-            "inferno-cast": "an Inferno is being cast to land",
-            "shunned-player": "a player on the wall of shame came",
-          }[threat.kind];
-          logger.warn(
-            `${listener.characterName}: ${what} within ${Math.round(threat.distance)} yd — logging out for ` +
-              humanSpan(standDownMs),
-          );
-          hooks.onListenerThreatened(listener.characterName, threat);
           // A parting shot at whoever sent it, heard by everyone close by — the warlock included.
           const culprit = threat.kind === "infernal" ? (threat.owner?.guid ?? null) : threat.guid;
           const name = culprit === null ? null : (hooks.knownName(culprit) ?? world.playerName(culprit) ?? null);
-          try {
-            world.say(tauntFor(threat.kind, name));
-          } catch (error) {
-            logger.debug(`${listener.characterName}: no parting /say (${describeError(error)})`);
-          }
-          void world.logout(LISTENER_LOGOUT_TIMEOUT_MS).then((outcome) => {
-            if (outcome !== "logged-out") {
-              logger.warn(`${listener.characterName}: logout ${outcome}; dropping the connection instead`);
-            }
-            world.close();
-            settle();
-          });
+          void standDown.face(threat, tauntFor(threat.kind, name));
         },
       },
       { radiusYd: config.listenerThreatRadiusYd, fleeShunnedPlayers: config.listenerFleeShunnedPlayers },
+    );
+    // Leaves when it can; mid-fight it stays connected — dropping the connection would leave the
+    // character in the fight anyway, unable to name its killer or take a resurrection.
+    const standDown = new StandDown(
+      {
+        isAlive: () => alive !== false,
+        say: (line) => {
+          try {
+            world.say(line);
+          } catch (error) {
+            logger.debug(`${listener.characterName}: no parting /say (${describeError(error)})`);
+          }
+        },
+        logout: async () => {
+          const outcome = await world.logout(LISTENER_LOGOUT_TIMEOUT_MS);
+          if (outcome === "logged-out" || outcome === "refused") return outcome;
+          return "no-answer";
+        },
+        close: () => world.close(),
+        rearm: () => threats.rearm(),
+        onLeft: (threat, result) => {
+          standDownMs = config.listenerStandDownMs;
+          logger.warn(
+            `${listener.characterName}: ${describeThreat(threat)} — ` +
+              (result === "logged-out" ? "logged out" : "no answer to the logout; dropped the connection") +
+              ` for ${humanSpan(standDownMs)}`,
+          );
+          hooks.onListenerThreatened(listener.characterName, threat, "left");
+          settle();
+        },
+        onCornered: (threat) => {
+          logger.warn(
+            `${listener.characterName}: ${describeThreat(threat)}, but it is already in a fight — the logout was ` +
+              `refused, so it stays connected (it can still be resurrected) and tries again`,
+          );
+          hooks.onListenerThreatened(listener.characterName, threat, "cornered");
+        },
+      },
+      { retryMs: LISTENER_LOGOUT_RETRY_MS },
     );
     // What killed it, if it dies while we are watching. Its callbacks reach `world`, created below —
     // they only run once packets arrive. Nothing is logged unless the character dies.
@@ -1103,6 +1129,7 @@ async function runListener(
       if (interactTimer) clearTimeout(interactTimer);
       if (silenceTimer) clearInterval(silenceTimer);
       deathWatch.dispose();
+      standDown.dispose();
       listenerWho.unregister(listener.characterName); // stop offering this socket once it's gone
       whisperPool.unregister(listener.characterName); // and stop routing broadcasts through it
       listenerWhispers.stop();
@@ -2363,21 +2390,25 @@ async function main(): Promise<void> {
     banterTimer.unref?.();
   }
 
-  const onListenerThreatened = (character: string, threat: Threat): void => {
+  const onListenerThreatened = (character: string, threat: Threat, stood: "left" | "cornered"): void => {
     const distance = `${Math.round(threat.distance)} yd`;
-    const away = humanSpan(config.listenerStandDownMs);
+    // What the listener did about it: left, or — already in a fight, its logout refused — stayed.
+    const did =
+      stood === "left"
+        ? `${character} logged out for ${humanSpan(config.listenerStandDownMs)}`
+        : `${character} could not log out — already in a fight, so it stays connected and can still be resurrected`;
     // A threat that stays put meets the listener again each time it logs back in; say so once an hour,
     // not every few minutes. The listener logs every time regardless.
-    const key = `${character}:${threat.guid}`;
+    const key = `${character}:${threat.guid}:${stood}`;
     const now = Date.now();
     const alert = (body: string): void => {
       if (now - (lastStoodDownAlert.get(key) ?? -Infinity) < STOOD_DOWN_ALERT_INTERVAL_MS) return;
       lastStoodDownAlert.set(key, now);
-      void notifyAdmin("🛡️ Listener stood down", body);
+      void notifyAdmin(stood === "left" ? "🛡️ Listener stood down" : "⚔️ Listener caught in a fight", body);
     };
     if (threat.kind === "shunned-player") {
       const name = shameList.byGuid(threat.guid)?.name ?? `0x${threat.guid.toString(16)}`;
-      alert(`${character} logged out for ${away}: ${name}, from the wall of shame, came within ${distance}.`);
+      alert(`${did}: ${name}, from the wall of shame, came within ${distance}.`);
       return;
     }
     let culprit: bigint | null;
@@ -2385,12 +2416,12 @@ async function main(): Promise<void> {
     if (threat.kind === "inferno-cast") {
       culprit = threat.guid;
       why = `cast Inferno within ${distance} of ${character}`;
-      alert(`${character} logged out for ${away}: an Inferno was cast to land within ${distance} — its caster is being named.`);
+      alert(`${did}: an Inferno was cast to land within ${distance} — its caster is being named.`);
     } else {
       culprit = threat.owner?.guid ?? null;
       why = `brought an Infernal within ${distance} of ${character}`;
       alert(
-        `${character} logged out for ${away}: an Infernal came within ${distance}` +
+        `${did}: an Infernal came within ${distance}` +
           (culprit !== null ? ` — its owner is being named.` : ` — nobody was named as its owner.`),
       );
     }
