@@ -24,6 +24,9 @@ export interface SpireSnapshotStore {
   between(from: Date, to: Date): Promise<SpireSnapshot[]>;
   /** When the oldest reading still kept was taken — where the watch's coverage begins — or null. */
   firstTakenAt(): Promise<Date | null>;
+  /** When each reading in [from, to) was taken, oldest first — how much the watch saw, without
+   *  loading who it saw. */
+  takenBetween(from: Date, to: Date): Promise<Date[]>;
   close(): Promise<void>;
 }
 
@@ -52,6 +55,10 @@ export class InMemorySpireSnapshotStore implements SpireSnapshotStore {
     return times.length > 0 ? new Date(Math.min(...times)) : null;
   }
 
+  async takenBetween(from: Date, to: Date): Promise<Date[]> {
+    return (await this.between(from, to)).map((s) => s.ts);
+  }
+
   async close(): Promise<void> {
     // nothing to release
   }
@@ -70,6 +77,8 @@ export interface SpireSnapshotDb {
   range(from: Date, to: Date): Promise<SpireSnapshotDoc[]>;
   /** The oldest document's ts, or null when there are none. */
   oldest(): Promise<Date | null>;
+  /** The ts of every document with from <= ts < to, ascending. */
+  times(from: Date, to: Date): Promise<Date[]>;
   close(): Promise<void>;
 }
 
@@ -95,6 +104,13 @@ export class MongoSpireSnapshotStore implements SpireSnapshotStore {
           .sort({ ts: 1 })
           .toArray(),
       oldest: async () => (await collection.findOne({}, { sort: { ts: 1 }, projection: { ts: 1 } }))?.ts ?? null,
+      times: async (from, to) =>
+        (
+          await collection
+            .find({ ts: { $gte: from, $lt: to } }, { projection: { _id: 0, ts: 1 } })
+            .sort({ ts: 1 })
+            .toArray()
+        ).map((doc) => doc.ts),
       close: releaseSharedClient,
     };
     return new MongoSpireSnapshotStore(db);
@@ -112,6 +128,10 @@ export class MongoSpireSnapshotStore implements SpireSnapshotStore {
 
   async firstTakenAt(): Promise<Date | null> {
     return this.#db.oldest();
+  }
+
+  async takenBetween(from: Date, to: Date): Promise<Date[]> {
+    return this.#db.times(from, to);
   }
 
   async close(): Promise<void> {

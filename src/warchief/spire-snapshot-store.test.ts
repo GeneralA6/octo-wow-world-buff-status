@@ -25,6 +25,14 @@ describe("InMemorySpireSnapshotStore", () => {
     expect(got.map((s) => s.ts.getTime() / 1000)).toEqual([1, 2, 3]);
   });
 
+  it("says when each reading in a span was taken", async () => {
+    const store = new InMemorySpireSnapshotStore();
+    await store.record(snap(3, ["c"]));
+    await store.record(snap(1, ["a"]));
+    await store.record(snap(9, ["z"]));
+    expect(await store.takenBetween(new Date(0), new Date(5000))).toEqual([new Date(1000), new Date(3000)]);
+  });
+
   it("says when the oldest reading kept was taken, or null before any", async () => {
     const store = new InMemorySpireSnapshotStore();
     expect(await store.firstTakenAt()).toBeNull();
@@ -50,6 +58,12 @@ describe("MongoSpireSnapshotStore", () => {
       ),
       oldest: vi.fn(async () =>
         docs.length > 0 ? new Date(Math.min(...docs.map((d) => d.ts.getTime()))) : null,
+      ),
+      times: vi.fn(async (from: Date, to: Date) =>
+        docs
+          .filter((d) => d.ts >= from && d.ts < to)
+          .map((d) => d.ts)
+          .sort((a, b) => a.getTime() - b.getTime()),
       ),
       close: vi.fn(async () => {}),
     };
@@ -90,6 +104,15 @@ describe("MongoSpireSnapshotStore", () => {
     await store.record(snap(7, ["a"]));
     await store.record(snap(5, ["b"]));
     expect(await store.firstTakenAt()).toEqual(new Date(5000));
+  });
+
+  it("reads the reading times of a span through the port", async () => {
+    const db = fakeDb();
+    const store = new MongoSpireSnapshotStore(db);
+    await store.record(snap(4, ["a"]));
+    await store.record(snap(2, ["b"]));
+    expect(await store.takenBetween(new Date(0), new Date(10_000))).toEqual([new Date(2000), new Date(4000)]);
+    expect(db.times).toHaveBeenCalledWith(new Date(0), new Date(10_000));
   });
 
   it("releases through the port on close", async () => {
