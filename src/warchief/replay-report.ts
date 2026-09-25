@@ -163,7 +163,8 @@ export function replayReport(snapshots: readonly SpireSnapshot[], blessingsAt: r
   if (result === null) return ["No Spire readings in that span - is WOW_SPIRE_WATCH on, and has it run?"];
   const lines = [
     `Spire replay: ${stamp(result.from)} -> ${stamp(result.to)}, ${snapshots.length} readings, ` +
-      `${result.evaluation.drops} blessings heard in that span`,
+      `${result.attributions.length} blessings heard in that span` +
+      (result.blind.length > 0 ? ` (${result.blind.length} while the watch was blind)` : ""),
     describeOptions(args.tracker, args.attribution),
     formatScore(result.evaluation),
   ];

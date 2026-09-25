@@ -85,6 +85,13 @@ describe("replayReport", () => {
     expect(lines[2]).toMatch(/^Score: 1\/1 blessings explained/);
   });
 
+  it("counts every blessing heard in the header, saying how many the watch was blind to", () => {
+    const lines = replayReport(recorded(), [T0 + 6 * MIN, T0 + 60 * MIN], args);
+    expect(lines[0]).toBe(
+      "Spire replay: 2026-09-25 20:00Z -> 2026-09-25 23:20Z, 201 readings, 2 blessings heard in that span (1 while the watch was blind)",
+    );
+  });
+
   it("lists the runs and what each blessing was put down to", () => {
     const lines = replayReport(recorded(), [T0 + 6 * MIN, T0 + 60 * MIN, T0 + 190 * MIN], { ...args, runs: true });
     expect(lines).toContain("run 2026-09-25 20:02Z -> 20:45Z (43m) peak 10/10, 10 Horde, mostly <Warsong>, left");
