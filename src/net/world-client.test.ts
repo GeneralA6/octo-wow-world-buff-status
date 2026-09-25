@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { deflateSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { VanillaHeaderCrypt } from "../crypto/header-crypt.js";
 import { AUTH_OK, ChatType, GuildEvent, LANG_ADDON, WorldOpcode } from "../protocol/opcodes.js";
 import type { WhoResult } from "../protocol/who.js";
@@ -50,6 +50,19 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
   }
 
   #namesSilenced = false;
+  #whoHeld = false;
+  /** How many /who queries the client has sent. */
+  whoAsked = 0;
+
+  /** Stop answering /who on its own: replies go out only through replyWho, as a slow server's would. */
+  holdWhoReplies(): void {
+    this.#whoHeld = true;
+  }
+
+  /** Send a /who reply now — to whichever query the client takes it for. */
+  replyWho(players: { name: string; area: number }[]): void {
+    this.#sendServer(WorldOpcode.SMSG_WHO, whoResponseBody(players));
+  }
 
   /** Stop answering name queries, as a server that never replies would. */
   silenceNameQueries(): void {
@@ -228,6 +241,8 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
         this.#sendServer(WorldOpcode.SMSG_LOGIN_VERIFY_WORLD, Buffer.alloc(20));
         break;
       case WorldOpcode.CMSG_WHO:
+        this.whoAsked += 1;
+        if (this.#whoHeld) break;
         this.#sendServer(
           WorldOpcode.SMSG_WHO,
           whoResponseBody([
@@ -909,6 +924,97 @@ describe("WorldClient (against a scripted mock server)", () => {
       expect(socket.nameQueries).toEqual([0x555n]);
 
       client.close();
+    });
+  });
+  describe("/who replies, which carry no correlation id", () => {
+    const LAIR = 2159;
+    const SPIRE = 1583;
+
+    async function inWorld(socket: MockServerSocket) {
+      const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      let markReady: () => void = () => {};
+      const ready = new Promise<void>((resolve) => {
+        markReady = resolve;
+      });
+      const client = new WorldClient({
+        socket,
+        account: "BOTACCOUNT",
+        sessionKey: SESSION_KEY,
+        characterName: "Botchar",
+        clientSeed: 7,
+        pingIntervalMs: 0,
+        logger,
+        handlers: { onReady: () => markReady() },
+      });
+      client.start();
+      socket.begin(7);
+      await withTimeout(ready);
+      return { client, logger };
+    }
+
+    it("lets a timed-out query's late reply land on nobody, and the next query gets its own", async () => {
+      const socket = new MockServerSocket([{ guid: 1n, name: "Botchar" }]);
+      socket.holdWhoReplies();
+      const { client } = await inWorld(socket);
+
+      await expect(client.whoOnce({ zoneIds: [LAIR] }, 30)).rejects.toThrow("/who timed out after 30ms");
+      const spire = client.whoOnce({ zoneIds: [SPIRE] }, 500);
+      expect(socket.whoAsked).toBe(1); // held back while the lair's answer may still come
+      socket.replyWho([{ name: "Onytank", area: LAIR }]); // it does — and must not be taken as the Spire's
+      await vi.waitFor(() => expect(socket.whoAsked).toBe(2), { timeout: 500, interval: 5 });
+      socket.replyWho([{ name: "Rendslayer", area: SPIRE }]);
+      expect((await spire).players.map((p) => p.name)).toEqual(["Rendslayer"]);
+      client.close();
+    });
+
+    it("passes over a reply naming only players outside the zones asked about", async () => {
+      const socket = new MockServerSocket([{ guid: 1n, name: "Botchar" }]);
+      socket.holdWhoReplies();
+      const { client, logger } = await inWorld(socket);
+
+      const spire = client.whoOnce({ zoneIds: [SPIRE] }, 500);
+      socket.replyWho([{ name: "Onytank", area: LAIR }, { name: "Healbot", area: LAIR }]);
+      socket.replyWho([{ name: "Rendslayer", area: SPIRE }]);
+      expect((await spire).players.map((p) => p.name)).toEqual(["Rendslayer"]);
+      expect(logger.warn).toHaveBeenCalledWith(
+        "/who: passed over a reply of 2 in areas [2159], none in the zones asked about — an earlier query's late answer",
+      );
+      client.close();
+    });
+
+    it("takes an empty reply — a zone can be empty, and nothing in it says whose it is", async () => {
+      const socket = new MockServerSocket([{ guid: 1n, name: "Botchar" }]);
+      socket.holdWhoReplies();
+      const { client } = await inWorld(socket);
+
+      const spire = client.whoOnce({ zoneIds: [SPIRE] }, 500);
+      socket.replyWho([]);
+      expect((await spire).players).toEqual([]);
+      client.close();
+    });
+
+    it("sends straight away after a query answered in time", async () => {
+      const socket = new MockServerSocket([{ guid: 1n, name: "Botchar" }]);
+      const { client } = await inWorld(socket);
+
+      await client.whoOnce({ zoneIds: [LAIR] }, 500);
+      const second = client.whoOnce({ zoneIds: [LAIR] }, 500);
+      expect(socket.whoAsked).toBe(2);
+      await second;
+      client.close();
+    });
+
+    it("refuses a second query while one waits out the quiet, and drops it if the connection closes", async () => {
+      const socket = new MockServerSocket([{ guid: 1n, name: "Botchar" }]);
+      socket.holdWhoReplies();
+      const { client } = await inWorld(socket);
+
+      await expect(client.whoOnce({ zoneIds: [LAIR] }, 30)).rejects.toThrow("timed out");
+      const waiting = client.whoOnce({ zoneIds: [SPIRE] }, 500);
+      await expect(client.whoOnce({ zoneIds: [LAIR] }, 500)).rejects.toThrow("a /who is already in flight");
+      client.close();
+      await expect(waiting).rejects.toThrow("world connection closed");
+      expect(socket.whoAsked).toBe(1);
     });
   });
 });

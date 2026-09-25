@@ -146,6 +146,18 @@ export interface WorldClientOptions {
  * pings, and /who requests. Feeds on a socket-like injected by the caller, so a
  * scripted mock server exercises the whole state machine in tests.
  */
+/** A whoOnce() in flight. */
+interface PendingWho {
+  readonly resolve: (result: WhoResult) => void;
+  readonly reject: (error: Error) => void;
+  /** Sends the query once the quiet is over, then times it out; null for the moment in between. */
+  timer: NodeJS.Timeout | null;
+  /** The zones asked about; empty when the query named none. */
+  readonly zoneIds: ReadonlySet<number>;
+  /** False while the query waits out the quiet — any reply then answers an earlier one. */
+  sent: boolean;
+}
+
 export class WorldClient {
   readonly #socket: NodeSocketLike;
   readonly #account: string;
@@ -162,11 +174,10 @@ export class WorldClient {
   #recvBuffer = Buffer.alloc(0);
   #pendingHeader: { opcode: number; bodyLength: number } | null = null;
   /** Resolver for an in-flight whoOnce() — one /who at a time, so replies are in order. */
-  #whoPending: {
-    resolve: (result: WhoResult) => void;
-    reject: (error: Error) => void;
-    timer: NodeJS.Timeout;
-  } | null = null;
+  #whoPending: PendingWho | null = null;
+  /** Until when a timed-out /who's reply may still straggle in. A /who has no correlation id, so a
+   *  query sent before then could be handed the old one's answer; it waits instead. */
+  #whoQuietUntil = 0;
   #ready = false;
   #closed = false;
   #pingTimer: NodeJS.Timeout | null = null;
@@ -215,17 +226,18 @@ export class WorldClient {
    * Send one /who and resolve with its reply. Only one may be in flight — /who has
    * no correlation id, so the caller must await each before sending the next (used
    * to slice a query by class and merge, beating the 49-result cap).
+   *
+   * Because nothing ties a reply to its query, a reply that comes after its query timed out would
+   * be taken as the NEXT query's — a Spire roster read as the lair's, say. So after a timeout the
+   * next query waits as long again before it goes out, letting a straggler land with nothing
+   * waiting; and a reply naming only players outside the zones a query asked about is not its
+   * reply, so it is passed over while the query waits on.
    */
   whoOnce(query: WhoQuery, timeoutMs = 8_000): Promise<WhoResult> {
     if (!this.#ready) return Promise.reject(new Error("cannot /who before the character is in world"));
     if (this.#whoPending) return Promise.reject(new Error("a /who is already in flight"));
     return new Promise<WhoResult>((resolve, reject) => {
-      const started = Date.now();
-      const timer = setTimeout(() => {
-        this.#whoPending = null;
-        reject(new Error(`/who timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      timer.unref?.();
+      let started = 0;
       // Surface the round-trip so a creep toward the timeout is visible BEFORE it starts
       // failing — under peak load /who slows down, and a silent timeout hides why.
       const timedResolve = (result: WhoResult): void => {
@@ -234,14 +246,66 @@ export class WorldClient {
         else this.#logger.debug(`/who replied in ${elapsed}ms`);
         resolve(result);
       };
-      this.#whoPending = { resolve: timedResolve, reject, timer };
-      this.#send(WorldOpcode.CMSG_WHO, buildWhoRequestBody(query));
+      const send = (): void => {
+        const pending = this.#whoPending;
+        if (!pending) return;
+        started = Date.now();
+        pending.sent = true;
+        const timeout = setTimeout(() => {
+          this.#whoPending = null;
+          this.#whoQuietUntil = Date.now() + timeoutMs;
+          reject(new Error(`/who timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timeout.unref?.();
+        pending.timer = timeout;
+        this.#send(WorldOpcode.CMSG_WHO, buildWhoRequestBody(query));
+      };
+      const pending: PendingWho = { resolve: timedResolve, reject, timer: null, zoneIds: new Set(query.zoneIds), sent: false };
+      this.#whoPending = pending;
+      const quietMs = this.#whoQuietUntil - Date.now();
+      if (quietMs <= 0) {
+        send();
+        return;
+      }
+      this.#logger.debug(`/who: holding a query ${quietMs}ms, until a timed-out one's reply can no longer straggle in`);
+      const wait = setTimeout(send, quietMs);
+      wait.unref?.();
+      pending.timer = wait;
     });
+  }
+
+  /** A /who reply: to the query waiting on it, if it can be that query's; else passed over. */
+  #handleWho(result: WhoResult): void {
+    const pending = this.#whoPending;
+    if (!pending) {
+      if (this.#handlers.onWho) this.#handlers.onWho(result);
+      else this.#logger.debug(`/who: a reply of ${result.players.length} came with nothing waiting — dropped`);
+      return;
+    }
+    if (!pending.sent) {
+      this.#logger.debug(`/who: a late reply of ${result.players.length} came during the quiet — dropped`);
+      return;
+    }
+    const elsewhere =
+      pending.zoneIds.size > 0 &&
+      result.players.length > 0 &&
+      result.players.every((player) => !pending.zoneIds.has(player.areaId));
+    if (elsewhere) {
+      const areas = [...new Set(result.players.map((player) => player.areaId))].join(", ");
+      this.#logger.warn(
+        `/who: passed over a reply of ${result.players.length} in areas [${areas}], none in the zones asked about — ` +
+          "an earlier query's late answer",
+      );
+      return;
+    }
+    if (pending.timer) clearTimeout(pending.timer);
+    this.#whoPending = null;
+    pending.resolve(result);
   }
 
   #rejectWho(reason: string): void {
     if (!this.#whoPending) return;
-    clearTimeout(this.#whoPending.timer);
+    if (this.#whoPending.timer) clearTimeout(this.#whoPending.timer);
     const { reject } = this.#whoPending;
     this.#whoPending = null;
     reject(new Error(reason));
@@ -401,18 +465,9 @@ export class WorldClient {
         case WorldOpcode.SMSG_LOGIN_VERIFY_WORLD:
           this.#handleInWorld();
           break;
-        case WorldOpcode.SMSG_WHO: {
-          const result = parseWhoResponseBody(body);
-          if (this.#whoPending) {
-            clearTimeout(this.#whoPending.timer);
-            const { resolve } = this.#whoPending;
-            this.#whoPending = null;
-            resolve(result);
-          } else {
-            this.#handlers.onWho?.(result);
-          }
+        case WorldOpcode.SMSG_WHO:
+          this.#handleWho(parseWhoResponseBody(body));
           break;
-        }
         case WorldOpcode.SMSG_MESSAGECHAT:
           this.#handleChat(body);
           break;
