@@ -84,7 +84,10 @@ export interface LagSpread {
 }
 
 export interface ForecastEvaluation {
+  /** Blessings scored — those the watch was looking for. */
   readonly drops: number;
+  /** Blessings it was blind to, left out of the score: a run it could not see is no miss of its. */
+  readonly blind: number;
   /** Blessings a run explains. */
   readonly attributed: number;
   /** ...of which dropped while the run was still inside. */
@@ -116,14 +119,20 @@ export function lagSpread(lagsMs: readonly number[]): LagSpread | null {
   };
 }
 
-/** How well the runs have foretold the blessings up to `now`. */
+/**
+ * How well the runs have foretold the blessings up to `now`. A blessing no run explains is a miss —
+ * unless `blindAt` says the watch saw too little of the Spire before it to have caught the run, when
+ * it is counted apart and left out: blindness excuses a miss, never a hit.
+ */
 export function evaluateForecast(
   runs: readonly FinishedRun[],
   dropsAt: readonly number[],
   options: AttributionOptions,
   now: number,
+  blindAt: (dropAt: number) => boolean,
 ): ForecastEvaluation {
   const attributions = attributeDrops(runs, dropsAt, options);
+  const blind = attributions.filter((a) => a.run === null && blindAt(a.dropAt)).length;
   const explained = attributions.flatMap((a) => (a.run === null ? [] : [{ run: a.run, lagMs: a.lagMs }]));
   const withDrop = new Set(explained.map((e) => e.run));
   // A run still inside its window may yet drop one; it is neither a hit nor a miss so far.
@@ -131,7 +140,8 @@ export function evaluateForecast(
     (run) => (!options.requireHorde || run.horde > 0) && (withDrop.has(run) || run.endedAt + options.windowMs <= now),
   );
   return {
-    drops: attributions.length,
+    drops: attributions.length - blind,
+    blind,
     attributed: explained.length,
     midRun: explained.filter((e) => e.lagMs < 0).length,
     runs: decided.length,
@@ -139,6 +149,65 @@ export function evaluateForecast(
     lag: lagSpread(explained.map((e) => e.lagMs)),
   };
 }
+
+/**
+ * Whether the watch saw enough of the Spire to be judged on a blessing: the share of the time a run
+ * that could explain it was inside that the readings cover. Below it — the watch down, or its /who
+ * going unanswered — a blessing no run explains says nothing about the forecast.
+ */
+export const MIN_COVERAGE = 0.9;
+
+export function sawEnough(coverage: number): boolean {
+  return coverage >= MIN_COVERAGE;
+}
+
+/** How long a run that could explain a blessing may have been inside: UBRS clears here in 30-40m
+ *  (Chronicle's logs), so an hour allows a slow one. */
+const RUN_SPAN_MS = 60 * 60_000;
+
+/** How far back from a blessing the Spire must have been watched: the window after a run left, and
+ *  the run itself before that. */
+export function coverageLookbackMs(options: AttributionOptions): number {
+  return options.windowMs + RUN_SPAN_MS;
+}
+
+/**
+ * The share of [from, to] the readings cover. Each reading vouches for the time until the next one,
+ * but no further than `maxGapMs` — past that the watch was blind. `readingTimes` ascending.
+ */
+export function coverageShare(readingTimes: readonly number[], from: number, to: number, maxGapMs: number): number {
+  if (to <= from) return 1;
+  let covered = 0;
+  for (let i = 0; i < readingTimes.length; i += 1) {
+    const start = readingTimes[i]!;
+    const end = Math.min(readingTimes[i + 1] ?? start + maxGapMs, start + maxGapMs);
+    const overlap = Math.min(end, to) - Math.max(start, from);
+    if (overlap > 0) covered += overlap;
+  }
+  return covered / (to - from);
+}
+
+/** The share of the Spire the readings saw in the time a run that could explain a blessing at
+ *  `dropAt` was inside. */
+export function watchedBefore(
+  readingTimes: readonly number[],
+  dropAt: number,
+  options: AttributionOptions,
+  maxGapMs: number,
+): number {
+  return coverageShare(readingTimes, dropAt - coverageLookbackMs(options), dropAt, maxGapMs);
+}
+
+/** What a blessing heard says about the forecast. */
+export type BlessingVerdict =
+  /** The watch saw too little of the Spire to judge; `coverage` is the share it did see. */
+  | { readonly kind: "blind"; readonly coverage: number }
+  /** Put down to a finished run; `lagMs` is negative when it dropped before the run left. */
+  | { readonly kind: "explained"; readonly run: FinishedRun; readonly lagMs: number }
+  /** Dropped while a Horde run, in since `startedAt`, was still inside. */
+  | { readonly kind: "mid-run"; readonly startedAt: number; readonly dropAt: number }
+  /** Seen, but no run explains it: a saved head, or a run the tracker missed. */
+  | { readonly kind: "unexplained" };
 
 /** Below this many explained blessings the lag is anecdote, and the forecast quotes its fallback. */
 export const MIN_LAGS_TO_LEARN = 5;

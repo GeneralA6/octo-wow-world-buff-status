@@ -46,9 +46,17 @@ describe("replaySpire", () => {
   });
 
   it("leaves out blessings from outside the readings' span", () => {
-    const result = replaySpire(recorded([], 0, 10), [T0 - 5 * MIN, T0 + 5 * MIN, T0 + 20 * MIN], options);
-    expect(result?.evaluation.drops).toBe(1);
-    expect(result).toMatchObject({ from: T0, to: T0 + 10 * MIN });
+    const result = replaySpire(recorded([], 0, 200), [T0 - 5 * MIN, T0 + 180 * MIN, T0 + 220 * MIN], options);
+    expect(result?.evaluation).toMatchObject({ drops: 1, blind: 0 });
+    expect(result).toMatchObject({ from: T0, to: T0 + 200 * MIN });
+  });
+
+  it("does not fault the forecast for a blessing it was too blind to see coming", () => {
+    // Readings only from minute 0; a blessing ten minutes in could be a run that came and went unseen.
+    const result = replaySpire(recorded([], 0, 200), [T0 + 10 * MIN, T0 + 180 * MIN], options);
+    expect(result?.evaluation).toMatchObject({ drops: 1, blind: 1, attributed: 0 });
+    expect(result?.blind.map((b) => b.dropAt)).toEqual([T0 + 10 * MIN]);
+    expect(result?.blind[0]?.coverage).toBeCloseTo(10 / 150);
   });
 
   it("takes the tracker's thresholds from the options — the knob a replay turns", () => {

@@ -1,6 +1,6 @@
 import { humanClock } from "../notify/format.js";
 import { dominantGuild } from "../watcher/raid-events.js";
-import type { Attribution, BlessingOutlook, ForecastEvaluation } from "./forecast.js";
+import type { BlessingOutlook, BlessingVerdict, ForecastEvaluation } from "./forecast.js";
 import type { SpireRun, SpireRunEndReason } from "./spire-runs.js";
 
 /**
@@ -65,27 +65,35 @@ export function formatRunEnded(
   return { title, body: `${who(run, horde)} ${left}. ${forecast}` };
 }
 
+function describeVerdict(verdict: BlessingVerdict, outlook: BlessingOutlook): string {
+  switch (verdict.kind) {
+    case "blind":
+      return (
+        `The watch saw only ${Math.round(verdict.coverage * 100)}% of the Spire in the hours a run could have ` +
+        "dropped it - no verdict, and not scored."
+      );
+    case "explained":
+      return verdict.lagMs < 0
+        ? `Dropped while the run from ${at(verdict.run.startedAt)} was still inside.`
+        : `Came ${humanClock(verdict.lagMs)} after the run from ${at(verdict.run.startedAt)} left - ` +
+            `${verdict.lagMs <= outlook.withinMs ? "inside" : "outside"} the ${humanClock(outlook.withinMs)} window.`;
+    case "mid-run":
+      return `Dropped ${humanClock(verdict.dropAt - verdict.startedAt)} into the run still inside (from ${at(verdict.startedAt)}).`;
+    case "unexplained":
+      return "No Spire run explains it - a saved head, or a run the watch missed.";
+  }
+}
+
 /** How the blessing just heard squares with the forecast, and the score so far. */
 export function formatBlessingVerdict(
-  attribution: Attribution,
-  midRun: SpireRun | null,
+  verdict: BlessingVerdict,
   outlook: BlessingOutlook,
   score: ForecastEvaluation,
 ): ShadowNotice {
-  let verdict: string;
-  if (attribution.run !== null) {
-    const run = attribution.run;
-    verdict =
-      attribution.lagMs < 0
-        ? `Dropped while the run from ${at(run.startedAt)} was still inside.`
-        : `Came ${humanClock(attribution.lagMs)} after the run from ${at(run.startedAt)} left - ` +
-          `${attribution.lagMs <= outlook.withinMs ? "inside" : "outside"} the ${humanClock(outlook.withinMs)} window.`;
-  } else if (midRun !== null) {
-    verdict = `Dropped ${humanClock(attribution.dropAt - midRun.startedAt)} into the run still inside (from ${at(midRun.startedAt)}).`;
-  } else {
-    verdict = "No Spire run explains it - a saved head, or a run the watch missed.";
-  }
-  return { title: "⚔️ Warchief's Blessing vs the forecast (shadow)", body: `${verdict}\n${formatScore(score)}` };
+  return {
+    title: "⚔️ Warchief's Blessing vs the forecast (shadow)",
+    body: `${describeVerdict(verdict, outlook)}\n${formatScore(score)}`,
+  };
 }
 
 /** The forecast's record so far, in one line. */
@@ -94,8 +102,9 @@ export function formatScore(score: ForecastEvaluation): string {
     ? `; run-left-to-blessing median ${signedClock(score.lag.medianMs)} ` +
       `(p25 ${signedClock(score.lag.p25Ms)}, p75 ${signedClock(score.lag.p75Ms)}, p90 ${signedClock(score.lag.p90Ms)})`
     : "";
+  const blind = score.blind > 0 ? `, ${score.blind} more unscored while the watch was blind` : "";
   return (
-    `Score: ${score.attributed}/${score.drops} blessings explained by a Spire run (${score.midRun} mid-run), ` +
+    `Score: ${score.attributed}/${score.drops} blessings explained by a Spire run (${score.midRun} mid-run)${blind}, ` +
     `${score.runsWithDrop}/${score.runs} Horde runs led to one${lag}.`
   );
 }

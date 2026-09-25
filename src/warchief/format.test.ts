@@ -25,6 +25,7 @@ const run = (overrides: Partial<SpireRun> = {}): SpireRun => ({
 
 const score: ForecastEvaluation = {
   drops: 4,
+  blind: 0,
   attributed: 3,
   midRun: 1,
   runs: 5,
@@ -87,20 +88,29 @@ describe("formatBlessingVerdict", () => {
   const finished = { startedAt: T0, endedAt: T0 + 40 * MIN, horde: 4, reason: "left" as const, baseline: false };
 
   it("credits the run that left before it, inside or outside the window", () => {
-    const inside = formatBlessingVerdict({ dropAt: T0 + 52 * MIN, run: finished, lagMs: 12 * MIN }, null, outlook, score);
+    const inside = formatBlessingVerdict({ kind: "explained", run: finished, lagMs: 12 * MIN }, outlook, score);
     expect(inside.body.split("\n")[0]).toBe(`Came 12m after the run from ${stamp(T0)} left - inside the 25m window.`);
-    const outside = formatBlessingVerdict({ dropAt: T0 + 80 * MIN, run: finished, lagMs: 40 * MIN }, null, outlook, score);
+    const outside = formatBlessingVerdict({ kind: "explained", run: finished, lagMs: 40 * MIN }, outlook, score);
     expect(outside.body).toContain("outside the 25m window");
+    const before = formatBlessingVerdict({ kind: "explained", run: finished, lagMs: -5 * MIN }, outlook, score);
+    expect(before.body).toContain(`Dropped while the run from ${stamp(T0)} was still inside.`);
   });
 
   it("says when it came mid-run", () => {
-    const verdict = formatBlessingVerdict({ dropAt: T0 + 25 * MIN, run: null, lagMs: null }, run(), outlook, score);
+    const verdict = formatBlessingVerdict({ kind: "mid-run", startedAt: T0, dropAt: T0 + 25 * MIN }, outlook, score);
     expect(verdict.body).toContain(`Dropped 25m into the run still inside (from ${stamp(T0)}).`);
   });
 
   it("owns up to a blessing no run explains, and carries the score", () => {
-    const verdict = formatBlessingVerdict({ dropAt: T0, run: null, lagMs: null }, null, outlook, score);
+    const verdict = formatBlessingVerdict({ kind: "unexplained" }, outlook, score);
     expect(verdict.body).toBe(`No Spire run explains it - a saved head, or a run the watch missed.\n${formatScore(score)}`);
+  });
+
+  it("gives no verdict on a blessing the watch was too blind to judge", () => {
+    const verdict = formatBlessingVerdict({ kind: "blind", coverage: 0.034 }, outlook, score);
+    expect(verdict.body.split("\n")[0]).toBe(
+      "The watch saw only 3% of the Spire in the hours a run could have dropped it - no verdict, and not scored.",
+    );
   });
 });
 
@@ -109,6 +119,12 @@ describe("formatScore", () => {
     expect(formatScore(score)).toBe(
       "Score: 3/4 blessings explained by a Spire run (1 mid-run), 3/5 Horde runs led to one; " +
         "run-left-to-blessing median 12m (p25 -5m, p75 20m, p90 31m).",
+    );
+  });
+
+  it("counts apart the blessings the watch was blind to", () => {
+    expect(formatScore({ ...score, blind: 2 })).toContain(
+      "Score: 3/4 blessings explained by a Spire run (1 mid-run), 2 more unscored while the watch was blind, 3/5",
     );
   });
 

@@ -3,6 +3,8 @@ import { dominantGuild } from "../watcher/raid-events.js";
 import {
   attributeDrops,
   evaluateForecast,
+  sawEnough,
+  watchedBefore,
   type Attribution,
   type AttributionOptions,
   type FinishedRun,
@@ -33,6 +35,9 @@ export interface ReplayResult {
   readonly runs: readonly ReplayRun[];
   readonly attributions: readonly Attribution[];
   readonly evaluation: ForecastEvaluation;
+  /** The blessings no run explains that the watch was too blind to be faulted for, with the share of
+   *  the Spire it did see before each. */
+  readonly blind: readonly { readonly dropAt: number; readonly coverage: number }[];
   /** The readings' span; blessings outside it are left out, as the watch was not looking. */
   readonly from: number;
   readonly to: number;
@@ -66,10 +71,18 @@ export function replaySpire(
   const from = first.ts.getTime();
   const to = last.ts.getTime();
   const drops = blessingsAt.filter((t) => t >= from && t <= to);
+  const readingTimes = snapshots.map((snapshot) => snapshot.ts.getTime());
+  const coverageAt = (dropAt: number): number =>
+    watchedBefore(readingTimes, dropAt, options.attribution, options.tracker.blackoutMs);
+  const blindAt = (dropAt: number): boolean => !sawEnough(coverageAt(dropAt));
+  const attributions = attributeDrops(runs, drops, options.attribution);
   return {
     runs,
-    attributions: attributeDrops(runs, drops, options.attribution),
-    evaluation: evaluateForecast(runs, drops, options.attribution, to),
+    attributions,
+    evaluation: evaluateForecast(runs, drops, options.attribution, to, blindAt),
+    blind: attributions
+      .filter((a) => a.run === null && blindAt(a.dropAt))
+      .map((a) => ({ dropAt: a.dropAt, coverage: coverageAt(a.dropAt) })),
     from,
     to,
   };

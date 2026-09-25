@@ -4,9 +4,13 @@ import { humanClock } from "../notify/format.js";
 import {
   attributeDrops,
   blessingOutlook,
+  coverageLookbackMs,
   DEFAULT_ATTRIBUTION_OPTIONS,
   evaluateForecast,
+  sawEnough,
+  watchedBefore,
   type AttributionOptions,
+  type BlessingVerdict,
   type FinishedRun,
   type ForecastEvaluation,
 } from "./forecast.js";
@@ -19,7 +23,13 @@ import {
   type ShadowNotice,
 } from "./format.js";
 import type { SpireRunRecord, SpireRunStore } from "./run-store.js";
-import { hordeMembers, type SpireRun, type SpireRunEndReason, type SpireRunTracker } from "./spire-runs.js";
+import {
+  DEFAULT_SPIRE_RUN_OPTIONS,
+  hordeMembers,
+  type SpireRun,
+  type SpireRunEndReason,
+  type SpireRunTracker,
+} from "./spire-runs.js";
 import type { SpireSnapshotStore } from "./spire-snapshot-store.js";
 import type { SpireView } from "./spire-view.js";
 
@@ -47,6 +57,16 @@ export interface SpireWatchDeps {
   readonly attribution?: AttributionOptions;
   /** The window quoted after a run leaves, until enough blessings are explained to learn one. */
   readonly fallbackWithinMs?: number;
+  /** A gap between readings past which the watch was blind — the tracker's own blackout. */
+  readonly readingGapMs?: number;
+}
+
+/** What the score is worked out from: the finished runs, the blessings, and when the Spire was read. */
+interface History {
+  readonly runs: FinishedRun[];
+  /** Blessings heard before the moment asked about, inside the score window. */
+  readonly drops: number[];
+  readonly readingTimes: number[];
 }
 
 /** How far back the forecast is scored: enough runs to learn from, recent enough to stay current. */
@@ -57,6 +77,20 @@ const DEFAULT_FALLBACK_WITHIN_MS = 45 * 60_000;
 
 /** "21:04Z" — a log line's clock. */
 const clock = (ms: number): string => `${new Date(ms).toISOString().slice(11, 16)}Z`;
+
+/** A verdict in a log line's words. */
+function logVerdict(verdict: BlessingVerdict): string {
+  switch (verdict.kind) {
+    case "blind":
+      return `the watch was blind — it saw ${Math.round(verdict.coverage * 100)}% of the Spire before it`;
+    case "explained":
+      return `${signedClock(verdict.lagMs)} after the run from ${clock(verdict.run.startedAt)} left`;
+    case "mid-run":
+      return `${humanClock(verdict.dropAt - verdict.startedAt)} into the run still inside since ${clock(verdict.startedAt)}`;
+    case "unexplained":
+      return "no Spire run explains it";
+  }
+}
 
 function finished(record: SpireRunRecord): FinishedRun {
   return {
@@ -77,6 +111,7 @@ export class SpireWatch {
   readonly #logger: Pick<Logger, "info" | "debug" | "error">;
   readonly #attribution: AttributionOptions;
   readonly #fallbackWithinMs: number;
+  readonly #readingGapMs: number;
   #lastScoreLogAt: number | null = null;
 
   constructor(deps: SpireWatchDeps) {
@@ -88,6 +123,7 @@ export class SpireWatch {
     this.#logger = deps.logger;
     this.#attribution = deps.attribution ?? DEFAULT_ATTRIBUTION_OPTIONS;
     this.#fallbackWithinMs = deps.fallbackWithinMs ?? DEFAULT_FALLBACK_WITHIN_MS;
+    this.#readingGapMs = deps.readingGapMs ?? DEFAULT_SPIRE_RUN_OPTIONS.blackoutMs;
   }
 
   /** One Spire reading from the poll. */
@@ -110,21 +146,32 @@ export class SpireWatch {
   /** Thrall's yell was heard: the blessing dropped at `at`. Held up against the forecast. */
   async onBlessing(at: Date): Promise<void> {
     const now = at.getTime();
-    const { runs, drops } = await this.#history(now);
-    const all = [...drops, now];
-    const attribution = attributeDrops(runs, all, this.#attribution).find((a) => a.dropAt === now);
-    if (!attribution) return;
-    const midRun = attribution.run === null ? this.#runUnderWay(now) : null;
-    const score = evaluateForecast(runs, all, this.#attribution, now);
-    const notice = formatBlessingVerdict(attribution, midRun, blessingOutlook(score, this.#fallbackWithinMs), score);
-    const verdict =
-      attribution.run !== null
-        ? `${signedClock(attribution.lagMs)} after the run from ${clock(attribution.run.startedAt)} left`
-        : midRun !== null
-          ? `${humanClock(now - midRun.startedAt)} into run #${midRun.id}, still inside`
-          : "no Spire run explains it";
-    this.#logger.info(`warchief forecast: blessing at ${clock(now)} — ${verdict}. ${formatScore(score)}`);
-    await this.#send(notice);
+    const history = await this.#history(now);
+    const drops = [...history.drops, now];
+    const verdict = this.#judge(history, drops, now);
+    // A blessing that dropped mid-run is unexplained until its run leaves and is credited with it.
+    const score = evaluateForecast(history.runs, drops, this.#attribution, now, (dropAt) =>
+      dropAt === now ? verdict.kind === "blind" : this.#blindAt(history, dropAt),
+    );
+    this.#logger.info(`warchief forecast: blessing at ${clock(now)} — ${logVerdict(verdict)}. ${formatScore(score)}`);
+    await this.#send(formatBlessingVerdict(verdict, blessingOutlook(score, this.#fallbackWithinMs), score));
+  }
+
+  /** What the blessing at `now` says: explained by a run, dropped mid-run, or — with no run in sight —
+   *  missed, unless the watch was too blind to have seen the run. */
+  #judge(history: History, drops: readonly number[], now: number): BlessingVerdict {
+    const attribution = attributeDrops(history.runs, drops, this.#attribution).find((a) => a.dropAt === now);
+    if (attribution !== undefined && attribution.run !== null) {
+      return { kind: "explained", run: attribution.run, lagMs: attribution.lagMs };
+    }
+    const underWay = this.#runUnderWay(now);
+    if (underWay !== null) return { kind: "mid-run", startedAt: underWay.startedAt, dropAt: now };
+    const coverage = watchedBefore(history.readingTimes, now, this.#attribution, this.#readingGapMs);
+    return sawEnough(coverage) ? { kind: "unexplained" } : { kind: "blind", coverage };
+  }
+
+  #blindAt(history: History, dropAt: number): boolean {
+    return !sawEnough(watchedBefore(history.readingTimes, dropAt, this.#attribution, this.#readingGapMs));
   }
 
   async #runStarted(run: SpireRun): Promise<void> {
@@ -166,22 +213,30 @@ export class SpireWatch {
 
   /** The score over the window up to `now`. */
   async #score(now: number): Promise<ForecastEvaluation> {
-    const { runs, drops } = await this.#history(now);
-    return evaluateForecast(runs, drops, this.#attribution, now);
+    const history = await this.#history(now);
+    return evaluateForecast(history.runs, history.drops, this.#attribution, now, (dropAt) =>
+      this.#blindAt(history, dropAt),
+    );
   }
 
   /**
    * The finished runs and the blessings heard before `now`, from where the score window opens: a
    * fortnight back, or where the watch's readings begin if that is later — a blessing from before it
-   * was looking is no miss of its. Stale runs are idlers, never a candidate.
+   * was looking is no miss of its. Stale runs are idlers, never a candidate. The reading times reach
+   * back far enough to say how much the watch saw before the earliest of those blessings.
    */
-  async #history(now: number): Promise<{ runs: FinishedRun[]; drops: number[] }> {
-    const coverage = await this.#snapshots.firstTakenAt();
-    const from = Math.max(now - SCORE_WINDOW_MS, coverage?.getTime() ?? now);
-    const [records, blessings] = await Promise.all([this.#runs.endedSince(new Date(from)), this.#blessings()]);
+  async #history(now: number): Promise<History> {
+    const firstReading = await this.#snapshots.firstTakenAt();
+    const from = Math.max(now - SCORE_WINDOW_MS, firstReading?.getTime() ?? now);
+    const [records, blessings, readings] = await Promise.all([
+      this.#runs.endedSince(new Date(from)),
+      this.#blessings(),
+      this.#snapshots.takenBetween(new Date(from - coverageLookbackMs(this.#attribution)), new Date(now + 1)),
+    ]);
     return {
       runs: records.filter((record) => record.reason !== "stale").map(finished),
       drops: blessings.map((date) => date.getTime()).filter((t) => t >= from && t < now),
+      readingTimes: readings.map((date) => date.getTime()),
     };
   }
 

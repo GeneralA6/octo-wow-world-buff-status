@@ -98,19 +98,36 @@ describe("SpireWatch", () => {
     expect(notices[notices.length - 1]?.body).toContain("Dropped 28m into the run still inside");
   });
 
-  it("owns up to a blessing no run explains", async () => {
+  it("owns up to a blessing no run explains, when it was watching", async () => {
     const { play, watch, notices } = setup();
-    await play([], 0, 5);
-    await watch.onBlessing(new Date(T0 + 5 * MIN));
+    await play([], 0, 160);
+    await watch.onBlessing(new Date(T0 + 160 * MIN));
     expect(notices[0]?.body).toContain("No Spire run explains it");
     expect(notices[0]?.body).toContain("Score: 0/1 blessings explained");
+  });
+
+  it("gives no verdict on a blessing it was too blind to see coming, and does not score it", async () => {
+    const { play, watch, notices, logger } = setup();
+    await play([], 0, 5);
+    await watch.onBlessing(new Date(T0 + 5 * MIN));
+    expect(notices[0]?.body).toContain("The watch saw only 3% of the Spire");
+    expect(notices[0]?.body).toContain("Score: 0/0 blessings explained by a Spire run (0 mid-run), 1 more unscored");
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("the watch was blind — it saw 3% of the Spire before it"));
+  });
+
+  it("is blind to a blessing after its readings stopped coming, however long it watched before", async () => {
+    const { play, watch, notices } = setup();
+    await play([], 0, 160);
+    // Every read after minute 160 went unanswered; the blessing comes at 300.
+    await watch.onBlessing(new Date(T0 + 300 * MIN));
+    expect(notices[0]?.body).toContain("The watch saw only");
   });
 
   it("does not score blessings from before the watch was looking", async () => {
     const { play, watch, notices, blessings } = setup();
     blessings.push(new Date(T0 - 60 * MIN));
-    await play([], 0, 5);
-    await watch.onBlessing(new Date(T0 + 5 * MIN));
+    await play([], 0, 160);
+    await watch.onBlessing(new Date(T0 + 160 * MIN));
     expect(notices[0]?.body).toContain("Score: 0/1 blessings explained");
   });
 

@@ -86,8 +86,9 @@ describe("replayReport", () => {
   });
 
   it("lists the runs and what each blessing was put down to", () => {
-    const lines = replayReport(recorded(), [T0 + 60 * MIN, T0 + 190 * MIN], { ...args, runs: true });
+    const lines = replayReport(recorded(), [T0 + 6 * MIN, T0 + 60 * MIN, T0 + 190 * MIN], { ...args, runs: true });
     expect(lines).toContain("run 2026-09-25 20:02Z -> 20:45Z (43m) peak 10/10, 10 Horde, mostly <Warsong>, left");
+    expect(lines).toContain("blessing 2026-09-25 20:06Z <- blind (the watch saw 4% of the Spire before it)");
     expect(lines).toContain("blessing 2026-09-25 21:00Z <- run from 20:02Z, 15m after it left");
     expect(lines).toContain("blessing 2026-09-25 23:10Z <- no run");
   });
@@ -108,7 +109,7 @@ describe("replayReport", () => {
 });
 
 describe("f1", () => {
-  const evaluation = { drops: 10, attributed: 5, midRun: 0, runs: 10, runsWithDrop: 5, lag: null };
+  const evaluation = { drops: 10, blind: 0, attributed: 5, midRun: 0, runs: 10, runsWithDrop: 5, lag: null };
 
   it("balances blessings explained against runs that led to one", () => {
     expect(f1(evaluation)).toBeCloseTo(0.5);

@@ -29,7 +29,8 @@ describe("openSpireWatch", () => {
     });
     await opened.watch.observe({ present: [], complete: true, at: T0 });
     await opened.watch.onBlessing(new Date(T0 + 5 * MIN));
-    expect(notices[0]?.body).toContain("No Spire run explains it");
+    // Five minutes of readings is too little to fault it for missing a run.
+    expect(notices[0]?.body).toContain("The watch saw only");
     await expect(opened.close()).resolves.toBeUndefined();
   });
 });

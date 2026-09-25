@@ -129,12 +129,16 @@ function runLines(result: ReplayResult): string[] {
       `peak ${run.peak}/${run.size}, ${run.horde} Horde${run.guild ? `, mostly <${run.guild}>` : ""}, ${run.reason}` +
       (run.baseline ? ", baseline" : ""),
   );
+  const blind = new Map(result.blind.map((b) => [b.dropAt, b.coverage]));
   for (const attribution of result.attributions) {
+    const coverage = blind.get(attribution.dropAt);
     lines.push(
       `blessing ${stamp(attribution.dropAt)} <- ` +
-        (attribution.run === null
-          ? "no run"
-          : `run from ${clock(attribution.run.startedAt)}, ${signedClock(attribution.lagMs)} after it left`),
+        (attribution.run !== null
+          ? `run from ${clock(attribution.run.startedAt)}, ${signedClock(attribution.lagMs)} after it left`
+          : coverage !== undefined
+            ? `blind (the watch saw ${Math.round(coverage * 100)}% of the Spire before it)`
+            : "no run"),
     );
   }
   return lines;
