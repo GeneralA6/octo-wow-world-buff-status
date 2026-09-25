@@ -1,5 +1,6 @@
 import { conversationsFor, type Conversation, type Part } from "./banter-lines.js";
 import type { Faction } from "./buff-store.js";
+import { COMEBACKS, SOLO_COMEBACKS } from "./comeback-lines.js";
 import type { ListenerRoster, ShamedBystander, Speaker } from "./listener-roster.js";
 import { SHAME_JOKES, shameJokesFor } from "./shame-jokes.js";
 
@@ -39,6 +40,15 @@ export interface BanterOptions {
 /** The pause between two lines when none is given. */
 export const DEFAULT_LINE_GAP_MS = 10_000;
 
+/** How a listener brought back from the dead was welcomed. */
+export interface WelcomedBack {
+  readonly back: string;
+  /** Its partner, who welcomed it — or null when there was none, and it joked on its own. */
+  readonly partner: string | null;
+  /** False when either died or left the world before the end. */
+  readonly finished: boolean;
+}
+
 /** What to say, and about whom. */
 interface Tale {
   readonly conversation: Conversation;
@@ -55,6 +65,9 @@ export class Banter {
   readonly #recent = new Map<Faction, number[]>();
   /** Per capital, the shame jokes it told lately, the newest last. */
   readonly #recentShame = new Map<Faction, number[]>();
+  /** Per capital, the welcome-backs, and the lone quips, it had lately. */
+  readonly #recentComebacks = new Map<Faction, number[]>();
+  readonly #recentSoloComebacks = new Map<Faction, number[]>();
   readonly #talking = new Set<Faction>();
 
   constructor(roster: ListenerRoster, options: BanterOptions = {}) {
@@ -83,6 +96,38 @@ export class Banter {
     try {
       const finished = await this.#perform(faction, tale.conversation, cast);
       return { faction, between: [first.name, second.name], kind: tale.conversation.kind, about: tale.about, finished };
+    } finally {
+      this.#talking.delete(faction);
+    }
+  }
+
+  /**
+   * `character`, of `faction`'s capital, was just brought back from the dead: a moment after its
+   * thanks to its healer, its partner welcomes it back and it answers — or, with no partner alive and
+   * in world to hear it, it jokes on its own. Null when it is no longer alive and in world by then,
+   * or the pair are talking already.
+   */
+  async welcomeBack(faction: Faction, character: string): Promise<WelcomedBack | null> {
+    if (this.#talking.has(faction)) return null;
+    this.#talking.add(faction);
+    try {
+      await this.#sleep(this.#lineGapMs); // let its thanks be heard first
+      const speakers = this.#roster.speakers(faction);
+      const back = speakers.find((speaker) => speaker.name === character);
+      if (!back) return null;
+      const partners = speakers.filter((speaker) => speaker !== back);
+      const partner = partners[this.#index(partners.length)];
+      if (!partner) {
+        const index = this.#fresh(this.#recentSoloComebacks, faction, [...SOLO_COMEBACKS.keys()]);
+        const line = index === undefined ? undefined : SOLO_COMEBACKS[index];
+        if (line) back.voice.say(line);
+        return { back: character, partner: null, finished: line !== undefined };
+      }
+      const index = this.#fresh(this.#recentComebacks, faction, [...COMEBACKS.keys()]);
+      const comeback = index === undefined ? undefined : COMEBACKS[index];
+      if (!comeback) return null;
+      const finished = await this.#perform(faction, comeback, { a: partner, b: back });
+      return { back: character, partner: partner.name, finished };
     } finally {
       this.#talking.delete(faction);
     }

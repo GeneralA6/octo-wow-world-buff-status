@@ -3,6 +3,7 @@ import { conversationsFor } from "./banter-lines.js";
 import { Banter, DEFAULT_LINE_GAP_MS } from "./banter.js";
 import { ListenerRoster, type ListenerVoice, type ShamedBystander } from "./listener-roster.js";
 import { SHAME_JOKES, WARLOCK_CLASS_ID } from "./shame-jokes.js";
+import { COMEBACKS, SOLO_COMEBACKS } from "./comeback-lines.js";
 
 type SayMock = ReturnType<typeof vi.fn<(line: string) => void>>;
 
@@ -271,5 +272,68 @@ describe("Banter, with a player from the wall of shame in earshot", () => {
     }
     expect(openings).toHaveLength(SHAME_JOKES.length / 2 + 1);
     expect(new Set(openings).size).toBe(openings.length);
+  });
+});
+
+describe("Banter.welcomeBack", () => {
+  it("waits for the thanks to be heard, then the partner welcomes it back and it answers", async () => {
+    const { roster, og, ogb, sw } = city();
+    const waits: number[] = [];
+    const held = await new Banter(roster, { pick: first, sleep: async (ms) => void waits.push(ms) }).welcomeBack(
+      "horde",
+      "Onybuffogb",
+    );
+
+    expect(held).toEqual({ back: "Onybuffogb", partner: "Onyxiabuffog", finished: true });
+    const comeback = COMEBACKS[0]?.lines ?? [];
+    expect(og.say.mock.calls.map(([line]) => line)).toEqual(comeback.filter(([part]) => part === "a").map(([, line]) => line));
+    expect(ogb.say.mock.calls.map(([line]) => line)).toEqual(comeback.filter(([part]) => part === "b").map(([, line]) => line));
+    expect(waits[0]).toBe(DEFAULT_LINE_GAP_MS); // before the first line
+    expect(sw.say).not.toHaveBeenCalled();
+  });
+
+  it("jokes on its own when its partner is dead or out of the world", async () => {
+    const { roster, og, ogb } = city();
+    roster.life("Onyxiabuffog", "horde", false);
+    const held = await new Banter(roster, { pick: first, sleep: instantly }).welcomeBack("horde", "Onybuffogb");
+    expect(held).toEqual({ back: "Onybuffogb", partner: null, finished: true });
+    expect(ogb.say.mock.calls).toEqual([[SOLO_COMEBACKS[0]]]);
+    expect(og.say).not.toHaveBeenCalled();
+  });
+
+  it("says nothing when it died again or left before its turn", async () => {
+    const { roster, og, ogb } = city();
+    const banter = new Banter(roster, { pick: first, sleep: async () => roster.life("Onybuffogb", "horde", false) });
+    expect(await banter.welcomeBack("horde", "Onybuffogb")).toBeNull();
+    expect(og.say).not.toHaveBeenCalled();
+    expect(ogb.say).not.toHaveBeenCalled();
+  });
+
+  it("goes through the other welcome-backs before repeating one", async () => {
+    const { roster, og } = city();
+    const banter = new Banter(roster, { pick: first, sleep: instantly });
+    const openings: string[] = [];
+    for (let i = 0; i < Math.floor(COMEBACKS.length / 2) + 1; i++) {
+      og.say.mockClear();
+      await banter.welcomeBack("horde", "Onybuffogb");
+      const opening = og.say.mock.calls[0]?.[0];
+      if (opening) openings.push(opening);
+    }
+    expect(openings).toHaveLength(Math.floor(COMEBACKS.length / 2) + 1);
+    expect(new Set(openings).size).toBe(openings.length);
+  });
+
+  it("keeps a regular conversation from starting over it", async () => {
+    const { roster } = city();
+    let release: () => void = () => {};
+    const banter = new Banter(roster, { pick: first, sleep: () => new Promise((resolve) => (release = resolve)) });
+    const welcoming = banter.welcomeBack("horde", "Onybuffogb");
+    expect(await banter.converse("horde")).toBeNull();
+    for (let i = 0; i < 10; i++) {
+      release();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    expect((await welcoming)?.finished).toBe(true);
   });
 });
