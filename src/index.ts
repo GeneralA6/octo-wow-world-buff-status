@@ -63,6 +63,7 @@ import { NearbyPlayers, RESURRECTION_BY_CLASS } from "./watcher/nearby-players.j
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
 import { WARCHIEF_DROPS_COLLECTION, WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
 import { openSpireWatch, type OpenedSpireWatch } from "./warchief/open-spire-watch.js";
+import { spireReadDue } from "./warchief/read-cadence.js";
 import { rotatingWho } from "./watcher/who-rotation.js";
 import type { SpireWatch } from "./warchief/spire-watch.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
@@ -725,7 +726,7 @@ async function runConnection(
           const readSpire = async (): Promise<void> => {
             if (spireSource === null || spireWatch === null) return;
             const now = Date.now();
-            if (lastSpireReadAt !== null && now - lastSpireReadAt < config.spirePollMs) return;
+            if (!spireReadDue(lastSpireReadAt, now, config.spirePollMs, POLL_JITTER_RATIO)) return;
             lastSpireReadAt = now;
             await delay(config.whoSliceDelayMs);
             if (settled) return;
