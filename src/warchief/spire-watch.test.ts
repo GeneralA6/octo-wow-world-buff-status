@@ -91,6 +91,21 @@ describe("SpireWatch", () => {
     expect(verdict.body).toContain("Score: 1/1 blessings explained by a Spire run (0 mid-run), 1/1 Horde runs led to one");
   });
 
+  it("credits a run still walking out, before its leaving is confirmed", async () => {
+    const { play, watch, notices } = setup();
+    await play(raid("r", 2, 45), 0, 47); // out since 45; confirmed only at 50
+    await watch.onBlessing(new Date(T0 + 47 * MIN));
+    expect(notices[notices.length - 1]?.body).toContain(`Came 2m after the run from <t:${(T0 + 2 * MIN) / 1000}:t> left`);
+  });
+
+  it("credits a run found already inside when its blessing comes minutes after it walks out", async () => {
+    // 2026-09-25: eleven already inside at the first look (11:58), gone by 12:01, the blessing at 12:02.
+    const { play, watch, notices } = setup();
+    await play(raid("r", -20, 3), 0, 5);
+    await watch.onBlessing(new Date(T0 + 5 * MIN));
+    expect(notices[notices.length - 1]?.body).toContain(`Came 2m after the run from <t:${T0 / 1000}:t> left`);
+  });
+
   it("recognises a blessing that dropped while the run was still inside", async () => {
     const { play, watch, notices } = setup();
     await play(raid("r", 2, 90), 0, 30);

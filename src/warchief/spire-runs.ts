@@ -64,6 +64,9 @@ export interface SpireRun {
   /** Formed from players already inside when the tracker began or came back from a blind gap —
    *  their arrival times are when we first looked, not when they came in. */
   readonly baseline: boolean;
+  /** When its roster started walking out, if it has — the time it will be dated as having left if
+   *  they stay out; null while it holds. */
+  readonly leavingSince: number | null;
 }
 
 /** `left`: its roster walked out. `stale`: still inside past `maxRunMs`. `blind`: gone across a gap
@@ -281,6 +284,7 @@ export class SpireRunTracker {
       roster: [...run.roster.values()],
       peak: run.peak,
       baseline: run.baseline,
+      leavingSince: run.belowSince,
     };
   }
 }

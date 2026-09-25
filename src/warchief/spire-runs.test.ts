@@ -106,6 +106,14 @@ describe("SpireRunTracker", () => {
     expect(tracker.activeRuns()[0]?.roster).toHaveLength(10);
   });
 
+  it("says when a run's roster started walking out, before the leaving is confirmed", () => {
+    const tracker = new SpireRunTracker();
+    replay(readings(raid("r", 10, 2, 45), 0, 44), tracker);
+    expect(tracker.activeRuns()[0]?.leavingSince).toBeNull();
+    replay(readings(raid("r", 10, 2, 45), 45, 47), tracker);
+    expect(tracker.activeRuns()[0]?.leavingSince).toBe(45 * MIN);
+  });
+
   it("never starts a departure on a truncated reading", () => {
     const tracker = new SpireRunTracker();
     replay(readings(raid("r", 10, 2, 60), 0, 30), tracker);

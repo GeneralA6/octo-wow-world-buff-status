@@ -5,8 +5,9 @@ import type { SpireRunEndReason } from "./spire-runs.js";
  * truth the forecast is refined against — and learns from them how long after a run the blessing
  * comes.
  *
- * A blessing is put down to a run when it lands after Rend could have died (`minRendMs` into the run)
- * and no later than `windowMs` after the run left; a run's head drops once, so each run explains at
+ * A blessing is put down to a run when it lands after Rend could have died (`minRendMs` into the run,
+ * or at once for a run found already inside, whose real start we never saw) and no later than
+ * `windowMs` after the run left; a run's head drops once, so each run explains at
  * most one blessing. Of the runs that could explain it, the one whose leaving is nearest in time is
  * chosen. Only a Horde player can turn the head in to Thrall, so a run with no Horde is no candidate
  * unless `requireHorde` is off — which is how a replay measures what that gate is worth.
@@ -66,7 +67,8 @@ export function attributeDrops(
           (candidate) =>
             !claimed.has(candidate) &&
             (!options.requireHorde || candidate.horde > 0) &&
-            dropAt >= candidate.startedAt + options.minRendMs &&
+            // A run found already inside came in before we looked, so its Rend may already be down.
+            dropAt >= candidate.startedAt + (candidate.baseline ? 0 : options.minRendMs) &&
             dropAt <= candidate.endedAt + options.windowMs,
         )
         .sort((a, b) => Math.abs(dropAt - a.endedAt) - Math.abs(dropAt - b.endedAt))[0];

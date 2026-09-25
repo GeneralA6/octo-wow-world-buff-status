@@ -102,6 +102,18 @@ function finished(record: SpireRunRecord): FinishedRun {
   };
 }
 
+/** A run whose roster is walking out, scored as if it left when they began to — the tracker only
+ *  confirms it minutes later, and a head is often turned in before then. */
+function leaving(run: SpireRun, leavingSince: number): FinishedRun {
+  return {
+    startedAt: run.startedAt,
+    endedAt: leavingSince,
+    horde: hordeMembers(run.roster),
+    reason: "left",
+    baseline: run.baseline,
+  };
+}
+
 export class SpireWatch {
   readonly #tracker: SpireRunTracker;
   readonly #snapshots: SpireSnapshotStore;
@@ -160,7 +172,12 @@ export class SpireWatch {
   /** What the blessing at `now` says: explained by a run, dropped mid-run, or — with no run in sight —
    *  missed, unless the watch was too blind to have seen the run. */
   #judge(history: History, drops: readonly number[], now: number): BlessingVerdict {
-    const attribution = attributeDrops(history.runs, drops, this.#attribution).find((a) => a.dropAt === now);
+    const walkingOut = this.#tracker
+      .activeRuns()
+      .flatMap((run) => (run.leavingSince === null ? [] : [leaving(run, run.leavingSince)]));
+    const attribution = attributeDrops([...history.runs, ...walkingOut], drops, this.#attribution).find(
+      (a) => a.dropAt === now,
+    );
     if (attribution !== undefined && attribution.run !== null) {
       return { kind: "explained", run: attribution.run, lagMs: attribution.lagMs };
     }
@@ -240,11 +257,14 @@ export class SpireWatch {
     };
   }
 
-  /** The Horde run under way long enough to have killed Rend — the earliest in, if more than one. */
+  /** The Horde run under way long enough to have killed Rend — or found already inside, its start
+   *  unseen — the earliest in, if more than one. */
   #runUnderWay(now: number): SpireRun | null {
     const candidates = this.#tracker
       .activeRuns()
-      .filter((run) => hordeMembers(run.roster) > 0 && now - run.startedAt >= this.#attribution.minRendMs)
+      .filter(
+        (run) => hordeMembers(run.roster) > 0 && (run.baseline || now - run.startedAt >= this.#attribution.minRendMs),
+      )
       .sort((a, b) => a.startedAt - b.startedAt);
     return candidates[0] ?? null;
   }

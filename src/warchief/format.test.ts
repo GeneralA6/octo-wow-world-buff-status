@@ -20,6 +20,7 @@ const run = (overrides: Partial<SpireRun> = {}): SpireRun => ({
   })),
   peak: 10,
   baseline: false,
+  leavingSince: null,
   ...overrides,
 });
 

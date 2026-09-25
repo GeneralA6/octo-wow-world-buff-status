@@ -41,6 +41,11 @@ describe("attributeDrops", () => {
     expect(attributeDrops([run(0, 40)], [5 * MIN], options)[0]?.run).toBeNull();
   });
 
+  it("credits a run found already inside at once — it came in before we looked", () => {
+    const found = { ...run(0, 3), baseline: true };
+    expect(attributeDrops([found], [5 * MIN], options)[0]).toMatchObject({ run: found, lagMs: 2 * MIN });
+  });
+
   it("leaves a blessing long after every run unexplained — a saved head", () => {
     expect(attributeDrops([run(0, 40)], [300 * MIN], options)[0]).toEqual({ dropAt: 300 * MIN, run: null, lagMs: null });
   });
