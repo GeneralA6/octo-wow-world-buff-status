@@ -2372,9 +2372,10 @@ async function main(): Promise<void> {
   partnerPleaTimer.unref?.();
   // Now and then, the two listeners of each capital talk to each other in /say — only a capital's
   // own pair, and only while both are alive and in world. With a player from the wall of shame in
-  // earshot, every other conversation or so is a joke about them.
+  // earshot, every other conversation or so is a joke about them. One brought back from the dead is
+  // welcomed back, timer or no timer.
+  const banter = new Banter(listenerRoster, { lineGapMs: config.listenerBanterLineGapMs });
   if (config.listenerBanterMs > 0) {
-    const banter = new Banter(listenerRoster, { lineGapMs: config.listenerBanterLineGapMs });
     banterTimer = setInterval(() => {
       for (const faction of ["horde", "alliance"] as const) {
         void banter
@@ -2518,8 +2519,18 @@ async function main(): Promise<void> {
       onWarchiefBlessing: (source, text) => recordWarchiefBlessing(source, text, listener.characterName),
       onLifeChanged: (character, faction, alive) => listenerRoster.life(character, faction, alive),
       onVoice: (character, voice) => listenerRoster.voice(character, voice),
-      onListenerResurrected: (character, by) =>
-        void notifyAdmin("💚 Listener resurrected", `${character} was resurrected by ${by} and accepted — it is alive again.`),
+      onListenerResurrected: (character, by) => {
+        void notifyAdmin("💚 Listener resurrected", `${character} was resurrected by ${by} and accepted — it is alive again.`);
+        if (!listener.faction) return;
+        void banter
+          .welcomeBack(listener.faction, character)
+          .then((welcomed) => {
+            if (!welcomed) return;
+            const how = welcomed.partner ? `${welcomed.partner} welcomed it back` : "it joked on its own";
+            logger.info(`banter: ${character} is back from the dead — ${how}${welcomed.finished ? "" : ", cut short"}`);
+          })
+          .catch((error) => logger.error(`banter (welcome back): ${describeError(error)}`));
+      },
       onConnected: () => announceRealmUp(listener.characterName),
     };
     while (!shuttingDown) {
