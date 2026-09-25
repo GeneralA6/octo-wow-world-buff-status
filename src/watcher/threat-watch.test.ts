@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { UnitOwner } from "../protocol/unit-owner.js";
-import { ThreatWatch, type Threat } from "./threat-watch.js";
+import { ThreatWatch, describeThreat, type Threat } from "./threat-watch.js";
 
 const INFERNAL = 0xf130_0000_5900_0abcn; // creature entry 89
 const GRUNT = 0xf130_000c_9300_0042n;
@@ -159,6 +159,18 @@ describe("ThreatWatch", () => {
     watch.rearm();
     expect(threats).toHaveLength(2);
     expect(threats[1]).toMatchObject({ kind: "infernal", guid: INFERNAL, distance: 5 });
+  });
+
+  it("puts each kind of threat in words, with its distance rounded", () => {
+    expect(describeThreat({ kind: "infernal", guid: INFERNAL, owner: null, distance: 11.6 })).toBe(
+      "an Infernal came within 12 yd",
+    );
+    expect(describeThreat({ kind: "inferno-cast", guid: WARLOCK, distance: 3 })).toBe(
+      "an Inferno is being cast to land within 3 yd",
+    );
+    expect(describeThreat({ kind: "shunned-player", guid: GANKER, distance: 20 })).toBe(
+      "a player on the wall of shame came within 20 yd",
+    );
   });
 
   it("once rearmed with nothing within reach, waits for the next threat to come", () => {

@@ -144,6 +144,16 @@ export class ThreatWatch {
   }
 }
 
+/** A threat in words, for the log: "an Infernal came within 12 yd". */
+export function describeThreat(threat: Threat): string {
+  const what = {
+    infernal: "an Infernal came",
+    "inferno-cast": "an Inferno is being cast to land",
+    "shunned-player": "a player on the wall of shame came",
+  }[threat.kind];
+  return `${what} within ${Math.round(threat.distance)} yd`;
+}
+
 /** Whether a GUID is an Infernal's — its entry sits in its GUID. */
 function isInfernal(guid: bigint): boolean {
   const ref = unitRef(guid);
