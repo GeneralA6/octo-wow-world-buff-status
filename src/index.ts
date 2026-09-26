@@ -1940,6 +1940,7 @@ async function main(): Promise<void> {
     },
     warchiefBlessingAgo: () => warchiefTracker.lastDropAgo(Date.now()),
     areaName: config.watchAreaName,
+    guildName: config.guildName,
     discordInvite: config.discordServerInvite,
     faireAnswer: () => faire.answer(Date.now()),
     onFeedback,

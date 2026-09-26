@@ -32,6 +32,7 @@ function deps(
     now: opts.now,
     isShunned: opts.isShunned,
     areaName: "Onyxia's Lair",
+    guildName: "Rage Quit",
     onFeedback: opts.withFeedback === false ? undefined : (from, text) => feedback.push({ from, text }),
     onSubscribe: (name) => subscribed.push(name),
   });
@@ -346,6 +347,7 @@ describe("CommandRouter", () => {
       store: new InMemorySubscriberStore(),
       activeRaids: () => [],
       areaName: "Onyxia's Lair",
+      guildName: "Rage Quit",
       discordInvite: "https://discord.gg/abc",
     });
     expect((await withInvite.handle("Raider", "whats your discord?")).join(" ")).toContain("https://discord.gg/abc");
@@ -368,6 +370,7 @@ describe("CommandRouter", () => {
       store: new InMemorySubscriberStore(),
       activeRaids: () => [],
       areaName: "Onyxia's Lair",
+      guildName: "Rage Quit",
       discordInvite: "https://discord.gg/abc",
     });
     const reply = (await withInvite.handle("Raider", "discord")).join(" ");
@@ -407,12 +410,11 @@ describe("CommandRouter", () => {
     }
   });
 
-  it("help is concise: status first, one command per line, no guild pitch, no profile/faction/notify", async () => {
+  it("help is concise: status first, invite last, one command per line, no profile/faction/notify", async () => {
     const { router } = deps();
     const lines = await router.handle("Raider", "help");
     expect(lines[0]).toMatch(/^status/i); // status first
-    expect(lines.some((line) => /^invite/i.test(line))).toBe(false); // no "invite" command offered
-    expect(lines.join(" ")).not.toMatch(/guild|Rage Quit/i); // no guild pitch
+    expect(lines[lines.length - 1]).toMatch(/invite/i); // guild invite last
     const help = lines.join(" ");
     expect(help).toMatch(/subscribe \/ unsubscribe/);
     expect(help).toMatch(/discord/i);
