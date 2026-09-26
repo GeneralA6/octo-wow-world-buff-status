@@ -18,7 +18,6 @@ import {
   formatRaidDisbandedWhisper,
   formatCapitalStatusYell,
   formatFeedbackPost,
-  formatGuildWelcome,
   formatHeadIncoming,
   formatWarchiefBlessing,
 } from "./notify/format.js";
@@ -357,7 +356,7 @@ async function runConnection(
   // on a stable, reasonable ping (a raid can't run on a laggy server).
   onLatency: (rttMs: number) => void,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, faire, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, whisperRefusals, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, spireWatch, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, faire, snapshots, store, userLedger, guildieStore, router, dm, outreach, whisperRefusals, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, spireWatch, client } =
     services;
   // One creature query per NPC entry for the life of this connection; a reconnect starts fresh,
   // which is also when a name we failed to resolve gets another chance.
@@ -400,7 +399,6 @@ async function runConnection(
       if (readyTimer) clearTimeout(readyTimer);
       whisperQueue?.stop();
       outreach.setChannel(null); // watcher going away — stop greeting through it
-      router.setGuildInvite(null); // and stop offering guild invites until reconnected
       router.setFactionLookup(null); // and stop the /who-based faction detection
       router.setFactionDetect(null);
       buffDropSink.notify = null; // and stop routing buff-drop whispers until reconnected
@@ -594,26 +592,8 @@ async function runConnection(
       if (name) await lookupFaction(name); // via a listener's /who — never competes with the raid poll
     };
 
-    // Guild invites the bot sends, so a matching JOIN can be welcomed in guild chat. An invite not
-    // accepted within the TTL is stale (the popup lapsed), so we don't welcome on a late/unrelated join.
-    const GUILD_INVITE_TTL_MS = 10 * 60_000;
-    const pendingGuildInvites = new Map<string, number>();
-    const guildInvite = (nameTo: string): void => {
-      pendingGuildInvites.set(nameTo.toLowerCase(), Date.now());
-      world.guildInvite(nameTo);
-      void inviteLedger.record(nameTo).catch((error) => logger.debug(`invites: record failed (${describeError(error)})`));
-    };
-    const welcomeIfWeInvited = (name: string): void => {
-      const invitedAt = pendingGuildInvites.get(name.toLowerCase());
-      if (invitedAt === undefined) return; // joined via someone else's invite — not ours to greet
-      pendingGuildInvites.delete(name.toLowerCase());
-      if (Date.now() - invitedAt > GUILD_INVITE_TTL_MS) return; // accepted too late to be sure it's ours
-      logger.info(`guild: ${name} accepted our invite — welcoming in /g`);
-      world.guildChat(formatGuildWelcome(name));
-      // Count them among the active bot-invited guild members (removed if they later leave).
-      void guildieStore.add(name).catch((error) => logger.debug(`guildies: add failed (${describeError(error)})`));
-    };
-    // A member left / was removed from the guild — if they were one of ours, drop the count.
+    // A member left / was removed from the guild — if they were one the bot once invited, drop the
+    // count. The bot invites no one now; this keeps the count of those it did honest.
     const onGuildLeave = (name: string): void => {
       void guildieStore
         .remove(name)
@@ -675,7 +655,6 @@ async function runConnection(
           // and give the command router the guild-invite capability for the "invite" command.
           if (config.whispersEnabled) {
             outreach.setChannel((nameTo, msg) => whisperQueue?.enqueue(nameTo, msg));
-            router.setGuildInvite(guildInvite);
             // The watcher can now whisper, so route listener-heard buff drops through it.
             buffDropSink.notify = (faction, appliedAt, savedHead) =>
               void raidService.announceBuffDrop(faction, savedHead, appliedAt).catch((error) =>
@@ -829,7 +808,6 @@ async function runConnection(
         onIgnoredBy: ({ name }) => void whisperRefusals.ignoredBy(config.characterName, name),
         onWhisperUndelivered: (name) => whisperRefusals.notFound(config.characterName, name),
         // A player joined the guild — if we invited them, welcome them in /g (no whisper).
-        onGuildJoin: (name) => welcomeIfWeInvited(name),
         onGuildLeave: (name) => onGuildLeave(name),
         // Server SYSTEM messages report command results. Log every one (so real error wording can
         // be captured and added to the classifier), and alert the errors channel on a failure —
@@ -1941,7 +1919,6 @@ async function main(): Promise<void> {
     },
     warchiefBlessingAgo: () => warchiefTracker.lastDropAgo(Date.now()),
     areaName: config.watchAreaName,
-    guildName: config.guildName,
     discordInvite: config.discordServerInvite,
     faireAnswer: () => faire.answer(Date.now()),
     onFeedback,

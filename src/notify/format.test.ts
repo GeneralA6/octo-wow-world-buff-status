@@ -13,7 +13,6 @@ import {
   formatRaidDisbandedWhisper,
   formatCapitalStatusYell,
   formatFeedbackPost,
-  formatGuildWelcome,
   formatWhisperDelayNote,
   humanSpan,
   formatHeadIncoming,
@@ -192,15 +191,6 @@ describe("formatHeadIncoming", () => {
 
   it("maps horde to Orgrimmar", () => {
     expect(formatHeadIncoming("horde", "Thrallfan").title).toBe("⚡ Onyxia buff incoming in Orgrimmar");
-  });
-});
-
-describe("formatGuildWelcome", () => {
-  it("welcomes the member by name, on one line, without naming the guild", () => {
-    const line = formatGuildWelcome("Raider");
-    expect(line).toContain("Raider");
-    expect(line).toMatch(/welcome/i);
-    expect(line).not.toContain("\n");
   });
 });
 

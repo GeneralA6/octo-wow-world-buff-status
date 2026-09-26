@@ -32,7 +32,6 @@ function deps(
     now: opts.now,
     isShunned: opts.isShunned,
     areaName: "Onyxia's Lair",
-    guildName: "Rage Quit",
     onFeedback: opts.withFeedback === false ? undefined : (from, text) => feedback.push({ from, text }),
     onSubscribe: (name) => subscribed.push(name),
   });
@@ -307,24 +306,11 @@ describe("CommandRouter", () => {
     expect(await store.has("Raider")).toBe(true);
   });
 
-  it("answers a guild question with a plain invite offer — no guild name, no recruiting pitch", async () => {
+  it("offers no guild invite: 'invite', 'join' and guild questions get the one-line fallback", async () => {
     const { router } = deps();
-    const reply = (await router.handle("Raider", "how do I join?"))[0];
-    expect(reply).toMatch(/invite/i); // offers the guild-invite command
-    expect(reply).toMatch(/subscribe/i); // and buff alerts
-    expect(reply).not.toMatch(/Rage Quit|recruit/i); // guild attribution removed
-  });
-
-  it("guild-invites SILENTLY on 'invite' when wired (no confirmation), else says it can't", async () => {
-    const { router } = deps();
-    expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
-    const invited: string[] = [];
-    router.setGuildInvite((name) => invited.push(name));
-    const reply = await router.handle("Raider", "invite");
-    expect(invited).toEqual(["Raider"]); // invited
-    expect(reply).toEqual([]); // and NOT told "I sent you" — welcome happens in /g on join
-    router.setGuildInvite(null);
-    expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
+    for (const text of ["invite", "join", "how do I join?", "are you recruiting", "invite me to the guild"]) {
+      expect(await router.handle("Raider", text)).toEqual([UNKNOWN_REPLY]);
+    }
   });
 
   it("answers a buff question with a subscribe nudge", async () => {
@@ -354,8 +340,7 @@ describe("CommandRouter", () => {
       store: new InMemorySubscriberStore(),
       activeRaids: () => [],
       areaName: "Onyxia's Lair",
-      guildName: "Rage Quit",
-      discordInvite: "https://discord.gg/abc",
+        discordInvite: "https://discord.gg/abc",
     });
     expect((await withInvite.handle("Raider", "whats your discord?")).join(" ")).toContain("https://discord.gg/abc");
   });
@@ -375,8 +360,7 @@ describe("CommandRouter", () => {
       store: new InMemorySubscriberStore(),
       activeRaids: () => [],
       areaName: "Onyxia's Lair",
-      guildName: "Rage Quit",
-      discordInvite: "https://discord.gg/abc",
+        discordInvite: "https://discord.gg/abc",
     });
     const reply = (await withInvite.handle("Raider", "discord")).join(" ");
     expect(reply).toContain("https://discord.gg/abc");
@@ -428,11 +412,12 @@ describe("CommandRouter", () => {
     expect(await store.has("Raider")).toBe(false);
   });
 
-  it("help is concise: status first, invite last, one command per line, no profile/faction/notify", async () => {
+  it("help is concise: status first, one command per line, no guild invite, no profile/faction/notify", async () => {
     const { router } = deps();
     const lines = await router.handle("Raider", "help");
     expect(lines[0]).toMatch(/^status/i); // status first
-    expect(lines[lines.length - 1]).toMatch(/invite/i); // guild invite last
+    expect(lines.some((line) => /^invite\b/i.test(line))).toBe(false); // no "invite" command offered
+    expect(lines.join(" ")).not.toMatch(/guild|Rage Quit/i);
     const help = lines.join(" ");
     expect(help).toMatch(/subscribe \/ unsubscribe/);
     expect(help).toMatch(/discord/i);

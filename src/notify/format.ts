@@ -219,12 +219,6 @@ export function formatHeadIncoming(faction: Faction, witness: string): NotifyMes
   };
 }
 
-/** Guild-chat (/g) line welcoming a member who just accepted an invite. Everyone reading it is
- *  already in the guild, so it names no guild — short and warm. */
-export function formatGuildWelcome(name: string): string {
-  return `Welcome to the guild, ${name}! 🎉`;
-}
-
 /** A player's feedback/suggestion, as a plain Discord-channel message that names the
  *  sender and their realm. Posted via the bot (not the webhook), so it's plain content
  *  with markdown. */

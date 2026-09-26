@@ -4,7 +4,6 @@ import { ChatType, GuildEvent, LANG_UNIVERSAL } from "./opcodes.js";
 import {
   buildAddFriend,
   buildDelFriend,
-  buildGuildChat,
   buildJoinChannel,
   buildWhisper,
   buildYell,
@@ -195,15 +194,6 @@ describe("parsePlayerNotFound", () => {
   it("reads the offline target's name", () => {
     const body = new PacketWriter().cString("OfflineGuy").toBuffer();
     expect(parsePlayerNotFound(body)).toBe("OfflineGuy");
-  });
-});
-
-describe("buildGuildChat", () => {
-  it("addresses guild chat, with pipes escaped and no target", () => {
-    const reader = new PacketReader(buildGuildChat("welcome, Raider|X"));
-    expect(reader.u32LE()).toBe(ChatType.Guild);
-    expect(reader.u32LE()).toBe(LANG_UNIVERSAL);
-    expect(reader.cString()).toBe("welcome, Raider||X");
   });
 });
 
