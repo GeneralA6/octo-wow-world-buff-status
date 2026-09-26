@@ -3,7 +3,7 @@ import { describeError } from "./errors.js";
 import type { Logger } from "./logger.js";
 import type { FaireAnswer } from "./darkmoon/observation.js";
 import { AlertDelivery } from "./notify/alert-delivery.js";
-import { yelledInCapitals } from "./notify/city-yell.js";
+import { isAnnounced, yelledInCapitals } from "./notify/raid-alert-reach.js";
 import {
   formatBuffAlert,
   formatBuffDroppedWhisper,
@@ -133,7 +133,7 @@ export function createRaidService(
         label: event.kind,
         discord: formatBuffAlert(event, cities, typical),
         cities,
-        // Yelled in the capitals only when it is the one raid alert that is (see notify/city-yell.ts).
+        // Yelled in the capitals only when it is the one raid alert that is (see notify/raid-alert-reach.ts).
         ...(yelledInCapitals(event.kind) ? { yellFor: (city: Faction) => formatBuffWhisper(event, [city], typical) } : {}),
         whisperFor: (groupCities) => formatBuffWhisper(event, groupCities, typical),
         // Tag with the cities this park-now is about, so a buff dropping there purges it as stale.
@@ -256,6 +256,9 @@ export function createRaidService(
       // re-emitting the same event doesn't re-alert. A fresh drop for the city, or a stale
       // record, reopens it.
       const gateAndAnnounce = async (event: RaidEvent): Promise<void> => {
+        // An alert not sent at all (the start, for now) is not recorded either: nobody was told of it,
+        // so nothing later — a disband's stand-down — is owed for it.
+        if (!isAnnounced(event.kind)) return;
         const raidNumber = event.number ?? null;
         const fresh = await alertPolicy.decide({ cities: lane.cities, kind: event.kind, raidNumber, label: lane.label, now });
         if (fresh.length === 0) return;
@@ -332,11 +335,17 @@ export function createRaidService(
         );
         const notified: Faction[] = [];
         for (const city of lane.cities) {
-          const forming = await broadcasts.last(city, "raid-forming");
           const buffDropAt = await buffTracker.lastDropAt(city);
-          if (!shouldBroadcast(forming, buffDropAt, now, config.broadcastDedupMs)) notified.push(city);
+          // Told of this raid this cycle — by its start, or by a "might end soon" sent before it gave up.
+          for (const kind of ["raid-forming", "raid-ending"] as const) {
+            const told = await broadcasts.last(city, kind);
+            if (!shouldBroadcast(told, buffDropAt, now, config.broadcastDedupMs)) {
+              notified.push(city);
+              break;
+            }
+          }
         }
-        if (notified.length === 0) return; // forming never alerted this cycle — nobody was told to park
+        if (notified.length === 0) return; // no alert went out this cycle — nobody was told to park
         const line = formatRaidDisbandedWhisper(clear.number, clear.durationMs);
         for (const city of notified) {
           whisperPool.dropForFaction(city);

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { yelledInCapitals, type RaidAlertKind } from "./city-yell.js";
+import { isAnnounced, yelledInCapitals, type RaidAlertKind } from "./raid-alert-reach.js";
+
+describe("isAnnounced", () => {
+  it("sends every raid alert but the start", () => {
+    const sent: readonly RaidAlertKind[] = ["raid-ending", "raid-left", "raid-disbanded"];
+    for (const kind of sent) expect(isAnnounced(kind)).toBe(true);
+    expect(isAnnounced("raid-forming")).toBe(false);
+  });
+});
 
 describe("yelledInCapitals", () => {
   it("yells the clear in the capitals — one yell per raid", () => {
