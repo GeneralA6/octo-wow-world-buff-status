@@ -152,7 +152,7 @@ export function createRaidService(
       // A drop whisper delivered minutes late (throttle backlog) is the Owlofelune case — expire it.
       return delivery.sendFactionWhisper(
         faction,
-        formatBuffDroppedWhisper(faction, config.discordServerInvite ?? undefined),
+        formatBuffDroppedWhisper(faction),
         config.whisperMaxAgeMs,
       );
     };
@@ -162,7 +162,7 @@ export function createRaidService(
     const announceWarchiefBlessing = (): Promise<void> =>
       delivery.sendFactionWhisper(
         "horde",
-        formatWarchiefBlessingWhisper(config.discordServerInvite ?? undefined),
+        formatWarchiefBlessingWhisper(),
         config.whisperMaxAgeMs,
       );
 

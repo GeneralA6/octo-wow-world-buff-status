@@ -184,13 +184,9 @@ export function formatBuffDropped(faction: Faction, savedHead = false): NotifyMe
 }
 
 /** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell fires.
- *  A "light" (non-urgent) broadcast, so it carries the Discord nudge — in-game pings are throttled
- *  and can lag, Discord does not. `discordInvite` omitted leaves it off. */
-export function formatBuffDroppedWhisper(faction: Faction, discordInvite?: string): string {
-  // No title here (it's an in-game whisper), so state the buff and city; append the Discord nudge if
-  // set (in-game pings can lag). No tip ask.
-  const cta = discordInvite ? ` In-game pings can lag - Discord is instant: ${discordInvite}` : "";
-  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}!${cta}`;
+ *  Just the news — no Discord link: that is for a player who asks ("discord", listed in help). */
+export function formatBuffDroppedWhisper(faction: Faction): string {
+  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}!`;
 }
 
 /** The Discord post when Thrall's yell lands the Warchief's Blessing on the Horde in Orgrimmar —
@@ -203,10 +199,9 @@ export function formatWarchiefBlessing(): NotifyMessage {
   };
 }
 
-/** The in-game whisper of the same, to Horde subscribers — with the Discord nudge, as a buff drop has. */
-export function formatWarchiefBlessingWhisper(discordInvite?: string): string {
-  const cta = discordInvite ? ` In-game pings can lag - Discord is instant: ${discordInvite}` : "";
-  return `The Warchief's Blessing just dropped in ${CITY_FOR.horde}!${cta}`;
+/** The in-game whisper of the same, to Horde subscribers — the news alone, as a buff drop's is. */
+export function formatWarchiefBlessingWhisper(): string {
+  return `The Warchief's Blessing just dropped in ${CITY_FOR.horde}!`;
 }
 
 /**

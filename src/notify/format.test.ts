@@ -161,15 +161,8 @@ describe("formatWarchiefBlessing", () => {
 });
 
 describe("formatWarchiefBlessingWhisper", () => {
-  it("says it dropped in Orgrimmar, with the Discord nudge when an invite is set", () => {
+  it("says it dropped in Orgrimmar, and nothing about Discord", () => {
     expect(formatWarchiefBlessingWhisper()).toBe("The Warchief's Blessing just dropped in Orgrimmar!");
-    expect(formatWarchiefBlessingWhisper("https://discord.gg/abc")).toBe(
-      "The Warchief's Blessing just dropped in Orgrimmar! In-game pings can lag - Discord is instant: https://discord.gg/abc",
-    );
-  });
-
-  it("fits in one whisper", () => {
-    expect(formatWarchiefBlessingWhisper("https://discord.gg/abcdefghij").length).toBeLessThanOrEqual(255);
   });
 });
 
@@ -182,10 +175,7 @@ describe("formatBuffDroppedWhisper", () => {
     expect(line).not.toMatch(/tip|appreciated|Did you get it/i);
   });
 
-  it("appends a short Discord CTA when an invite is given, and omits it otherwise", () => {
-    const withCta = formatBuffDroppedWhisper("alliance", "discord.gg/xyz");
-    expect(withCta).toContain("Discord is instant: discord.gg/xyz");
-    expect(withCta).toMatch(/lag/i); // explains why (server throttle)
+  it("carries no Discord link — that is for a player who asks", () => {
     expect(formatBuffDroppedWhisper("alliance")).not.toMatch(/discord/i);
   });
 });
@@ -375,8 +365,8 @@ describe("withUnsubscribeHint", () => {
 
   it("keeps the longest alert whisper within the 255-char whisper limit", () => {
     const longest = [
-      formatBuffDroppedWhisper("alliance", "https://discord.gg/3A42BTJhcF"),
-      formatWarchiefBlessingWhisper("https://discord.gg/3A42BTJhcF"),
+      formatBuffDroppedWhisper("alliance"),
+      formatWarchiefBlessingWhisper(),
       formatRaidEndingWhisper(99999, ["alliance", "horde"], 135 * M, "30-50m"),
     ];
     for (const line of longest) expect(withUnsubscribeHint(line).length).toBeLessThanOrEqual(255);
