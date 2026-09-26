@@ -122,7 +122,7 @@ export interface BotConfig {
    *  turn-ins beyond it are labelled "saved head" (an honest under-claim, never a false credit). */
   readonly raidFreshWindowMs: number;
   /** How long the raid's roster must stay gone to count a departure as a real clear rather
-   *  than a wipe (they run back). ~4 min — enough time to corpse-run back to the instance. */
+   *  than a wipe (they run back). 3 min — most corpse runs are back inside it. */
   readonly raidClearSustainedMs: number;
   /** A player counted in one raid cannot found or join a DIFFERENT raid for this long. Onyxia is a
    *  lockout boss — the same character can't be in two raids — so this stops a raid's members,
@@ -435,7 +435,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidMinClearMs = intWithDefault("WOW_RAID_MIN_CLEAR_MINUTES", 10, 1) * 60_000;
   const raidDisbandMs = intWithDefault("WOW_RAID_DISBAND_MINUTES", 20, 1) * 60_000;
   const raidFreshWindowMs = intWithDefault("WOW_DROP_FRESH_WINDOW_MINUTES", 40, 1) * 60_000;
-  const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 4, 1) * 60_000;
+  const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 3, 1) * 60_000;
   const raidLockoutMs = intWithDefault("WOW_RAID_LOCKOUT_HOURS", 2, 1) * 60 * 60_000;
   const raidFormConfirmMs = intWithDefault("WOW_RAID_FORM_CONFIRM_MINUTES", 0, 0) * 60_000;
   // How long a parked listener may hear NO npc chat before it is reported as deaf. Capitals are
