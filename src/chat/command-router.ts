@@ -204,6 +204,9 @@ export class CommandRouter {
         return this.#status(sender, sourceFaction);
       case "help":
       case "commands":
+      case "options":
+      case "settings":
+      case "more":
       case "?":
         // Concise, one command per whisper. Each line is its own whisper and they arrive in order,
         // so the two people actually ask for — what's raiding, and where the faire is — go first,

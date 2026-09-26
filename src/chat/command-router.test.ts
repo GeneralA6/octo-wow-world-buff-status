@@ -413,6 +413,21 @@ describe("CommandRouter", () => {
     }
   });
 
+  it("gives the same help for 'options', 'settings', 'more', 'commands' and '?'", async () => {
+    const { router } = deps();
+    const help = await router.handle("Raider", "help");
+    for (const word of ["options", "settings", "more", "commands", "?", "Settings"]) {
+      expect(await router.handle("Raider", word)).toEqual(help);
+    }
+  });
+
+  it("keeps 'no more' an unsubscribe, not a request for help", async () => {
+    const { store, router } = deps();
+    await router.handle("Raider", "subscribe");
+    expect((await router.handle("Raider", "no more"))[0]).toMatch(/unsubscribed/i);
+    expect(await store.has("Raider")).toBe(false);
+  });
+
   it("help is concise: status first, invite last, one command per line, no profile/faction/notify", async () => {
     const { router } = deps();
     const lines = await router.handle("Raider", "help");
