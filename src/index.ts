@@ -57,6 +57,7 @@ import { tauntFor } from "./watcher/taunts.js";
 import { thanksFor } from "./watcher/thanks.js";
 import { LifeSigns } from "./watcher/life-signs.js";
 import { PartnerPleas } from "./watcher/partner-pleas.js";
+import { WhisperRefusals } from "./chat/whisper-refusals.js";
 import { Banter } from "./watcher/banter.js";
 import { ListenerRoster, type ListenerVoice } from "./watcher/listener-roster.js";
 import { NearbyPlayers, RESURRECTION_BY_CLASS } from "./watcher/nearby-players.js";
@@ -328,6 +329,8 @@ interface ConnectionServices {
   readonly router: CommandRouter;
   readonly dm: DiscordDmSender;
   readonly outreach: Outreach;
+  /** What becomes of the server's word that a player ignores us, or was not online for a whisper. */
+  readonly whisperRefusals: WhisperRefusals;
   readonly buffDropSink: BuffDropSink;
   /** Shared lair-poll signal: the watcher stamps it each /who, the listener's recordBuff reads it to
    *  tell a fresh-kill drop from a saved-head turn-in (empty lair). */
@@ -360,7 +363,7 @@ async function runConnection(
   // on a stable, reasonable ping (a raid can't run on a laggy server).
   onLatency: (rttMs: number) => void,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, faire, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, spireWatch, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, faire, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, whisperRefusals, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, spireWatch, client } =
     services;
   // One creature query per NPC entry for the life of this connection; a reconnect starts fresh,
   // which is also when a name we failed to resolve gets another chance.
@@ -825,6 +828,9 @@ async function runConnection(
         // client wires these; the listeners leave them unset.
         onFriendStatus: (status) => presenceSweeper?.handleFriendStatus(status),
         onFriendList: (list) => presenceSweeper?.handleFriendList(list),
+        // A player ignoring us wants none of our pings; one not online just missed a whisper.
+        onIgnoredBy: ({ name }) => void whisperRefusals.ignoredBy(config.characterName, name),
+        onWhisperUndelivered: (name) => whisperRefusals.notFound(config.characterName, name),
         // A player joined the guild — if we invited them, welcome them in /g (no whisper).
         onGuildJoin: (name) => welcomeIfWeInvited(name),
         onGuildLeave: (name) => onGuildLeave(name),
@@ -912,6 +918,10 @@ interface ListenerHooks {
   readonly onVoice: (character: string, voice: ListenerVoice | null) => void;
   /** A player resurrected this listener, and it accepted. */
   readonly onListenerResurrected: (character: string, by: string) => void;
+  /** "<player> is ignoring you", heard by this listener. */
+  readonly onIgnoredBy: (character: string, player: string) => void;
+  /** A whisper this listener sent found no such player online. */
+  readonly onWhisperUndelivered: (character: string, player: string) => void;
   /** Thrall's Warchief's Blessing yell was heard — Rend's head turned in, in Orgrimmar. */
   readonly onWarchiefBlessing: (sourceName: string, text: string) => void;
   /** Fired once this listener reaches in-world — the realm-recovery signal (see runConnection). */
@@ -944,6 +954,8 @@ async function acceptResurrection(world: WorldClient, resurrector: bigint): Prom
 const LISTENER_LOGOUT_TIMEOUT_MS = 3_000;
 /** How soon a listener that could not log out, mid-fight, tries again — the fight may be over. */
 const LISTENER_LOGOUT_RETRY_MS = 10_000;
+/** How long after acting on a player's "is ignoring you", or a missed whisper to them, the next is let be. */
+const WHISPER_REFUSAL_QUIET_MS = 24 * 60 * 60_000;
 /** How long a character waits on a name query for a GUID another one saw. */
 const PLAYER_NAME_TIMEOUT_MS = 5_000;
 /** How long a listener waits for the server's answer when friending a player to learn their GUID. */
@@ -1368,6 +1380,8 @@ async function runListener(
             })
             .catch((error) => logger.warn(`${listener.characterName}: could not accept a resurrection (${describeError(error)})`)),
         onFriendStatus: (status) => guidProbe.status(status),
+        onIgnoredBy: ({ name }) => hooks.onIgnoredBy(listener.characterName, name),
+        onWhisperUndelivered: (name) => hooks.onWhisperUndelivered(listener.characterName, name),
         onSystemMessage: (text) => {
           if (!text) return;
           // Logged like the watcher's, which they were not: the server answers a refused action
@@ -1698,6 +1712,12 @@ async function main(): Promise<void> {
     });
     if (removed) logger.warn(`subscribers: took our own character ${name} off the subscriber list`);
   }
+  // A player ignoring one of our characters wants none of our pings: off the list. A whisper to one
+  // not online is only logged. Once a day each — an ignore echoes back on every line in earshot.
+  const whisperRefusals = new WhisperRefusals(
+    { unsubscribe: (name) => store.remove(name), log: (line) => logger.info(line), now: () => Date.now() },
+    { quietMs: WHISPER_REFUSAL_QUIET_MS },
+  );
 
   // Raw /who snapshots for offline replay/stats — Mongo when configured, else memory.
   let snapshots: SnapshotStore = new InMemorySnapshotStore();
@@ -2050,6 +2070,7 @@ async function main(): Promise<void> {
     router,
     dm,
     outreach,
+    whisperRefusals,
     buffDropSink,
     lairActivity,
     realmPopulation,
@@ -2534,6 +2555,8 @@ async function main(): Promise<void> {
           })
           .catch((error) => logger.error(`banter (welcome back): ${describeError(error)}`));
       },
+      onIgnoredBy: (character, player) => void whisperRefusals.ignoredBy(character, player),
+      onWhisperUndelivered: (character, player) => whisperRefusals.notFound(character, player),
       onConnected: () => announceRealmUp(listener.characterName),
     };
     while (!shuttingDown) {
