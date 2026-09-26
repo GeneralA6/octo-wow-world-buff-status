@@ -246,7 +246,10 @@ export interface CapitalStatusRaid {
 /**
  * The periodic status board yelled in a capital: the raid in the lair (# and time in, with the
  * typical clear range so a passer-by can judge) and a park nudge — every clear can drop a fresh
- * buff — or, when empty, how a drop happens; and always a subscribe/discord CTA.
+ * buff — and where the Darkmoon Faire is, each followed by the subscribe/discord CTA.
+ *
+ * With no raid in, the lair goes unmentioned — "no raid right now" is not news worth a yell every few
+ * minutes. With neither a raid nor a faire to tell of, there is nothing to yell: null.
  */
 export function formatCapitalStatusYell(
   faction: Faction,
@@ -257,16 +260,15 @@ export function formatCapitalStatusYell(
    *  present on old information. Null/undefined (nothing seen within a week) omits the line; the
    *  yell never shouts an "I do not know". */
   faire?: CapitalStatusFaire | null,
-): string {
+): string | null {
+  if (!raid && !faire) return null;
   const parts: string[] = [];
   if (raid) {
     const id = raid.number !== null ? `#${raid.number}, ` : "";
     const typical = typicalClear ? `, typical clear ${typicalClear}` : "";
     parts.push(
-      `Onyxia raid in progress (${id}~${humanClock(raid.elapsedMs)} in${typical}). The Rallying Cry buff may drop soon.`,
+      `[Onyxia] Onyxia raid in progress (${id}~${humanClock(raid.elapsedMs)} in${typical}). The Rallying Cry buff may drop soon.`,
     );
-  } else {
-    parts.push(`No Onyxia raid right now. The Rallying Cry buff drops when a raid clears.`);
   }
   // Bracketed like the [Onyxia] tag: in a busy capital the yell scrolls past, and the tag is what
   // a reader picks out. A second topic in the same yell needs the same handle.
@@ -278,7 +280,7 @@ export function formatCapitalStatusYell(
     );
   }
   parts.push(`Whisper "subscribe" for pings, "discord" for discord notifications.`);
-  return `[Onyxia] ${parts.join(" ")}`;
+  return parts.join(" ");
 }
 
 // The realm down/up notification moved OUT of this (buff) channel: it is now a transient,

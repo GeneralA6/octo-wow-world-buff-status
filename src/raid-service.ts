@@ -189,8 +189,9 @@ export function createRaidService(
     };
 
     // Every ~10 min, yell a buff-status board in each capital: the raid in the lair (with a
-    // "park" nudge — every clear can drop a fresh buff) or, when empty, how a drop happens, plus
-    // a subscribe/discord CTA. Reaches everyone standing in the city, not just subscribers.
+    // "park" nudge — every clear can drop a fresh buff) and where the faire is, plus a
+    // subscribe/discord CTA — or nothing, with neither to tell of. Reaches everyone standing in the
+    // city, not just subscribers.
     const yellCapitalStatus = async (): Promise<void> => {
       if (!config.whispersEnabled) return;
       const now = Date.now();
@@ -202,7 +203,8 @@ export function createRaidService(
         const yell = yellSink[faction];
         if (!yell) continue; // no listener parked in this capital right now
         const raid = raidStateFor(faction, now);
-        yell(formatCapitalStatusYell(faction, raid, raid ? typical : undefined, faire));
+        const status = formatCapitalStatusYell(faction, raid, raid ? typical : undefined, faire);
+        if (status) yell(status);
       }
     };
 
