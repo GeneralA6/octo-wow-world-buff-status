@@ -21,8 +21,8 @@ export interface CityAlert {
   readonly discord: NotifyMessage;
   /** The cities/factions this alert concerns. */
   readonly cities: readonly Faction[];
-  /** In-capital yell text for one city. */
-  readonly yellFor: (city: Faction) => string;
+  /** In-capital yell text for one city — or none, to leave the capitals quiet for this alert. */
+  readonly yellFor?: (city: Faction) => string;
   /** Subscriber whisper line for a relevant-city group (each subscriber hears only their side). */
   readonly whisperFor: (cities: readonly Faction[]) => string;
   /** Drop a whisper still queued past this (a stale "park now"). */
@@ -63,7 +63,8 @@ export class AlertDelivery {
     await push(alert.discord, alert.cities);
     if (!whispersEnabled) return;
 
-    for (const city of alert.cities) yell(city, alert.yellFor(city));
+    const yellFor = alert.yellFor;
+    if (yellFor) for (const city of alert.cities) yell(city, yellFor(city));
 
     let subs: readonly Subscriber[];
     try {

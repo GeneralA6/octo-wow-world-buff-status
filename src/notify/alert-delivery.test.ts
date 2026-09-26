@@ -48,6 +48,19 @@ describe("AlertDelivery.sendCityAlert", () => {
     expect(whispered).toEqual(["Ally", "Both", "Hordie"]);
   });
 
+  it("leaves the capitals quiet for an alert with nothing to yell, still posting and whispering", async () => {
+    const { delivery, calls } = harness();
+    await delivery.sendCityAlert({
+      label: "raid-forming",
+      discord: msg("a raid is forming"),
+      cities: ["alliance", "horde"],
+      whisperFor: (cs) => `wh-${[...cs].join("+")}`,
+    });
+    expect(calls.push).toHaveLength(1);
+    expect(calls.yell).toEqual([]);
+    expect(calls.whisper.flatMap((w) => [...w.names]).sort()).toEqual(["Ally", "Both", "Hordie"]);
+  });
+
   it("posts to Discord but does not yell or whisper when whispers are disabled", async () => {
     const { delivery, calls } = harness({ whispersEnabled: false });
     await delivery.sendCityAlert({
