@@ -597,32 +597,6 @@ describe("loadConfig listener threats", () => {
   });
 });
 
-describe("loadConfig listener banter", () => {
-  it("defaults to a conversation in each capital every three minutes, its lines ten seconds apart", () => {
-    const config = loadConfig({ ...minimalEnv });
-    expect(config.listenerBanterMs).toBe(3 * 60_000);
-    expect(config.listenerBanterLineGapMs).toBe(10_000);
-  });
-
-  it("takes the gap between lines in seconds, but never none", () => {
-    expect(loadConfig({ ...minimalEnv, WOW_LISTENER_BANTER_LINE_GAP_SECONDS: "7" }).listenerBanterLineGapMs).toBe(7_000);
-    expect(() => loadConfig({ ...minimalEnv, WOW_LISTENER_BANTER_LINE_GAP_SECONDS: "0" })).toThrow(
-      /WOW_LISTENER_BANTER_LINE_GAP_SECONDS must be an integer >= 1/,
-    );
-  });
-
-  it("takes an interval in minutes, or 0 to keep the listeners quiet", () => {
-    expect(loadConfig({ ...minimalEnv, WOW_LISTENER_BANTER_MINUTES: "20" }).listenerBanterMs).toBe(20 * 60_000);
-    expect(loadConfig({ ...minimalEnv, WOW_LISTENER_BANTER_MINUTES: "0" }).listenerBanterMs).toBe(0);
-  });
-
-  it("rejects an interval that is not a whole number of minutes", () => {
-    expect(() => loadConfig({ ...minimalEnv, WOW_LISTENER_BANTER_MINUTES: "2.5" })).toThrow(
-      /WOW_LISTENER_BANTER_MINUTES must be an integer >= 0/,
-    );
-  });
-});
-
 describe("loadConfig listener silence", () => {
   it("defaults to reporting a listener that has heard nothing for six hours", () => {
     expect(loadConfig({ ...minimalEnv }).listenerSilenceMs).toBe(6 * 60 * 60_000);

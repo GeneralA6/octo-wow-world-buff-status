@@ -56,11 +56,7 @@ import { StandDown } from "./watcher/stand-down.js";
 import { tauntFor } from "./watcher/taunts.js";
 import { thanksFor } from "./watcher/thanks.js";
 import { LifeSigns } from "./watcher/life-signs.js";
-import { PartnerPleas } from "./watcher/partner-pleas.js";
 import { WhisperRefusals } from "./chat/whisper-refusals.js";
-import { Banter } from "./watcher/banter.js";
-import { ListenerRoster, type ListenerVoice } from "./watcher/listener-roster.js";
-import { NearbyPlayers, RESURRECTION_BY_CLASS } from "./watcher/nearby-players.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
 import { WARCHIEF_DROPS_COLLECTION, WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
 import { openSpireWatch, type OpenedSpireWatch } from "./warchief/open-spire-watch.js";
@@ -914,10 +910,6 @@ interface ListenerHooks {
   readonly playerNames: PlayerNames;
   /** Where this listener offers its friend-list GUID lookups, for players listed by name alone. */
   readonly playerGuids: PlayerGuids;
-  /** This listener was found alive or dead — its partner asks passers-by for a rez while it is dead. */
-  readonly onLifeChanged: (character: string, faction: Faction | null, alive: boolean) => void;
-  /** This listener came into world and can speak, or — with null — left it. */
-  readonly onVoice: (character: string, voice: ListenerVoice | null) => void;
   /** A player resurrected this listener, and it accepted. */
   readonly onListenerResurrected: (character: string, by: string) => void;
   /** "<player> is ignoring you", heard by this listener. */
@@ -968,12 +960,6 @@ const OWNER_NAME_ATTEMPTS = 20;
 const OWNER_NAME_RETRY_MS = 30_000;
 /** How often a listener notes, at most, that object updates are being cut short. */
 const CUT_SHORT_NOTE_INTERVAL_MS = 10 * 60_000;
-/** How near a player who could resurrect must stand to be asked by name — a resurrection's reach. */
-const HEALER_REACH_YD = 30;
-/** How far a /say carries — the reach within which a player hears the listeners talk about them. */
-const SAY_REACH_YD = 25;
-/** How often a listener asks passers-by to resurrect its dead partner. */
-const PARTNER_PLEA_INTERVAL_MS = 3 * 60_000;
 /** A listener kept away by the same threat reports it at most this often. */
 const STOOD_DOWN_ALERT_INTERVAL_MS = 60 * 60_000;
 
@@ -1027,16 +1013,11 @@ async function runListener(
     // Who each pet, guardian and charmed unit in view answers to — sent only as it comes into view,
     // so kept from then on for a death report to name. A reconnect starts fresh.
     const unitOwners = new UnitOwnerTable();
-    // Where this listener stands, and the players around it — who could resurrect a dead partner, and
-    // who is in earshot.
-    let here: WorldPoint | null = null;
-    const players = new NearbyPlayers();
-    // Alive or dead, from its own health — so its partner knows when to ask passers-by for a rez.
+    // Alive or dead, from its own health — a dead listener never logs out, so it can be resurrected.
     // Not known until the first health reading, which counts as alive.
     let alive: boolean | null = null;
     const lifeSigns = new LifeSigns((now) => {
       alive = now;
-      hooks.onLifeChanged(listener.characterName, listener.faction, now);
     });
     // Learns the GUID of a player listed by name alone, by briefly friending them on this account.
     const guidProbe = new GuidProbe(
@@ -1152,7 +1133,6 @@ async function runListener(
       listenerWhispers.stop();
       hooks.playerNames.unregister(listener.characterName);
       hooks.playerGuids.unregister(listener.characterName);
-      hooks.onVoice(listener.characterName, null);
       if (listener.faction && registeredYell && yellSink[listener.faction] === registeredYell) {
         delete yellSink[listener.faction];
       }
@@ -1205,34 +1185,6 @@ async function runListener(
           // Name GUIDs for the others — the owner of an Infernal another listener fled from.
           hooks.playerNames.register(listener.characterName, (guid) => world.resolveName(guid, PLAYER_NAME_TIMEOUT_MS));
           hooks.playerGuids.register(listener.characterName, (name) => guidProbe.lookup(name));
-          // Lend its voice — for asking passers-by to resurrect a partner lying dead beside it, and for
-          // talking with its partner.
-          hooks.onVoice(listener.characterName, {
-            say: (line) => {
-              try {
-                world.say(line);
-              } catch (error) {
-                logger.debug(`${listener.characterName}: could not /say (${describeError(error)})`);
-              }
-            },
-            // The players on the wall of shame close enough to hear this listener talk about them.
-            shamedNearby: () => {
-              if (!here) return [];
-              return players.around(here, SAY_REACH_YD).flatMap((near) => {
-                const name = hooks.isShunned(near.guid) ? hooks.knownName(near.guid) : undefined;
-                return name ? [{ name, classId: near.classId }] : [];
-              });
-            },
-            // The nearest player of this city's side who could resurrect, named — asked by name.
-            healerNearby: async (exclude) => {
-              if (!here || !listener.faction) return null;
-              const near = players.nearestHealer(here, HEALER_REACH_YD, listener.faction, exclude);
-              const spell = near ? RESURRECTION_BY_CLASS.get(near.classId) : undefined;
-              if (!near || !spell) return null;
-              const name = await world.resolveName(near.guid, PLAYER_NAME_TIMEOUT_MS);
-              return name ? { guid: near.guid, name, spell } : null;
-            },
-          });
           // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone standing
           // in this capital — only when a faction is set AND this listener is a yeller. A second bot
           // in the same city with yeller=false stays whisper-only, so the two don't churn the single
@@ -1366,12 +1318,8 @@ async function runListener(
         onObjectDestroyed: (guid) => {
           unitOwners.forget(guid);
           threats.gone(guid);
-          players.gone(guid);
         },
-        onMovement: (move) => {
-          threats.moved(move);
-          players.moved(move);
-        },
+        onMovement: (move) => threats.moved(move),
         onSpellStart: (cast) => threats.castStarted(cast),
         onResurrectRequest: (resurrector) =>
           void acceptResurrection(world, resurrector)
@@ -1418,21 +1366,10 @@ async function runListener(
             // Owners first, so an Infernal arriving in this same packet is judged with its owner known.
             for (const change of parsed.ownerChanges) {
               unitOwners.apply(change);
-              if (change.kind === "out-of-range") {
-                threats.gone(change.guid);
-                players.gone(change.guid);
-              }
+              if (change.kind === "out-of-range") threats.gone(change.guid);
             }
-            if (parsed.self) {
-              here = parsed.self;
-              threats.self(parsed.self);
-            }
-            // Players first, so a healer coming into view is known before their position is placed.
-            for (const player of parsed.players) players.seen(player);
-            for (const position of parsed.positions) {
-              threats.moved(position);
-              players.moved(position);
-            }
+            if (parsed.self) threats.self(parsed.self);
+            for (const position of parsed.positions) threats.moved(position);
             if (parsed.selfHealth !== null) {
               deathWatch.health(parsed.selfHealth);
               lifeSigns.health(parsed.selfHealth);
@@ -1604,8 +1541,6 @@ async function main(): Promise<void> {
   let darkmoonWidget: DarkmoonWidget | null = null;
   let darkmoonRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let shameSweepTimer: ReturnType<typeof setInterval> | null = null;
-  let partnerPleaTimer: ReturnType<typeof setInterval> | null = null;
-  let banterTimer: ReturnType<typeof setInterval> | null = null;
   let wallOfShame: WallOfShame | null = null;
 
   const watchOptions: RaidTrackerOptions = {
@@ -2107,8 +2042,6 @@ async function main(): Promise<void> {
     if (statusRefreshTimer) clearInterval(statusRefreshTimer);
     if (darkmoonRefreshTimer) clearInterval(darkmoonRefreshTimer);
     if (shameSweepTimer) clearInterval(shameSweepTimer);
-    if (partnerPleaTimer) clearInterval(partnerPleaTimer);
-    if (banterTimer) clearInterval(banterTimer);
     // Exit even if a store.close() hangs, so we log out fast and don't overlap a redeploy.
     const hardExit = setTimeout(() => process.exit(0), 3_000);
     hardExit.unref?.();
@@ -2383,39 +2316,6 @@ async function main(): Promise<void> {
    *  wall. The listener that saw it has gone, so the others name the owner, trying for a few minutes
    *  in case none of them is in world yet. */
   const lastStoodDownAlert = new Map<string, number>();
-  // While a listener lies dead, its partner in the same capital asks passers-by for a resurrection.
-  // Which listeners are alive and able to speak — shared by their pleas and their conversations.
-  const listenerRoster = new ListenerRoster();
-  const partnerPleas = new PartnerPleas(listenerRoster);
-  partnerPleaTimer = setInterval(() => {
-    void partnerPleas
-      .plead()
-      .then((pleas) => {
-        for (const plea of pleas) logger.info(`${plea.by}: asked ${plea.healer ?? "passers-by"} to resurrect ${plea.for}`);
-      })
-      .catch((error) => logger.error(`partner pleas: ${describeError(error)}`));
-  }, PARTNER_PLEA_INTERVAL_MS);
-  partnerPleaTimer.unref?.();
-  // Now and then, the two listeners of each capital talk to each other in /say — only a capital's
-  // own pair, and only while both are alive and in world. With a player from the wall of shame in
-  // earshot, every other conversation or so is a joke about them. One brought back from the dead is
-  // welcomed back, timer or no timer.
-  const banter = new Banter(listenerRoster, { lineGapMs: config.listenerBanterLineGapMs });
-  if (config.listenerBanterMs > 0) {
-    banterTimer = setInterval(() => {
-      for (const faction of ["horde", "alliance"] as const) {
-        void banter
-          .converse(faction)
-          .then((held) => {
-            if (!held) return;
-            const about = held.about ? ` about ${held.about}` : "";
-            logger.info(`banter: ${held.between.join(" and ")} told a ${held.kind}${about}${held.finished ? "" : ", cut short"}`);
-          })
-          .catch((error) => logger.error(`banter (${faction}): ${describeError(error)}`));
-      }
-    }, config.listenerBanterMs);
-    banterTimer.unref?.();
-  }
 
   const onListenerThreatened = (character: string, threat: Threat, stood: "left" | "cornered"): void => {
     const distance = `${Math.round(threat.distance)} yd`;
@@ -2543,20 +2443,8 @@ async function main(): Promise<void> {
       playerNames,
       playerGuids,
       onWarchiefBlessing: (source, text) => recordWarchiefBlessing(source, text, listener.characterName),
-      onLifeChanged: (character, faction, alive) => listenerRoster.life(character, faction, alive),
-      onVoice: (character, voice) => listenerRoster.voice(character, voice),
-      onListenerResurrected: (character, by) => {
-        void notifyAdmin("💚 Listener resurrected", `${character} was resurrected by ${by} and accepted — it is alive again.`);
-        if (!listener.faction) return;
-        void banter
-          .welcomeBack(listener.faction, character)
-          .then((welcomed) => {
-            if (!welcomed) return;
-            const how = welcomed.partner ? `${welcomed.partner} welcomed it back` : "it joked on its own";
-            logger.info(`banter: ${character} is back from the dead — ${how}${welcomed.finished ? "" : ", cut short"}`);
-          })
-          .catch((error) => logger.error(`banter (welcome back): ${describeError(error)}`));
-      },
+      onListenerResurrected: (character, by) =>
+        void notifyAdmin("💚 Listener resurrected", `${character} was resurrected by ${by} and accepted — it is alive again.`),
       onIgnoredBy: (character, player) => void whisperRefusals.ignoredBy(character, player),
       onWhisperUndelivered: (character, player) => whisperRefusals.notFound(character, player),
       onConnected: () => announceRealmUp(listener.characterName),

@@ -78,10 +78,6 @@ export interface BotConfig {
   /** Whether a listener also leaves when a player on the wall of shame merely stands close. Off by
    *  default: their Inferno is caught as it is cast, so the listener can stay up beside them. */
   readonly listenerFleeShunnedPlayers: boolean;
-  /** How often the two listeners of each capital hold a conversation in /say; 0 = never. */
-  readonly listenerBanterMs: number;
-  /** The pause between one line of a listeners' conversation and the next. */
-  readonly listenerBanterLineGapMs: number;
   readonly watchAreaId: number;
   readonly watchAreaName: string;
   /** Members a cohort must reach for a raid to count as forming ("about to start") — when the
@@ -455,8 +451,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const listenerStandDownMs = intWithDefault("WOW_LISTENER_STAND_DOWN_MINUTES", 5, 1) * 60_000;
   const fleeShunnedRaw = env.WOW_LISTENER_FLEE_SHUNNED_PLAYERS?.trim().toLowerCase();
   const listenerFleeShunnedPlayers = fleeShunnedRaw === "true" || fleeShunnedRaw === "1";
-  const listenerBanterMs = intWithDefault("WOW_LISTENER_BANTER_MINUTES", 3, 0) * 60_000;
-  const listenerBanterLineGapMs = intWithDefault("WOW_LISTENER_BANTER_LINE_GAP_SECONDS", 10, 1) * 1_000;
   // Off by default: a city-wide yell every few minutes, the same words each time, wore on players.
   const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 0, 0) * 60_000;
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
@@ -629,8 +623,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     listenerThreatRadiusYd,
     listenerStandDownMs,
     listenerFleeShunnedPlayers,
-    listenerBanterMs,
-    listenerBanterLineGapMs,
     watchAreaId,
     watchAreaName,
     minRaidSize,
