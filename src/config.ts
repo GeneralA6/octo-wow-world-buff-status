@@ -259,18 +259,10 @@ export interface BotConfig {
   /** If set, an "interact" listener only `use`s a GameObject of THIS entry (the stone bench),
    *  ignoring closer non-bench clutter. Null = use whatever object is nearest. */
   readonly interactEntry: number | null;
-  /** Guild the bot represents — used in the intro whisper and for auto-invites. */
+  /** Guild the bot represents — credited in the intro whisper. */
   readonly guildName: string;
-  /** A short region/timezone descriptor for the guild, woven into the recruiting line so a
-   *  prospective member knows when it plays (e.g. "an Aussie guild, ACST (UTC+9:30)"). Empty
-   *  omits it. */
-  readonly guildRegion: string;
   /** Community name used in the intro whisper. */
   readonly community: string;
-  /** Who built the bot — credited in the intro whisper and named for optional gold tips. */
-  readonly author: string;
-  /** Auto guild-invite players who contact a listener. Needs the watcher to be guilded. */
-  readonly guildInviteEnabled: boolean;
   /** Chronicle early-confirm: during a departure we detect, a fresh community Onyxia-kill log by
    *  one of the raid's roster confirms the clear and lets us skip the sustained wait (never a
    *  trigger on its own). Needs MongoDB for the dedup ledger; off without it. */
@@ -581,11 +573,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const interactEntry = interactEntryRaw && /^\d+$/.test(interactEntryRaw) ? Number(interactEntryRaw) : null;
 
   const guildName = env.WOW_GUILD_NAME?.trim() || "Rage Quit";
-  const guildRegion = env.WOW_GUILD_REGION?.trim() ?? "an Aussie guild, ACST (UTC+9:30)";
   const community = env.WOW_COMMUNITY?.trim() || "OctoWoW";
-  const author = env.WOW_AUTHOR?.trim() || "Gibom";
-  const inviteRaw = env.WOW_GUILD_INVITE?.trim().toLowerCase();
-  const guildInviteEnabled = inviteRaw === "true" || inviteRaw === "1";
 
   // Chronicle early-confirm: on by default (a no-op without Mongo), disabled with false/0/none.
   const chronicleRaw = env.CHRONICLE_ENABLED?.trim().toLowerCase();
@@ -685,10 +673,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     interactMaxYd,
     interactEntry,
     guildName,
-    guildRegion,
     community,
-    author,
-    guildInviteEnabled,
     chronicleEnabled,
     logLevel,
   };

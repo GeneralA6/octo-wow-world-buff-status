@@ -355,9 +355,7 @@ describe("loadConfig", () => {
   it("defaults the guild/community settings and reads overrides", () => {
     const bare = loadConfig({ ...minimalEnv });
     expect(bare.guildName).toBe("Rage Quit");
-    expect(bare.guildRegion).toBe("an Aussie guild, ACST (UTC+9:30)");
     expect(bare.community).toBe("OctoWoW");
-    expect(bare.author).toBe("Gibom");
     expect(bare.discordFeedbackChannelId).toBeNull();
     expect(bare.discordOnyxiaChannelId).toBeNull();
     expect(bare.discordErrorsChannelId).toBeNull();
@@ -368,14 +366,10 @@ describe("loadConfig", () => {
     expect(bare.statusChannelName).toBe("server-status");
     expect(bare.discordAllianceRoleId).toBeNull();
     expect(bare.discordHordeRoleId).toBeNull();
-    expect(bare.guildInviteEnabled).toBe(false);
     const configured = loadConfig({
       ...minimalEnv,
       WOW_GUILD_NAME: "Late Night",
-      WOW_GUILD_REGION: "an EU guild, CET",
       WOW_COMMUNITY: "Turtle",
-      WOW_AUTHOR: "Someone",
-      WOW_GUILD_INVITE: "true",
       DISCORD_FEEDBACK_CHANNEL_ID: "1543926066907844729",
       DISCORD_ONYXIA_CHANNEL_ID: "1544021433720635392",
       DISCORD_ERRORS_CHANNEL_ID: "1544243835771551794",
@@ -388,9 +382,7 @@ describe("loadConfig", () => {
       DISCORD_HORDE_ROLE_ID: "222",
     });
     expect(configured.guildName).toBe("Late Night");
-    expect(configured.guildRegion).toBe("an EU guild, CET");
     expect(configured.community).toBe("Turtle");
-    expect(configured.author).toBe("Someone");
     expect(configured.discordFeedbackChannelId).toBe("1543926066907844729");
     expect(configured.discordOnyxiaChannelId).toBe("1544021433720635392");
     expect(configured.discordErrorsChannelId).toBe("1544243835771551794");
@@ -401,7 +393,6 @@ describe("loadConfig", () => {
     expect(configured.statusChannelName).toBe("realm-status");
     expect(configured.discordAllianceRoleId).toBe("111");
     expect(configured.discordHordeRoleId).toBe("222");
-    expect(configured.guildInviteEnabled).toBe(true);
   });
 
   it("defaults the Chronicle early-confirm on, and reads the disable overrides", () => {

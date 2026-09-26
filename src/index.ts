@@ -399,7 +399,7 @@ async function runConnection(
       if (factionResolveTimer) clearInterval(factionResolveTimer);
       if (readyTimer) clearTimeout(readyTimer);
       whisperQueue?.stop();
-      outreach.setChannel(null, null); // watcher going away — stop greeting through it
+      outreach.setChannel(null); // watcher going away — stop greeting through it
       router.setGuildInvite(null); // and stop offering guild invites until reconnected
       router.setFactionLookup(null); // and stop the /who-based faction detection
       router.setFactionDetect(null);
@@ -676,7 +676,7 @@ async function runConnection(
           // Offer Bufftracker's outbound channel so listeners can greet players through it,
           // and give the command router the guild-invite capability for the "invite" command.
           if (config.whispersEnabled) {
-            outreach.setChannel((nameTo, msg) => whisperQueue?.enqueue(nameTo, msg), guildInvite);
+            outreach.setChannel((nameTo, msg) => whisperQueue?.enqueue(nameTo, msg));
             router.setGuildInvite(guildInvite);
             // The watcher can now whisper, so route listener-heard buff drops through it.
             buffDropSink.notify = (faction) =>
@@ -1940,8 +1940,6 @@ async function main(): Promise<void> {
     },
     warchiefBlessingAgo: () => warchiefTracker.lastDropAgo(Date.now()),
     areaName: config.watchAreaName,
-    guildName: config.guildName,
-    community: config.community,
     discordInvite: config.discordServerInvite,
     faireAnswer: () => faire.answer(Date.now()),
     onFeedback,
@@ -1953,10 +1951,7 @@ async function main(): Promise<void> {
   const outreach = new Outreach(
     {
       guildName: config.guildName,
-      guildRegion: config.guildRegion,
       community: config.community,
-      guildInviteEnabled: config.guildInviteEnabled,
-      author: config.author,
     },
     // Introduce Bufftracker to anyone who isn't a subscriber yet — once per player (introStore).
     (name) => store.has(name),

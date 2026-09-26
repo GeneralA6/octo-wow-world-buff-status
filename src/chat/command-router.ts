@@ -63,11 +63,6 @@ export interface CommandDeps {
   /** Raids in progress across all factions — for the status command. */
   readonly activeRaids: () => readonly ActiveRaid[];
   readonly areaName: string;
-  /** Guild + community identity. `guildName` names the guild only on the "invite" help line
-   *  ("join <guild>"); guild attribution was otherwise pulled from the replies. `community` is
-   *  unused here now (the outreach intro carries it). Kept wired for the deferred guild discussion. */
-  readonly guildName: string;
-  readonly community: string;
   /** The community Discord server invite link, shared by the "discord" command.
    *  Null/undefined = not configured, and the command says so. */
   readonly discordInvite?: string | null;
@@ -206,15 +201,14 @@ export class CommandRouter {
       case "commands":
       case "?":
         // Concise, one command per whisper. Each line is its own whisper and they arrive in order,
-        // so the two people actually ask for — what's raiding, and where the faire is — go first,
-        // and the guild invite last.
+        // so the two people actually ask for — what's raiding, and where the faire is — go first. No
+        // guild pitch: "invite" still works for one who asks, but help does not advertise it.
         return [
           `status - what's raiding Onyxia now, and when the buff last dropped`,
           `darkmoon - where the Darkmoon Faire was last seen`,
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
           `discord - our Discord invite link`,
           `feedback <message> - send a suggestion or bug report`,
-          `invite - join <${this.#deps.guildName}>`,
         ];
       default: {
         // Natural-language intent detection over the whole message.

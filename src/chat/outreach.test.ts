@@ -1,63 +1,40 @@
 import { describe, expect, it } from "vitest";
 import { silentLogger } from "../logger.js";
-import { Outreach, introLines, recruitingLine } from "./outreach.js";
+import { Outreach, introLine } from "./outreach.js";
 import { InMemoryIntroStore } from "./intro-store.js";
 import type { Faction } from "../subscribers/store.js";
 
 const config = {
   guildName: "Rage Quit",
-  guildRegion: "an Aussie guild, ACST (UTC+9:30)",
   community: "OctoWoW",
-  guildInviteEnabled: false,
-  author: "Gibom",
 };
 
-describe("introLines", () => {
+describe("introLine", () => {
   it("introduces itself, says what it does, and points at subscribe/help", () => {
-    const lines = introLines(config).join(" ");
-    expect(lines).toMatch(/world-?buff tracker/i);
-    expect(lines).toContain("Rallying Cry");
-    expect(lines).toMatch(/subscribe/i);
-    expect(lines).toMatch(/"help" for more/);
+    const line = introLine(config);
+    expect(line).toMatch(/world-?buff tracker/i);
+    expect(line).toContain("Rallying Cry");
+    expect(line).toMatch(/subscribe/i);
+    expect(line).toMatch(/"help" for more/);
   });
 
-  it("attributes to the guild for the community, and states recruiting", () => {
-    const lines = introLines(config).join(" ");
-    expect(lines).toContain("Rage Quit"); // the guild running it
-    expect(lines).toContain("OctoWoW"); // the community it serves
-    expect(lines).toMatch(/recruit/i); // recruiting
-    expect(lines).toMatch(/invite/i); // and how to get an invite
+  it("attributes to the guild for the community, but recruits for nothing and offers no invite", () => {
+    const line = introLine(config);
+    expect(line).toContain("Rage Quit"); // the guild running it
+    expect(line).toContain("OctoWoW"); // the community it serves
+    expect(line).not.toMatch(/recruit|invite/i);
   });
 
-  it("keeps it to two whispers and carries no tips (those ride the buff-drop message)", () => {
-    const lines = introLines(config);
-    expect(lines).toHaveLength(2);
-    expect(lines.join(" ")).not.toMatch(/gold|tip/i);
-    for (const line of lines) expect(line.length).toBeLessThanOrEqual(255); // client line limit
-  });
-
-});
-
-describe("recruitingLine", () => {
-  it("names the guild + its region, recruits, and points at the invite command — no subscribe pitch", () => {
-    const line = recruitingLine(config);
-    expect(line).toContain("Rage Quit");
-    expect(line).toContain("an Aussie guild, ACST (UTC+9:30)"); // region woven in
-    expect(line).toMatch(/recruit/i);
-    expect(line).toMatch(/invite/i);
-    expect(line).not.toMatch(/whisper "subscribe"/i);
-  });
-
-  it("omits the region cleanly when it's empty", () => {
-    const line = recruitingLine({ ...config, guildRegion: "" });
-    expect(line).toBe(`<Rage Quit> is recruiting, too - whisper "invite" any time and I'll send you a guild invite.`);
+  it("is one whisper, under the client's line limit, with no tips", () => {
+    const line = introLine(config);
+    expect(line.length).toBeLessThanOrEqual(255);
+    expect(line).not.toMatch(/gold|tip/i);
   });
 });
 
 describe("Outreach", () => {
   function make(cfg = config, subscribed: string[] = [], shunned: string[] = []) {
     const whispers: { to: string; msg: string }[] = [];
-    const invites: string[] = [];
     const routed: { sender: string; text: string }[] = [];
     const hints: (Faction | null)[] = [];
     const subs = new Set(subscribed.map((n) => n.toLowerCase()));
@@ -69,16 +46,13 @@ describe("Outreach", () => {
       new InMemoryIntroStore(),
       silentLogger,
     );
-    outreach.setChannel(
-      (to, msg) => whispers.push({ to, msg }),
-      (to) => invites.push(to),
-    );
+    outreach.setChannel((to, msg) => whispers.push({ to, msg }));
     outreach.setHandler(async (sender, text, sourceFaction) => {
       routed.push({ sender, text });
       hints.push(sourceFaction);
       return [`reply to ${text}`];
     });
-    return { outreach, whispers, invites, routed, hints, subs };
+    return { outreach, whispers, routed, hints, subs };
   }
 
   const isIntro = (msg: string): boolean => /world-buff tracker/i.test(msg);
@@ -95,16 +69,16 @@ describe("Outreach", () => {
     expect(routed).toEqual([{ sender: "Raider", text: "discord" }]);
   });
 
-  it("a first-contact subscribe gets NO intro — just the reply, then a recruiting follow-up", async () => {
+  it("a first-contact subscribe gets the confirmation alone — no intro, no follow-up", async () => {
     const { outreach, whispers } = make();
     await outreach.onListenerContact("Raider", "subscribe", "horde"); // their FIRST message is subscribe
-    const msgs = whispers.map((w) => w.msg);
-    expect(msgs.some((m) => isIntro(m))).toBe(false); // no "I'm the tracker" identity line at all
-    const reply = "reply to subscribe"; // the mock stands in for "You're subscribed!"
-    const recruit = recruitingLine(config);
-    expect(msgs).toContain(reply);
-    expect(msgs).toContain(recruit);
-    expect(msgs.indexOf(recruit)).toBeGreaterThan(msgs.indexOf(reply)); // recruiting AFTER the confirmation
+    expect(whispers.map((w) => w.msg)).toEqual(["reply to subscribe"]); // the mock stands in for "You're subscribed!"
+  });
+
+  it("a first contact that is not a subscribe gets its answer and the one intro line, nothing more", async () => {
+    const { outreach, whispers } = make();
+    await outreach.onListenerContact("Raider", "hi", "horde");
+    expect(whispers.map((w) => w.msg)).toEqual(["reply to hi", introLine(config)]);
   });
 
   it("the confirmation reply is identical whether they subscribe first or after a 'hey'", async () => {
@@ -161,38 +135,16 @@ describe("Outreach", () => {
     await outreach.onListenerContact("Raider", "hi"); // no channel → not greeted, not routed
     expect(whispers).toEqual([]);
     expect(routed).toEqual([]);
-    outreach.setChannel((_to, msg) => whispers.push(msg), null);
+    outreach.setChannel((_to, msg) => whispers.push(msg));
     await outreach.onListenerContact("Raider", "hi");
     expect(routed).toEqual(["hi"]);
     expect(whispers).toContain("ok");
   });
 
-  it("guild-invites a non-subscriber SILENTLY when enabled — no 'I sent you' whisper", async () => {
-    const { outreach, whispers, invites } = make({ ...config, guildInviteEnabled: true });
-    await outreach.onListenerContact("Raider", "hi");
-    expect(invites).toEqual(["Raider"]); // invited
-    // The intro mentions the "invite" command (recruiting), but nothing CONFIRMS one was sent.
-    expect(whispers.some((w) => /sent you|i'?ve invited|invited you/i.test(w.msg))).toBe(false);
-  });
-
-  it("invites only ONCE, on first contact", async () => {
-    const { outreach, invites } = make({ ...config, guildInviteEnabled: true });
-    await outreach.onListenerContact("Raider", "hi");
-    await outreach.onListenerContact("Raider", "still here"); // second contact
-    expect(invites).toEqual(["Raider"]); // not invited again
-  });
-
-  it("does not invite when disabled", async () => {
-    const { outreach, invites } = make({ ...config, guildInviteEnabled: false });
-    await outreach.onListenerContact("Raider", "hi");
-    expect(invites).toEqual([]);
-  });
-
-  it("never greets or invites a player on the wall of shame — only the engine's answer goes back", async () => {
-    const { outreach, whispers, invites, routed } = make({ ...config, guildInviteEnabled: true }, [], ["Ganker"]);
-    await outreach.onListenerContact("Ganker", "subscribe", "horde");
-    expect(routed).toEqual([{ sender: "Ganker", text: "subscribe" }]); // the engine refuses them
-    expect(whispers.map((w) => w.msg)).toEqual(["reply to subscribe"]); // no intro, no recruiting line
-    expect(invites).toEqual([]);
+  it("never greets a player on the wall of shame — only the engine's answer goes back", async () => {
+    const { outreach, whispers, routed } = make(config, [], ["Ganker"]);
+    await outreach.onListenerContact("Ganker", "hi", "horde");
+    expect(routed).toEqual([{ sender: "Ganker", text: "hi" }]); // the engine refuses them
+    expect(whispers.map((w) => w.msg)).toEqual(["reply to hi"]); // no intro
   });
 });

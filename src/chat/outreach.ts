@@ -5,17 +5,10 @@ import type { IntroStore } from "./intro-store.js";
 
 export interface OutreachConfig {
   readonly guildName: string;
-  /** Short region/timezone descriptor woven into the recruiting line (e.g. "an Aussie guild,
-   *  ACST (UTC+9:30)"). Empty omits it. */
-  readonly guildRegion: string;
   readonly community: string;
-  readonly guildInviteEnabled: boolean;
-  /** Who made the bot — credited in the intro and named for optional gold tips. */
-  readonly author: string;
 }
 
 export type WhisperFn = (target: string, message: string) => void;
-export type GuildInviteFn = (target: string) => void;
 /** Runs a player's message through the command engine and returns the reply line(s).
  *  `sourceFaction` is the player's side when they reached us through a faction-specific listener —
  *  safe to assume it's theirs (that listener serves one faction's capital), so the engine can skip
@@ -23,30 +16,16 @@ export type GuildInviteFn = (target: string) => void;
 export type HandleFn = (sender: string, text: string, sourceFaction: Faction | null) => Promise<string[]>;
 /** Whether a player is already a subscriber — subscribers are onboarded, so they skip the intro. */
 export type IsSubscribedFn = (name: string) => Promise<boolean>;
-/** Whether a player is on the wall of shame for killing a bot listener — never greeted or invited. */
+/** Whether a player on the wall of shame for killing a bot listener — never greeted. */
 export type IsShunnedFn = (name: string) => boolean;
 
-/** Bufftracker's one-time self-introduction to a player who first contacts a listener: who
- *  it is, who runs it (the guild, for the community), that the guild is recruiting, and how to
- *  opt in. Sent ONCE per player (see `IntroStore`) — not every message — so it can afford the
- *  attribution and recruiting that the terse command replies deliberately drop. No tips: those
- *  ride the buff-drop message. Two short whispers, each well under the client's line limit.
- *
- *  This is the intro for a NON-subscribe first contact (a question, "status", "help"). When the
- *  first contact IS a subscribe, the identity/pitch is skipped entirely — the "You're subscribed!"
- *  confirmation stands on its own and `recruitingLine` follows it (see `onListenerContact`). */
-export function introLines(config: OutreachConfig): string[] {
-  return [
-    `Hi! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild - I ping you in-game just before the Rallying Cry drops. Whisper "subscribe" for pings, or "help" for more.`,
-    recruitingLine(config),
-  ];
-}
-
-/** The recruiting nudge — line 2 of the intro, and the standalone follow-up sent after a
- *  first-contact subscribe's confirmation. */
-export function recruitingLine(config: OutreachConfig): string {
-  const region = config.guildRegion ? `, ${config.guildRegion},` : "";
-  return `<${config.guildName}>${region} is recruiting, too - whisper "invite" any time and I'll send you a guild invite.`;
+/** Bufftracker's one-time self-introduction to a player who first contacts a listener: who it is,
+ *  who runs it (the guild, for the community), and how to opt in. Sent ONCE per player (see
+ *  `IntroStore`), and only to one who asked something other than to subscribe — the "You're
+ *  subscribed!" confirmation stands on its own. No recruiting and no guild invite: the bot is for
+ *  the buff, and players took the pitch for something else. One whisper, under the line limit. */
+export function introLine(config: OutreachConfig): string {
+  return `Hi! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild - I ping you in-game just before the Rallying Cry drops. Whisper "subscribe" for pings, or "help" for more.`;
 }
 
 /**
@@ -58,14 +37,12 @@ export function recruitingLine(config: OutreachConfig): string {
  * Every listener whisper is routed to Bufftracker's command engine and answered, so a listener
  * is a full front-end for Bufftracker — you can whisper "subscribe" or "help" at onyxiabuffsw
  * and it works, and a player is never left without a reply. The FIRST time a not-yet-subscribed
- * player reaches a listener, Bufftracker also introduces itself (identity + attribution +
- * recruiting) and, if guild invites are enabled, sends a guild invite — both once, tracked in
- * the `IntroStore`. A player on the wall of shame gets neither. Only acts while the watcher is
- * available.
+ * player reaches a listener with anything but a subscribe, Bufftracker also introduces itself,
+ * once, tracked in the `IntroStore`. A player on the wall of shame is never greeted. Only acts
+ * while the watcher is available.
  */
 export class Outreach {
   #whisper: WhisperFn | null = null;
-  #guildInvite: GuildInviteFn | null = null;
   #handle: HandleFn | null = null;
   readonly #config: OutreachConfig;
   readonly #isSubscribed: IsSubscribedFn;
@@ -87,10 +64,9 @@ export class Outreach {
     this.#logger = logger;
   }
 
-  /** The watcher offers its outbound capabilities (in world); pass nulls to withdraw. */
-  setChannel(whisper: WhisperFn | null, guildInvite: GuildInviteFn | null): void {
+  /** The watcher offers its whisper channel (in world); pass null to withdraw it. */
+  setChannel(whisper: WhisperFn | null): void {
     this.#whisper = whisper;
-    this.#guildInvite = guildInvite;
   }
 
   /** The command engine listener whispers are routed through. Set once at startup. */
@@ -98,10 +74,11 @@ export class Outreach {
     this.#handle = handle;
   }
 
-  /** A player whispered a listener — introduce Bufftracker unless they're already subscribed,
-   *  then route their message through Bufftracker's command engine and whisper back the reply.
-   *  `sourceFaction` is the listener's side (the player's, safe to assume), passed to the engine
-   *  so it can set/tailor the side without a /who; null for a faction-less listener. */
+  /** A player whispered a listener — route their message through Bufftracker's command engine and
+   *  whisper back the reply, then introduce Bufftracker if this is their first contact and they
+   *  asked something other than to subscribe. `sourceFaction` is the listener's side (the
+   *  player's, safe to assume), passed to the engine so it can set/tailor the side without a /who;
+   *  null for a faction-less listener. */
   async onListenerContact(playerName: string, text: string, sourceFaction: Faction | null = null): Promise<void> {
     const whisper = this.#whisper;
     if (!whisper) {
@@ -111,12 +88,11 @@ export class Outreach {
     }
     // The FIRST time a not-yet-subscribed player reaches us (once, not every message —
     // `introduceOnce` is atomic so back-to-back whispers can't double-send). A player on the wall of
-    // shame is never greeted or invited; the command engine tells them why.
+    // shame is never greeted; the command engine tells them why.
     const firstContact =
       !this.#isShunned(playerName) &&
       !(await this.#isSubscribed(playerName)) &&
       (await this.#introStore.introduceOnce(playerName));
-    const subscribing = isSubscribeRequest(text);
 
     // ANSWER FIRST. Their message goes to the command engine and the reply is whispered before any
     // introduction, so a specific request (discord, help, status, subscribe) is served first — the
@@ -125,24 +101,10 @@ export class Outreach {
       for (const reply of await this.#handle(playerName, text, sourceFaction)) whisper(playerName, reply);
     }
 
-    // THEN introduce, once, as a follow-up. A subscriber gets just the recruiting line (they plainly
-    // know what it is); everyone else gets the full identity + recruiting. Then the silent invite.
-    if (firstContact) {
-      if (subscribing) {
-        this.#logger.info(`outreach: welcoming new subscriber ${playerName}`);
-        whisper(playerName, recruitingLine(this.#config));
-      } else {
-        this.#logger.info(`outreach: introducing Bufftracker to ${playerName}`);
-        for (const line of introLines(this.#config)) whisper(playerName, line);
-      }
-      this.#autoInvite(playerName);
+    // THEN introduce, once, as a follow-up — unless they subscribed, which says it all.
+    if (firstContact && !isSubscribeRequest(text)) {
+      this.#logger.info(`outreach: introducing Bufftracker to ${playerName}`);
+      whisper(playerName, introLine(this.#config));
     }
-  }
-
-  /** Auto guild-invite (silent — no "I sent you an invite" whisper). If they accept, they're
-   *  welcomed in guild chat instead (the join is detected server-side). Gated on the watcher
-   *  being guilded (WOW_GUILD_INVITE). */
-  #autoInvite(playerName: string): void {
-    if (this.#config.guildInviteEnabled && this.#guildInvite) this.#guildInvite(playerName);
   }
 }
