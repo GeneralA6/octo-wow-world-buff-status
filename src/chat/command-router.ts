@@ -94,6 +94,9 @@ export interface CommandDeps {
 }
 
 /** What a player on the wall of shame is told, instead of an answer. */
+/** The one answer to a message that is no command and no question we recognise. */
+export const UNKNOWN_REPLY = `Not sure what you mean - whisper "help" for commands.`;
+
 export const SHUNNED_REPLY =
   "You killed one of my listeners, so you're on the wall of shame. I won't answer you or send you buff alerts anymore.";
 
@@ -218,9 +221,9 @@ export class CommandRouter {
         // Natural-language intent detection over the whole message.
         const intent = parseIntent(text);
         if (intent) return this.#handleIntent(intent, sender, text, sourceFaction);
-        // Not a recognised command — answer with the live status and a pointer to help,
-        // which is more useful than a dead-end "didn't get that".
-        return [...(await this.#status(sender, sourceFaction)), `"help" for more.`];
+        // Not a recognised command — one short pointer to help. Not the live status: a "youre late"
+        // answered with four whispers of it is the wall of scripted replies players complained of.
+        return [UNKNOWN_REPLY];
       }
     }
   }

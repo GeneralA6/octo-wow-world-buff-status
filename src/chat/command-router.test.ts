@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
 import type { ActiveRaid } from "../watcher/raid-events.js";
-import { CommandRouter, isSubscribeRequest, SHUNNED_REPLY, type BuffCooldown } from "./command-router.js";
+import { CommandRouter, isSubscribeRequest, SHUNNED_REPLY, UNKNOWN_REPLY, type BuffCooldown } from "./command-router.js";
 import { FAIRE_SITES } from "../darkmoon/location.js";
 import type { FaireAnswer } from "../darkmoon/observation.js";
 
@@ -334,12 +334,12 @@ describe("CommandRouter", () => {
     expect(reply).toMatch(/subscribe/i);
   });
 
-  it("answers gibberish with the live status and a help pointer, not a dead end", async () => {
+  it("answers what it doesn't understand with one short line pointing at help", async () => {
     const { router } = deps();
-    const reply = (await router.handle("Raider", "qwzx blorp")).join(" ");
-    expect(reply).not.toMatch(/didn't get that/i);
-    expect(reply).toMatch(/No raid in Onyxia's Lair/); // the live status
-    expect(reply).toMatch(/"help"/); // and a pointer to help
+    for (const text of ["qwzx blorp", "youre late", "dropped 2M ago"]) {
+      expect(await router.handle("Raider", text)).toEqual([UNKNOWN_REPLY]);
+    }
+    expect(UNKNOWN_REPLY).toMatch(/"help"/);
   });
 
   it("routes a natural-language suggestion to feedback, keeping the whole message", async () => {
@@ -365,11 +365,9 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "thanks so much!"))[0]).toMatch(/welcome/i);
   });
 
-  it("no longer has a 'notify' command — it falls through to the status/help fallback", async () => {
+  it("no longer has a 'notify' command — it falls through to the one-line fallback", async () => {
     const { router } = deps();
-    const reply = (await router.handle("Raider", "notify forming off")).join(" ");
-    expect(reply).toMatch(/"help" for more/);
-    expect(reply).not.toMatch(/alert/i); // not handled as an alert-type command
+    expect(await router.handle("Raider", "notify forming off")).toEqual([UNKNOWN_REPLY]);
   });
 
   it("shares the Discord invite link on 'discord', or says it's not set", async () => {
@@ -407,13 +405,11 @@ describe("CommandRouter", () => {
     expect((await router.handle("Ghost", "alliance"))[0]).toMatch(/not subscribed/i);
   });
 
-  it("has dropped 'profile' and 'faction' — they fall through to the status/help fallback", async () => {
+  it("has dropped 'profile' and 'faction' — they fall through to the one-line fallback", async () => {
     const { router } = deps();
     await router.handle("Raider", "subscribe");
     for (const msg of ["profile", "faction", "flibber"]) {
-      const reply = (await router.handle("Raider", msg)).join(" ");
-      expect(reply).toMatch(/"help" for more/); // the fallback pointer
-      expect(reply).not.toMatch(/Subscribed|change your side/); // not a profile reply
+      expect(await router.handle("Raider", msg)).toEqual([UNKNOWN_REPLY]);
     }
   });
 
