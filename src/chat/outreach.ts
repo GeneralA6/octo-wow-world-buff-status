@@ -23,9 +23,13 @@ export type IsShunnedFn = (name: string) => boolean;
  *  who runs it (the guild, for the community), and how to opt in. Sent ONCE per player (see
  *  `IntroStore`), and only to one who asked something other than to subscribe — the "You're
  *  subscribed!" confirmation stands on its own. No recruiting and no guild invite: the bot is for
- *  the buff, and players took the pitch for something else. One whisper, under the line limit. */
-export function introLine(config: OutreachConfig): string {
-  return `Hi! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild - I ping you in-game just before the Rallying Cry drops. Whisper "subscribe" for pings, or "help" for more.`;
+ *  the buff, and players took the pitch for something else. Two whispers, each under the line limit:
+ *  who it is, then that it knows where the Darkmoon Faire is. */
+export function introLines(config: OutreachConfig): readonly string[] {
+  return [
+    `Hi! I'm the Onyxia world-buff tracker for the ${config.community} community, run by the <${config.guildName}> guild - I ping you in-game just before the Rallying Cry drops. Whisper "subscribe" for pings, or "help" for more.`,
+    `I also track where the Darkmoon Faire is - whisper "darkmoon" to find it.`,
+  ];
 }
 
 /**
@@ -104,7 +108,7 @@ export class Outreach {
     // THEN introduce, once, as a follow-up — unless they subscribed, which says it all.
     if (firstContact && !isSubscribeRequest(text)) {
       this.#logger.info(`outreach: introducing Bufftracker to ${playerName}`);
-      whisper(playerName, introLine(this.#config));
+      for (const line of introLines(this.#config)) whisper(playerName, line);
     }
   }
 }

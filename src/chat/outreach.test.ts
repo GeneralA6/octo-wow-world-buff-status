@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { silentLogger } from "../logger.js";
-import { Outreach, introLine } from "./outreach.js";
+import { Outreach, introLines } from "./outreach.js";
 import { InMemoryIntroStore } from "./intro-store.js";
 import type { Faction } from "../subscribers/store.js";
 
@@ -9,26 +9,35 @@ const config = {
   community: "OctoWoW",
 };
 
-describe("introLine", () => {
+describe("introLines", () => {
   it("introduces itself, says what it does, and points at subscribe/help", () => {
-    const line = introLine(config);
-    expect(line).toMatch(/world-?buff tracker/i);
-    expect(line).toContain("Rallying Cry");
-    expect(line).toMatch(/subscribe/i);
-    expect(line).toMatch(/"help" for more/);
+    const [who] = introLines(config);
+    expect(who).toMatch(/world-?buff tracker/i);
+    expect(who).toContain("Rallying Cry");
+    expect(who).toMatch(/subscribe/i);
+    expect(who).toMatch(/"help" for more/);
+  });
+
+  it("then says it knows where the Darkmoon Faire is, and how to ask", () => {
+    const [, faire] = introLines(config);
+    expect(faire).toMatch(/Darkmoon Faire/);
+    expect(faire).toMatch(/whisper "darkmoon"/);
   });
 
   it("attributes to the guild for the community, but recruits for nothing and offers no invite", () => {
-    const line = introLine(config);
-    expect(line).toContain("Rage Quit"); // the guild running it
-    expect(line).toContain("OctoWoW"); // the community it serves
-    expect(line).not.toMatch(/recruit|invite/i);
+    const lines = introLines(config).join(" ");
+    expect(lines).toContain("Rage Quit"); // the guild running it
+    expect(lines).toContain("OctoWoW"); // the community it serves
+    expect(lines).not.toMatch(/recruit|invite/i);
   });
 
-  it("is one whisper, under the client's line limit, with no tips", () => {
-    const line = introLine(config);
-    expect(line.length).toBeLessThanOrEqual(255);
-    expect(line).not.toMatch(/gold|tip/i);
+  it("is two whispers, each under the client's line limit, with no tips", () => {
+    const lines = introLines(config);
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(line.length).toBeLessThanOrEqual(255);
+      expect(line).not.toMatch(/gold|tip/i);
+    }
   });
 });
 
@@ -75,10 +84,10 @@ describe("Outreach", () => {
     expect(whispers.map((w) => w.msg)).toEqual(["reply to subscribe"]); // the mock stands in for "You're subscribed!"
   });
 
-  it("a first contact that is not a subscribe gets its answer and the one intro line, nothing more", async () => {
+  it("a first contact that is not a subscribe gets its answer and the two intro lines, nothing more", async () => {
     const { outreach, whispers } = make();
     await outreach.onListenerContact("Raider", "hi", "horde");
-    expect(whispers.map((w) => w.msg)).toEqual(["reply to hi", introLine(config)]);
+    expect(whispers.map((w) => w.msg)).toEqual(["reply to hi", ...introLines(config)]);
   });
 
   it("the confirmation reply is identical whether they subscribe first or after a 'hey'", async () => {
