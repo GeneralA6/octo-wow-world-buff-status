@@ -3,6 +3,7 @@ import { describeError } from "./errors.js";
 import type { Logger } from "./logger.js";
 import type { FaireAnswer } from "./darkmoon/observation.js";
 import { AlertDelivery } from "./notify/alert-delivery.js";
+import { yelledInCapitals } from "./notify/city-yell.js";
 import {
   formatBuffAlert,
   formatBuffDroppedWhisper,
@@ -121,8 +122,9 @@ export function createRaidService(
     });
 
     // A buff-parking alert: post to the Onyxia channel (pinging @alliance/@horde per open
-    // city), yell in each open capital, and whisper in-game subscribers of that side. The
-    // caller already deduped `cities` against the ledger, so this fires at most once per cycle.
+    // city) and whisper in-game subscribers of that side — and, for a clear alone, yell in each
+    // open capital. The caller already deduped `cities` against the ledger, so this fires at most
+    // once per cycle.
     const announceBuff = async (event: RaidEvent, cities: readonly Faction[]): Promise<void> => {
       // The "raid starting" alert quotes how long a raid usually takes, so a reader can judge
       // whether to park now; the "raid ended" alert already carries its own duration.
@@ -131,7 +133,8 @@ export function createRaidService(
         label: event.kind,
         discord: formatBuffAlert(event, cities, typical),
         cities,
-        yellFor: (city) => formatBuffWhisper(event, [city], typical),
+        // Yelled in the capitals only when it is the one raid alert that is (see notify/city-yell.ts).
+        ...(yelledInCapitals(event.kind) ? { yellFor: (city: Faction) => formatBuffWhisper(event, [city], typical) } : {}),
         whisperFor: (groupCities) => formatBuffWhisper(event, groupCities, typical),
         // Tag with the cities this park-now is about, so a buff dropping there purges it as stale.
         whisperMaxAgeMs: config.whisperMaxAgeMs,
@@ -290,7 +293,9 @@ export function createRaidService(
           label: "raid-ending",
           discord: formatRaidEnding(raidNumber, fresh, elapsedMs, typical),
           cities: fresh,
-          yellFor: (city) => formatRaidEndingWhisper(raidNumber, [city], elapsedMs, typical),
+          ...(yelledInCapitals("raid-ending")
+            ? { yellFor: (city: Faction) => formatRaidEndingWhisper(raidNumber, [city], elapsedMs, typical) }
+            : {}),
           whisperFor: (groupCities) => formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, typical),
           whisperMaxAgeMs: config.whisperMaxAgeMs,
         });
@@ -336,7 +341,7 @@ export function createRaidService(
         for (const city of notified) {
           whisperPool.dropForFaction(city);
           getWhisperQueue()?.dropForFaction(city);
-          yellSink[city]?.(line);
+          if (yelledInCapitals("raid-disbanded")) yellSink[city]?.(line);
         }
         void push(formatRaidDisbanded(clear.number, clear.durationMs), notified);
         if (config.whispersEnabled) {
