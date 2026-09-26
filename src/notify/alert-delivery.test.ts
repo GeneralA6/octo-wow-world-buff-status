@@ -93,6 +93,27 @@ describe("AlertDelivery.sendCityAlert", () => {
   });
 });
 
+describe("AlertDelivery unsubscribe hint", () => {
+  it("ends every subscriber whisper with how to unsubscribe, but never a yell", async () => {
+    const { delivery, calls } = harness();
+    await delivery.sendCityAlert({
+      label: "raid-left",
+      discord: msg("cleared"),
+      cities: ["horde"],
+      yellFor: () => "Onyxia raid cleared.",
+      whisperFor: () => "Onyxia raid cleared.",
+    });
+    expect(calls.yell.map((y) => y.text)).toEqual(["Onyxia raid cleared."]);
+    for (const w of calls.whisper) expect(w.message).toBe(`Onyxia raid cleared. Whisper "stop" to unsubscribe.`);
+  });
+
+  it("ends a one-side whisper with it too", async () => {
+    const { delivery, calls } = harness();
+    await delivery.sendFactionWhisper("horde", "The Rallying Cry just dropped in Orgrimmar!");
+    expect(calls.whisper[0]?.message).toBe(`The Rallying Cry just dropped in Orgrimmar! Whisper "stop" to unsubscribe.`);
+  });
+});
+
 describe("AlertDelivery.sendFactionWhisper", () => {
   it("whispers only that side's subscribers", async () => {
     const { delivery, calls } = harness();

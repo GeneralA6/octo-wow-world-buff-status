@@ -14,6 +14,7 @@ import {
   formatRaidEnding,
   formatRaidEndingWhisper,
   formatWarchiefBlessingWhisper,
+  withUnsubscribeHint,
 } from "./notify/format.js";
 import { formatHeartbeat } from "./watcher/heartbeat.js";
 import { evaluateTimer, improvedEstimate, typicalClearText } from "./watcher/timer-eval.js";
@@ -356,7 +357,9 @@ export function createRaidService(
         if (config.whispersEnabled) {
           try {
             const subs = (await store.all()).filter((s) => notified.some((c) => s.factions.includes(c)));
-            if (subs.length > 0) broadcastWhisper(subs.map((s) => s.name), line, notified[0] ?? null, notified, config.whisperMaxAgeMs);
+            if (subs.length > 0) {
+              broadcastWhisper(subs.map((s) => s.name), withUnsubscribeHint(line), notified[0] ?? null, notified, config.whisperMaxAgeMs);
+            }
           } catch (error) {
             logger.error(`subscribers: ${describeError(error)}`);
           }

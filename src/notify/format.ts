@@ -27,6 +27,15 @@ export function humanSpan(ms: number): string {
   return hours === 0 ? `${days}d` : `${days}d${hours}h`;
 }
 
+/** How to stop the alerts, said at the end of every one a subscriber is whispered — so the way out
+ *  is never more than one whisper away. */
+export const UNSUBSCRIBE_HINT = `Whisper "stop" to unsubscribe.`;
+
+/** `line`, as whispered to a subscriber: with the way to unsubscribe after it. */
+export function withUnsubscribeHint(line: string): string {
+  return `${line} ${UNSUBSCRIBE_HINT}`;
+}
+
 /**
  * A note appended to a time-sensitive whisper that sat in the queue.
  *

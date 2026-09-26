@@ -18,6 +18,7 @@ import {
   humanSpan,
   formatHeadIncoming,
   humanClock,
+  withUnsubscribeHint,
 } from "./format.js";
 
 const M = 60_000;
@@ -364,5 +365,20 @@ describe("formatWhisperDelayNote", () => {
       "30-50m",
     );
     expect(longest.length + (formatWhisperDelayNote(9 * 60_000) ?? "").length).toBeLessThan(255);
+  });
+});
+
+describe("withUnsubscribeHint", () => {
+  it("ends a subscriber's whisper with how to stop the alerts", () => {
+    expect(withUnsubscribeHint("Onyxia raid cleared.")).toBe(`Onyxia raid cleared. Whisper "stop" to unsubscribe.`);
+  });
+
+  it("keeps the longest alert whisper within the 255-char whisper limit", () => {
+    const longest = [
+      formatBuffDroppedWhisper("alliance", "https://discord.gg/3A42BTJhcF"),
+      formatWarchiefBlessingWhisper("https://discord.gg/3A42BTJhcF"),
+      formatRaidEndingWhisper(99999, ["alliance", "horde"], 135 * M, "30-50m"),
+    ];
+    for (const line of longest) expect(withUnsubscribeHint(line).length).toBeLessThanOrEqual(255);
   });
 });

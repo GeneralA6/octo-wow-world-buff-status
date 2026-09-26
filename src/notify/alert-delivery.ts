@@ -3,6 +3,7 @@ import type { Faction } from "../watcher/buff-store.js";
 import type { Subscriber } from "../subscribers/store.js";
 import { describeError } from "../errors.js";
 import { groupByRelevantCities } from "./faction-routing.js";
+import { withUnsubscribeHint } from "./format.js";
 import type { NotifyMessage } from "./notifier.js";
 
 /**
@@ -75,7 +76,13 @@ export class AlertDelivery {
     }
     if (subs.length === 0) return;
     for (const { cities, members } of groupByRelevantCities(subs, alert.cities)) {
-      broadcastWhisper(members.map((s) => s.name), alert.whisperFor(cities), cities[0] ?? null, cities, alert.whisperMaxAgeMs);
+      broadcastWhisper(
+        members.map((s) => s.name),
+        withUnsubscribeHint(alert.whisperFor(cities)),
+        cities[0] ?? null,
+        cities,
+        alert.whisperMaxAgeMs,
+      );
     }
   }
 
@@ -93,6 +100,6 @@ export class AlertDelivery {
     }
     const targets = subs.filter((s) => s.factions.includes(faction));
     if (targets.length === 0) return;
-    broadcastWhisper(targets.map((s) => s.name), line, faction, undefined, maxAgeMs);
+    broadcastWhisper(targets.map((s) => s.name), withUnsubscribeHint(line), faction, undefined, maxAgeMs);
   }
 }

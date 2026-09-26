@@ -7,7 +7,7 @@ import {
   type SubscriberStore,
 } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-events.js";
-import { CITY_FOR, humanClock } from "../notify/format.js";
+import { CITY_FOR, humanClock, withUnsubscribeHint } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
 import { formatFaire } from "../darkmoon/format.js";
 import type { FaireAnswer } from "../darkmoon/observation.js";
@@ -163,7 +163,7 @@ export class CommandRouter {
           this.#deps.onSubscribe?.(sender); // record in the lifetime user ledger
         }
         return added
-          ? [`You're subscribed! I'll ping you in-game when a raid clears and the Onyxia buff is about to drop.`]
+          ? [withUnsubscribeHint(`You're subscribed! I'll ping you in-game when a raid clears and the Onyxia buff is about to drop.`)]
           : [`You're already subscribed to ${areaName} alerts. "help" for more.`];
       }
       case "unsubscribe":

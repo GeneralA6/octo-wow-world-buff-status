@@ -63,6 +63,13 @@ describe("CommandRouter", () => {
     expect((await router.handle("Raider", "subscribe"))[0]).toMatch(/already subscribed/);
   });
 
+  it("says how to unsubscribe when confirming, and 'stop' does unsubscribe", async () => {
+    const { store, router } = deps();
+    expect((await router.handle("Raider", "subscribe"))[0]).toContain(`Whisper "stop" to unsubscribe.`);
+    expect((await router.handle("Raider", "stop"))[0]).toMatch(/unsubscribed/i);
+    expect(await store.has("Raider")).toBe(false);
+  });
+
   it("confirms a fresh subscribe in one line, without pushing manual faction selection", async () => {
     const { router } = deps();
     const reply = await router.handle("Raider", "subscribe");
