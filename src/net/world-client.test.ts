@@ -116,6 +116,21 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     this.#sendServer(WorldOpcode.SMSG_GUILD_EVENT, writer.toBuffer());
   }
 
+  /** Deliver "<name> is ignoring you": CHAT_MSG_IGNORED, the ignoring player's name as its text. */
+  pushIgnored(guid: bigint, name: string): void {
+    const msg = Buffer.from(name, "utf8");
+    const body = new PacketWriter()
+      .u8(ChatType.Ignored)
+      .u32LE(0)
+      .u64LE(guid)
+      .u32LE(msg.length + 1)
+      .bytes(msg)
+      .u8(0)
+      .u8(0)
+      .toBuffer();
+    this.#sendServer(WorldOpcode.SMSG_MESSAGECHAT, body);
+  }
+
   /** Deliver a server SYSTEM message (how command results/errors arrive) to the client. */
   pushSystem(text: string): void {
     const msg = Buffer.from(text, "utf8");
@@ -418,6 +433,41 @@ describe("WorldClient (against a scripted mock server)", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(system).toEqual(["Raider is already in a guild."]); // trimmed
     expect(whispers).toEqual([]); // a system message is never a command
+
+    client.close();
+  });
+
+  it("tells who is ignoring us, never as a whisper or a system message", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const ignoredBy: { guid: bigint; name: string }[] = [];
+    const heard: string[] = [];
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x22,
+      pingIntervalMs: 0,
+      handlers: {
+        onReady: () => markReady(),
+        onIgnoredBy: (player) => ignoredBy.push(player),
+        onSystemMessage: (text) => heard.push(text),
+        onWhisper: (_sender, text) => heard.push(text),
+      },
+    });
+
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    socket.pushIgnored(0x3b9e9f4cn, "Grumpy");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(ignoredBy).toEqual([{ guid: 0x3b9e9f4cn, name: "Grumpy" }]);
+    expect(heard).toEqual([]);
 
     client.close();
   });

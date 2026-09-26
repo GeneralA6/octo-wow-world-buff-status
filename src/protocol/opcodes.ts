@@ -127,6 +127,10 @@ export enum ChatType {
   // 1.12 lists 0x0e as MonsterEmote, but Turtle routes channel here and we never act on emotes, so
   // 0x0e is Channel. The buff yell (MonsterYell 0x0c) is unaffected.
   Channel = 0x0e,
+  // "<name> is ignoring you": the player named has us on their ignore list, and their client refused
+  // something we said — a whisper, or a /say or /yell in their earshot. The text is their name, the
+  // sender their GUID (cmangos-classic ChatMsg: CHAT_MSG_IGNORED = 0x16).
+  Ignored = 0x16,
 }
 
 /** SMSG_GUILD_EVENT `type` byte (1.12). We only act on JOINED; the rest are for logging. */

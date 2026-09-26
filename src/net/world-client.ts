@@ -67,6 +67,9 @@ export interface WorldClientHandlers {
   onWhisper?: (sender: string, text: string) => void;
   /** A whisper we sent could not be delivered — the target is offline. */
   onWhisperUndelivered?: (target: string) => void;
+  /** "<name> is ignoring you": a player with us on their ignore list refused something we said —
+   *  a whisper, or a /say or /yell in their earshot. */
+  onIgnoredBy?: (player: { readonly guid: bigint; readonly name: string }) => void;
   /** An NPC yelled to the zone (raw). The wiring layer decides if it is a buff yell. */
   onMonsterYell?: (senderName: string, text: string) => void;
   /** Any NPC chat — say, yell or whisper — with its chat type. Separate from `onMonsterYell`
@@ -616,6 +619,11 @@ export class WorldClient {
       // "player not found", etc.). Surface them so the wiring can alert; they are never commands.
       if (chat.type === ChatType.System) {
         this.#handlers.onSystemMessage?.(chat.text.trim());
+        return;
+      }
+      if (chat.type === ChatType.Ignored) {
+        const name = chat.text.trim();
+        if (name) this.#handlers.onIgnoredBy?.({ guid: chat.senderGuid, name });
         return;
       }
       // An addon's data riding a chat type is nobody talking. Answered as a whisper, OctoRadio's
