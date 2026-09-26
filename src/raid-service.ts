@@ -313,13 +313,19 @@ export function createRaidService(
 
       // The tracker emits the authoritative lifecycle events, roster-driven. A "formed" fires the
       // poll a raid reaches STRENGTH and first has a number (so the alert names it the same #N its
-      // clear will); a "cleared" is a sustained roster departure, handled below. Never both in one
-      // poll. The sustained clear carries killConfirmed:false — a Chronicle early-confirm sets it
-      // true on the branch below.
+      // clear will); a "cleared" is a sustained roster departure, handled below; a "resumed" is a
+      // raid read as cleared whose members came back — it carries on as the same raid, its timer
+      // running on, so nothing is announced. At most one per poll. The sustained clear carries
+      // killConfirmed:false — a Chronicle early-confirm sets it true on the branch below.
       let cleared: Extract<RaidLifecycleEvent, { kind: "cleared" }> | null = null;
       for (const event of events) {
         if (event.kind === "formed") await gateAndAnnounce(formedRaidEvent(event.peak, event.number));
-        else cleared = event;
+        else if (event.kind === "resumed") {
+          logger.info(
+            `${lane.label}: raid #${event.number ?? "?"} resumed — its members are back after ~${mins(event.awayMs)}m, ` +
+              `so its clear was a wipe; the timer runs on at ~${mins(event.elapsedMs)}m`,
+          );
+        } else cleared = event;
       }
 
       // A real, COMPLETED clear drives the park-now alert, the recap, and the duration sample.

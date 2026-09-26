@@ -31,6 +31,12 @@
  * from players who are NOT locked — so a cleared raid's members, lingering in the lair after the
  * kill, cannot re-trip "raid formed" as a phantom duplicate (the #96/#97 case). The lock outlives
  * the clear (it persists `lockoutMs`, not just while present) and survives a blind gap.
+ *
+ * FALSE CLEAR: a wipe whose run-back outlasts `sustainedMs` reads as a clear. The lockout keeps its
+ * returning members from founding a new raid, so the cleared raid is kept aside: if at least
+ * `clearFloor` of its own members come back while still locked to it, the raid RESUMES — same
+ * number, same form time, its timer running on. A kill proven by Chronicle (`confirmNow`) is final
+ * and never resumes.
  */
 export interface ClearTrackerOptions {
   /** A raid is present once this many players are in the zone. */
@@ -57,7 +63,8 @@ export interface ClearTrackerOptions {
    *  the gap between raids. Default max(8 min, 2× sustained). */
   readonly stintGapMs?: number;
   /** A player in one raid's roster cannot found or join a DIFFERENT raid for this long — the Onyxia
-   *  lockout rule. Stops a cleared raid's lingering members from re-forming a phantom raid. Default 2h. */
+   *  lockout rule. Stops a cleared raid's lingering members from re-forming a phantom raid, and is how
+   *  long a raid read as cleared can resume when they return. Default 2h. */
   readonly lockoutMs?: number;
   /** Assigns the next monotonic raid number when a raid forms. Omit to leave raids unnumbered. */
   readonly nextNumber?: () => number;
@@ -80,11 +87,35 @@ export interface FormedRaid {
   readonly peak: number;
 }
 
-/** What one `observe` poll produced: a confirmed clear, a fresh formation, or neither (the
- *  usual case — a raid still in progress). A single poll never both forms and clears. */
+/** A raid read as cleared whose own members came back while still locked to it — a wipe whose
+ *  run-back outlasted the sustained wait. It carries on as the same raid (see FALSE CLEAR). */
+export interface ResumedRaid {
+  readonly number: number | null;
+  /** Form → now: the raid's timer, running on from its original formation. */
+  readonly elapsedMs: number;
+  /** How long its members were gone: the start of the departure read as a clear → now. */
+  readonly awayMs: number;
+}
+
+/** What one `observe` poll produced: a confirmed clear, a fresh formation, a resumed raid, or none
+ *  (the usual case — a raid still in progress). A single poll produces at most one of them. */
 export interface ClearObservation {
   readonly clear: ConfirmedClear | null;
   readonly formed: FormedRaid | null;
+  readonly resumed: ResumedRaid | null;
+}
+
+/** A poll that crossed no lifecycle boundary. */
+const NO_CHANGE: ClearObservation = { clear: null, formed: null, resumed: null };
+
+/** A raid read as cleared, kept so it can resume if its members return (see FALSE CLEAR). */
+interface ClearedRaid {
+  readonly formedAt: number;
+  readonly number: number | null;
+  readonly roster: ReadonlySet<string>;
+  readonly peak: number;
+  /** When its departure began — the clear's end point. */
+  readonly departedAt: number;
 }
 
 /**
@@ -142,6 +173,8 @@ export class ClearTracker {
   // join a DIFFERENT raid until `lockoutMs` after their raid last held them. Outlives the clear and a
   // blind gap (a DC doesn't un-lock anyone); pruned on expiry.
   #locked = new Map<string, number>();
+  // The last raid read as cleared by the sustained wait, while it can still resume (FALSE CLEAR).
+  #cleared: ClearedRaid | null = null;
 
   constructor(options: ClearTrackerOptions) {
     this.#formAt = options.formAt;
@@ -234,15 +267,13 @@ export class ClearTracker {
    * Confirm a pending departure NOW, skipping the rest of the sustained wait — for when
    * independent proof (a Chronicle kill) shows the raid really finished. Returns the same
    * ConfirmedClear the wait would have produced (duration form → departure-start) and resets.
-   * Null if no departure is pending: it can never manufacture a clear on its own.
+   * Null if no departure is pending: it can never manufacture a clear on its own. The kill is
+   * proven, so the raid is final — it never resumes.
    */
   confirmNow(): ConfirmedClear | null {
     if (this.#formedAt === null || !this.#confirmed || this.#belowSince === null) return null;
-    const clear: ConfirmedClear = {
-      durationMs: this.#belowSince - this.#formedAt,
-      peak: this.#peak,
-      number: this.#number,
-    };
+    const clear = this.#clearOf(this.#formedAt, this.#belowSince);
+    this.#cleared = null;
     this.#reset();
     return clear;
   }
@@ -273,17 +304,20 @@ export class ClearTracker {
         if (cohort >= this.#clearFloor) {
           if (this.#confirmed) this.#belowSince = null; // confirmed raid survived the gap — keep its clock
           else this.#stableSince = now; // a disconnect interrupts a forming raid — restart the confirm count
-          return { clear: null, formed: null };
+          return NO_CHANGE;
         }
         this.#reset(); // the raid we were tracking is gone across the gap
       }
-      return { clear: null, formed: null };
+      return NO_CHANGE;
     }
 
     this.#trackArrivals(names, now);
     this.#pruneLocks(now);
 
     if (this.#formedAt === null) {
+      // The raid just read as cleared is back — it was a wipe with a long run-back. It carries on.
+      const resumed = this.#tryResume(names, now);
+      if (resumed) return { ...NO_CHANGE, resumed };
       // A new raid forms only from players NOT locked to a recent raid (the Onyxia lockout rule) —
       // so a just-cleared raid's members, lingering in the lair, can't re-form a phantom duplicate.
       const fresh = names.filter((name) => !this.#isLocked(name, now));
@@ -296,7 +330,7 @@ export class ClearTracker {
         this.#confirmed = false;
         return this.#tryConfirm(now); // confirmMs 0 → announce immediately (the original behaviour)
       }
-      return { clear: null, formed: null };
+      return NO_CHANGE;
     }
 
     // Absorb NEWCOMERS into this raid only if they arrived within the fill window of formation
@@ -326,10 +360,10 @@ export class ClearTracker {
         }
         return this.#tryConfirm(now);
       }
-      if (!complete) return { clear: null, formed: null }; // truncated /who — an untrusted undercount, hold
+      if (!complete) return NO_CHANGE; // truncated /who — an untrusted undercount, hold
       if (this.#belowSince === null) this.#belowSince = now; // dipped below the floor while forming
       if (now - this.#belowSince >= this.#sustainedMs) this.#reset(); // gone before it ever committed — a flash
-      return { clear: null, formed: null };
+      return NO_CHANGE;
     }
 
     if (cohort >= this.#clearFloor) {
@@ -338,30 +372,34 @@ export class ClearTracker {
       if (cohort > this.#peak) this.#peak = cohort;
       this.#belowSince = null;
       this.#lockRoster(now); // keep this raid's members locked while it holds (outlives the clear)
-      return { clear: null, formed: null };
+      return NO_CHANGE;
     }
 
     // Below the floor — but on an INCOMPLETE view that's unreliable (members in the classes whose
     // /who slice timed out look absent), so we must not read it as a departure. Hold: don't start
     // or confirm a clear. A real departure already seen on a complete view keeps its pending clock
     // (we return without touching #belowSince), so an incomplete blip mid-departure doesn't reset it.
-    if (!complete) return { clear: null, formed: null };
+    if (!complete) return NO_CHANGE;
 
     // The roster has mostly dropped out — a wipe or a real departure.
     if (this.#belowSince === null) {
       this.#belowSince = now;
-      return { clear: null, formed: null };
+      return NO_CHANGE;
     }
     if (now - this.#belowSince >= this.#sustainedMs) {
-      const clear: ConfirmedClear = {
-        durationMs: this.#belowSince - this.#formedAt,
-        peak: this.#peak,
+      const clear = this.#clearOf(this.#formedAt, this.#belowSince);
+      // Kept aside in case the "clear" was a wipe whose members run back after the wait.
+      this.#cleared = {
+        formedAt: this.#formedAt,
         number: this.#number,
+        roster: this.#roster,
+        peak: this.#peak,
+        departedAt: this.#belowSince,
       };
       this.#reset();
-      return { clear, formed: null };
+      return { ...NO_CHANGE, clear };
     }
-    return { clear: null, formed: null }; // still within the window — the roster could yet run back (a wipe)
+    return NO_CHANGE; // still within the window — the roster could yet run back (a wipe)
   }
 
   /** Announce the formation once the roster has held >= floor for `confirmMs` since `#stableSince`
@@ -369,13 +407,46 @@ export class ClearTracker {
    *  that never confirms consumes no number. */
   #tryConfirm(now: number): ClearObservation {
     if (this.#stableSince === null || now - this.#stableSince < this.#confirmMs) {
-      return { clear: null, formed: null };
+      return NO_CHANGE;
     }
     this.#confirmed = true;
     this.#number = this.#nextNumber?.() ?? null;
     this.#belowSince = null;
     this.#lockRoster(now); // lock the founding roster to this raid
-    return { clear: null, formed: { number: this.#number, peak: this.#peak } };
+    return { ...NO_CHANGE, formed: { number: this.#number, peak: this.#peak } };
+  }
+
+  /** The clear of the tracked raid, formed at `formedAt` and gone since `departedAt`. */
+  #clearOf(formedAt: number, departedAt: number): ConfirmedClear {
+    return { durationMs: departedAt - formedAt, peak: this.#peak, number: this.#number };
+  }
+
+  /**
+   * Resume the raid last read as cleared once at least `clearFloor` of its members are back and still
+   * locked to it — its "clear" was a wipe whose run-back outlasted the wait. It takes up its number,
+   * form time and roster again, so its timer runs on. Once none of its members is locked it is let go:
+   * they are then free to found a new raid.
+   */
+  #tryResume(names: readonly string[], now: number): ResumedRaid | null {
+    const cleared = this.#cleared;
+    if (cleared === null) return null;
+    if (![...cleared.roster].some((name) => this.#isLocked(name, now))) {
+      this.#cleared = null;
+      return null;
+    }
+    let back = 0;
+    for (const name of names) if (cleared.roster.has(name) && this.#isLocked(name, now)) back += 1;
+    if (back < this.#clearFloor) return null;
+    this.#cleared = null;
+    this.#formedAt = cleared.formedAt;
+    this.#number = cleared.number;
+    this.#roster = new Set(cleared.roster);
+    this.#peak = Math.max(cleared.peak, back);
+    this.#belowSince = null;
+    this.#stableSince = null;
+    this.#confirmed = true;
+    this.#lockRoster(now);
+    return { number: cleared.number, elapsedMs: now - cleared.formedAt, awayMs: now - cleared.departedAt };
   }
 
   /** Lock every current roster member to this raid as of `now`. A locked player can't found or join

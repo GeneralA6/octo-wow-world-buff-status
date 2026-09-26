@@ -122,7 +122,8 @@ export interface BotConfig {
    *  turn-ins beyond it are labelled "saved head" (an honest under-claim, never a false credit). */
   readonly raidFreshWindowMs: number;
   /** How long the raid's roster must stay gone to count a departure as a real clear rather
-   *  than a wipe (they run back). 3 min — most corpse runs are back inside it. */
+   *  than a wipe (they run back). 3 min — most corpse runs are back inside it; a raid whose run-back
+   *  takes longer resumes, timer and all, when its members return (see ClearTracker). */
   readonly raidClearSustainedMs: number;
   /** A player counted in one raid cannot found or join a DIFFERENT raid for this long. Onyxia is a
    *  lockout boss — the same character can't be in two raids — so this stops a raid's members,

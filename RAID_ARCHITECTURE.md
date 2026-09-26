@@ -184,7 +184,7 @@ unified `RaidTracker`, `BuffTracker`, and `RaidService` (`src/raid-service.ts`, 
 factory) are all extracted and live. `index.ts` is wiring only for detection now (1627 lines, down
 from ~2070): it builds the sources/stores/sinks and the service, and hands the service the poll loop,
 the buff-drop sink and the yell timer. The service runs the pipeline — the poll `LairView` →
-`RaidTracker.observe()` `RaidLifecycleEvent`s (`formed`/`cleared`) → `alertPolicy.decide()` (reading
+`RaidTracker.observe()` `RaidLifecycleEvent`s (`formed`/`cleared`/`resumed`) → `alertPolicy.decide()` (reading
 `BuffTracker`'s last-drop/cooldown state) → `delivery.sendCityAlert()` — plus the disband stand-down,
 Chronicle early-confirm, about-to-clear heads-up, buff-drop announce and heartbeat log. `BuffTracker`
 owns the buff-drop domain (dedup + fresh/saved/unknown classification + persistence + cooldown state).

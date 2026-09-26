@@ -424,14 +424,15 @@ describe("ClearTracker — lockout rule", () => {
     expect(t.tracking).toBe(false);
   }
 
-  it("a cleared raid's lingering members cannot re-form a phantom raid", () => {
-    const t = tracker();
-    formThenClear(t);
-    // The SAME members are still/again at strength — locked, so NO new raid forms.
-    expect(t.observe(R(30), 48 * MIN, false).formed).toBeNull();
-    expect(t.tracking).toBe(false);
-    expect(t.observe(R(30), 90 * MIN, false).formed).toBeNull(); // still within the lockout
-    expect(t.tracking).toBe(false);
+  it("a cleared raid's members back at strength never re-form it as a phantom new raid", () => {
+    let n = 0;
+    const t = tracker({ nextNumber: () => ++n });
+    formThenClear(t); // raid #1
+    // The SAME members are again at strength — locked, so NO new raid forms: raid #1 carries on.
+    const back = t.observe(R(30), 48 * MIN, false);
+    expect(back.formed).toBeNull();
+    expect(back.resumed?.number).toBe(1);
+    expect(t.number).toBe(1);
   });
 
   it("a genuinely different crowd forms a new raid after a clear", () => {
@@ -451,16 +452,23 @@ describe("ClearTracker — lockout rule", () => {
   it("does NOT form when the fresh players alone are below strength", () => {
     const t = tracker();
     formThenClear(t);
-    // 25 locked stragglers (r) + 10 fresh (c): only 10 fresh < 15 → no raid.
-    expect(t.observe([...R(25), ...C(10)], 48 * MIN, false).formed).toBeNull();
+    // 12 locked stragglers (r) + 10 fresh (c): only 10 fresh < 15 → no raid; 12 back < 15 → no resume.
+    const obs = t.observe([...R(12), ...C(10)], 48 * MIN, false);
+    expect(obs.formed).toBeNull();
+    expect(obs.resumed).toBeNull();
     expect(t.tracking).toBe(false);
   });
 
   it("releases a player once the lockout elapses (a genuinely new, later raid)", () => {
-    const t = tracker({ lockoutMs: 60 * MIN });
-    formThenClear(t); // r's last locked at 30 min
-    expect(t.observe(R(30), 80 * MIN, false).formed).toBeNull(); // 80-30 = 50 < 60 → still locked
-    expect(t.observe(R(30), 95 * MIN, false).formed).not.toBeNull(); // 95-30 = 65 >= 60 → released
+    let n = 0;
+    const t = tracker({ lockoutMs: 60 * MIN, nextNumber: () => ++n });
+    formThenClear(t); // raid #1; r's last locked at 30 min
+    // 80-30 = 50 < 60 → still locked: 17 present but only 5 are free, and 12 back can't resume #1.
+    expect(t.observe([...R(12), ...C(5)], 80 * MIN, false).formed).toBeNull();
+    // 95-30 = 65 >= 60 → released: they found raid #2 rather than resuming #1.
+    const later = t.observe(R(30), 95 * MIN, false);
+    expect(later.resumed).toBeNull();
+    expect(later.formed?.number).toBe(2);
   });
 
   it("persists and restores the ledger across a restart — the rule survives a redeploy", () => {
@@ -487,5 +495,80 @@ describe("ClearTracker — lockout rule", () => {
     t.observe([], 20 * MIN, false); // gone well past the sustained window → cleared
     expect(t.tracking).toBe(false);
     expect(t.members.size).toBe(0);
+  });
+});
+
+// A wipe whose run-back outlasts the sustained wait reads as a clear. The same members coming back
+// are the same raid (they are locked to it), so it resumes with its number and its timer.
+describe("ClearTracker — false clear", () => {
+  /** Raid #1 of r0..r29 forms at 0, wipes at 20 min, and is read as cleared at 25 (5 min wait). */
+  function wipeReadAsClear(over: Partial<ConstructorParameters<typeof ClearTracker>[0]> = {}): ClearTracker {
+    let n = 0;
+    const t = tracker({ nextNumber: () => ++n, ...over });
+    t.observe(R(30), 0, false);
+    t.observe(R(30), 19 * MIN, false);
+    t.observe(R(4), 20 * MIN, false); // the wipe
+    expect(t.observe(R(4), 25 * MIN, false).clear?.durationMs).toBe(20 * MIN);
+    return t;
+  }
+
+  it("resumes the raid when its members run back after the wait: same number, timer from formation", () => {
+    const t = wipeReadAsClear();
+    const back = t.observe(R(28), 27 * MIN, false);
+    expect(back.resumed).toEqual({ number: 1, elapsedMs: 27 * MIN, awayMs: 7 * MIN });
+    expect(back.formed).toBeNull();
+    expect(t.tracking).toBe(true);
+    expect(t.elapsedMs(30 * MIN)).toBe(30 * MIN);
+  });
+
+  it("measures the resumed raid's real clear from its original formation", () => {
+    const t = wipeReadAsClear();
+    t.observe(R(28), 27 * MIN, false); // resumed
+    t.observe(R(28), 44 * MIN, false);
+    t.observe(R(0), 45 * MIN, false); // the real departure
+    const clear = t.observe(R(0), 50 * MIN, false).clear;
+    expect(clear).toEqual({ durationMs: 45 * MIN, peak: 30, number: 1 });
+  });
+
+  it("persists the resumed raid again, so a restart keeps it", () => {
+    const t = wipeReadAsClear();
+    expect(t.snapshot()).toBeNull();
+    t.observe(R(28), 27 * MIN, false);
+    expect(t.snapshot()).toMatchObject({ formedAt: 0, number: 1, peak: 30, belowSince: null });
+  });
+
+  it("does not resume while fewer than the clear floor of its members are back", () => {
+    const t = wipeReadAsClear();
+    expect(t.observe(R(14), 27 * MIN, false).resumed).toBeNull(); // floor is 15
+    expect(t.tracking).toBe(false);
+    expect(t.observe(R(15), 28 * MIN, false).resumed?.number).toBe(1);
+  });
+
+  it("does not resume a kill Chronicle proved", () => {
+    let n = 0;
+    const t = tracker({ nextNumber: () => ++n });
+    t.observe(R(30), 0, false);
+    t.observe(R(4), 20 * MIN, false); // departure pending
+    expect(t.confirmNow()?.number).toBe(1);
+    const back = t.observe(R(30), 27 * MIN, false);
+    expect(back.resumed).toBeNull();
+    expect(back.formed).toBeNull(); // still locked — no phantom either
+    expect(t.tracking).toBe(false);
+  });
+
+  it("resumes only the last raid read as cleared", () => {
+    const t = wipeReadAsClear(); // #1 of r's cleared at 25
+    t.observe(C(30), 30 * MIN, false); // #2 of c's forms
+    t.observe(C(0), 40 * MIN, false);
+    expect(t.observe(C(0), 45 * MIN, false).clear?.number).toBe(2);
+    expect(t.observe(R(30), 47 * MIN, false).resumed).toBeNull(); // #1 was superseded
+    expect(t.observe(C(30), 48 * MIN, false).resumed?.number).toBe(2);
+  });
+
+  it("lets the raid go once its members' lockout ends — they found a new raid then", () => {
+    const t = wipeReadAsClear({ lockoutMs: 60 * MIN }); // r's last locked at 19 min
+    const later = t.observe(R(30), 80 * MIN, false);
+    expect(later.resumed).toBeNull();
+    expect(later.formed?.number).toBe(2);
   });
 });

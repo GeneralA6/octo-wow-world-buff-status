@@ -54,7 +54,8 @@ export interface RaidTrackerOptions {
 /**
  * What the tracker reports about a raid crossing a lifecycle boundary this poll. A pure,
  * roster-driven signal: `formed` the poll a raid reaches strength (first has a number), `cleared`
- * the poll a sustained departure is confirmed. The "about to clear" heads-up (time vs. predicted
+ * the poll a sustained departure is confirmed, `resumed` the poll a raid read as cleared has its
+ * members back (a wipe whose run-back outlasted the wait). The "about to clear" heads-up (time vs. predicted
  * duration) and the disband/stand-down decisions (plausibility thresholds) are NOT tracker state —
  * the loop derives them from the elapsed time and the clear event.
  */
@@ -67,6 +68,14 @@ export type RaidLifecycleEvent =
       readonly durationMs: number;
       /** Proven by a Chronicle Onyxia kill (early-confirm), not just inferred from the /who departure. */
       readonly killConfirmed: boolean;
+    }
+  | {
+      readonly kind: "resumed";
+      readonly number: number | null;
+      /** Form → now: the raid's timer, running on from its original formation. */
+      readonly elapsedMs: number;
+      /** How long its members were gone. */
+      readonly awayMs: number;
     };
 
 export interface RaidObservation {
@@ -113,6 +122,7 @@ export class RaidTracker {
     this.#forgetStrangers(names);
     const events: RaidLifecycleEvent[] = [];
     if (obs.formed) events.push({ kind: "formed", number: obs.formed.number, peak: obs.formed.peak });
+    if (obs.resumed) events.push({ kind: "resumed", ...obs.resumed });
     if (obs.clear) {
       events.push({
         kind: "cleared",

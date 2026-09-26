@@ -48,6 +48,19 @@ describe("RaidTracker — lifecycle events", () => {
     expect(events[0]).toMatchObject({ kind: "cleared", peak: 20, killConfirmed: false });
   });
 
+  it("emits 'resumed' when a raid read as cleared has its members back, keeping its number and timer", () => {
+    let n = 0;
+    const t = tracker({ nextRaidNumber: () => ++n });
+    t.observe(view(raid(20, "Nightfall"), M)); // #1 formed at 1M
+    t.observe(view([], 2 * M)); // a wipe whose run-back outlasts the wait
+    t.observe(view([], 5 * M));
+    expect(kinds(t.observe(view([], 7 * M)).events)).toEqual(["cleared"]);
+    const events = t.observe(view(raid(20, "Nightfall"), 9 * M)).events;
+    expect(events).toEqual([{ kind: "resumed", number: 1, elapsedMs: 8 * M, awayMs: 7 * M }]);
+    expect(t.raidNumber()).toBe(1);
+    expect(t.raidElapsedMs(10 * M)).toBe(9 * M);
+  });
+
   it("never emits 'formed' and 'cleared' in the same poll", () => {
     const t = tracker();
     const e = t.observe(view(raid(20, "Nightfall"), M)).events;
