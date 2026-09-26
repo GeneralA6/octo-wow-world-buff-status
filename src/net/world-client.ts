@@ -9,7 +9,6 @@ import {
   buildDelFriend,
   buildGuildChat,
   buildJoinChannel,
-  buildSay,
   buildWhisper,
   buildYell,
   isMonsterChatType,
@@ -328,13 +327,6 @@ export class WorldClient {
   answerResurrection(resurrector: bigint, accept: boolean): void {
     if (!this.#ready) throw new Error("cannot answer a resurrection before the character is in world");
     this.#send(WorldOpcode.CMSG_RESURRECT_RESPONSE, buildResurrectResponse(resurrector, accept));
-  }
-
-  /** Say something to everyone standing close by. */
-  say(message: string): void {
-    if (!this.#ready) throw new Error("cannot say before the character is in world");
-    this.#logger.info(`say: ${JSON.stringify(message)}`);
-    this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildSay(message));
   }
 
   yell(message: string): void {

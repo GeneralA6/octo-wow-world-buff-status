@@ -53,7 +53,6 @@ import { ShameList } from "./watcher/shame-list.js";
 import { ShameProfiler } from "./watcher/shame-profiler.js";
 import { ThreatWatch, describeThreat, type Threat } from "./watcher/threat-watch.js";
 import { StandDown } from "./watcher/stand-down.js";
-import { thanksFor } from "./watcher/thanks.js";
 import { LifeSigns } from "./watcher/life-signs.js";
 import { WhisperRefusals } from "./chat/whisper-refusals.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
@@ -929,17 +928,11 @@ interface ListenerExit {
 
 /**
  * Accept a resurrection — from anyone: a character of ours never has a reason to stay dead, and only a
- * player on its own side can offer one — thank the player out loud by name, and hand back who it was.
+ * player on its own side can offer one — and hand back who it was, for the log and the alert.
  */
 async function acceptResurrection(world: WorldClient, resurrector: bigint): Promise<string> {
   world.answerResurrection(resurrector, true);
   const name = await world.resolveName(resurrector, PLAYER_NAME_TIMEOUT_MS);
-  // Alive by now — the server raises us on the accept — so the living hear it.
-  try {
-    world.say(thanksFor(name));
-  } catch {
-    // left the world meanwhile: nobody to thank
-  }
   return name ?? `0x${resurrector.toString(16)}`;
 }
 

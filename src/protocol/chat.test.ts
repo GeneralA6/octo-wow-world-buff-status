@@ -7,7 +7,6 @@ import {
   buildGuildChat,
   buildJoinChannel,
   buildWhisper,
-  buildSay,
   buildYell,
   escapeChatText,
   isMonsterChatType,
@@ -154,17 +153,6 @@ describe("buildWhisper", () => {
     reader.u32LE();
     reader.cString();
     expect(reader.cString()).toBe("mode ingame||both||offline");
-  });
-});
-
-describe("buildSay", () => {
-  it("encodes a universal-language /say with no target (heard by everyone close by)", () => {
-    const frame = buildSay("Nice try.");
-    const reader = new PacketReader(frame);
-    expect(reader.u32LE()).toBe(ChatType.Say);
-    expect(reader.u32LE()).toBe(LANG_UNIVERSAL);
-    expect(reader.cString()).toBe("Nice try.");
-    expect(reader.remaining).toBe(0);
   });
 });
 
