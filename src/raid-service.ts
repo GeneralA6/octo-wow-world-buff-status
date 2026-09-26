@@ -3,7 +3,7 @@ import { describeError } from "./errors.js";
 import type { Logger } from "./logger.js";
 import type { FaireAnswer } from "./darkmoon/observation.js";
 import { AlertDelivery } from "./notify/alert-delivery.js";
-import { isAnnounced, isDropWhispered, yelledInCapitals } from "./notify/raid-alert-reach.js";
+import { isDropWhispered, yelledInCapitals } from "./notify/raid-alert-reach.js";
 import {
   formatBuffAlert,
   formatBuffDroppedWhisper,
@@ -260,9 +260,6 @@ export function createRaidService(
       // re-emitting the same event doesn't re-alert. A fresh drop for the city, or a stale
       // record, reopens it.
       const gateAndAnnounce = async (event: RaidEvent): Promise<void> => {
-        // An alert not sent at all (the start, for now) is not recorded either: nobody was told of it,
-        // so nothing later — a disband's stand-down — is owed for it.
-        if (!isAnnounced(event.kind)) return;
         const raidNumber = event.number ?? null;
         const fresh = await alertPolicy.decide({ cities: lane.cities, kind: event.kind, raidNumber, label: lane.label, now });
         if (fresh.length === 0) return;
