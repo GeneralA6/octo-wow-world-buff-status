@@ -10,7 +10,6 @@ function setup(results: readonly LogoutResult[], alive = true) {
   let living = alive;
   const deps = {
     isAlive: vi.fn(() => living),
-    say: vi.fn<(line: string) => void>(),
     logout: vi.fn(async (): Promise<LogoutResult> => queue.shift() ?? "refused"),
     close: vi.fn<() => void>(),
     rearm: vi.fn<() => void>(),
@@ -25,10 +24,9 @@ describe("StandDown", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("says its parting line, logs out and leaves", async () => {
+  it("logs out and leaves", async () => {
     const { standDown, deps } = setup(["logged-out"]);
-    await standDown.face(INFERNAL, "Blink it is.");
-    expect(deps.say).toHaveBeenCalledWith("Blink it is.");
+    await standDown.face(INFERNAL);
     expect(deps.close).toHaveBeenCalledOnce();
     expect(deps.onLeft).toHaveBeenCalledWith(INFERNAL, "logged-out");
     expect(deps.onCornered).not.toHaveBeenCalled();
@@ -36,14 +34,14 @@ describe("StandDown", () => {
 
   it("drops the connection when the logout goes unanswered", async () => {
     const { standDown, deps } = setup(["no-answer"]);
-    await standDown.face(INFERNAL, "Blink it is.");
+    await standDown.face(INFERNAL);
     expect(deps.close).toHaveBeenCalledOnce();
     expect(deps.onLeft).toHaveBeenCalledWith(INFERNAL, "no-answer");
   });
 
   it("stays connected when already in a fight, and tries again shortly", async () => {
     const { standDown, deps } = setup(["refused"]);
-    await standDown.face(INFERNAL, "Blink it is.");
+    await standDown.face(INFERNAL);
     expect(deps.close).not.toHaveBeenCalled();
     expect(deps.onLeft).not.toHaveBeenCalled();
     expect(deps.onCornered).toHaveBeenCalledWith(INFERNAL);
@@ -52,12 +50,11 @@ describe("StandDown", () => {
     expect(deps.rearm).toHaveBeenCalledOnce();
   });
 
-  it("leaves once the fight is over, saying its line and raising the alarm only once", async () => {
+  it("leaves once the fight is over, raising the alarm only once", async () => {
     const { standDown, deps } = setup(["refused", "refused", "logged-out"]);
-    await standDown.face(INFERNAL, "Blink it is.");
-    await standDown.face(INFERNAL, "Blink it is.");
-    await standDown.face(INFERNAL, "Blink it is.");
-    expect(deps.say).toHaveBeenCalledOnce();
+    await standDown.face(INFERNAL);
+    await standDown.face(INFERNAL);
+    await standDown.face(INFERNAL);
     expect(deps.onCornered).toHaveBeenCalledOnce();
     expect(deps.close).toHaveBeenCalledOnce();
     expect(deps.onLeft).toHaveBeenCalledWith(INFERNAL, "logged-out");
@@ -65,16 +62,16 @@ describe("StandDown", () => {
 
   it("never logs out once dead — a resurrection needs it online", async () => {
     const { standDown, deps, die } = setup(["refused", "logged-out"]);
-    await standDown.face(INFERNAL, "Blink it is.");
+    await standDown.face(INFERNAL);
     die();
-    await standDown.face(INFERNAL, "Blink it is.");
+    await standDown.face(INFERNAL);
     expect(deps.logout).toHaveBeenCalledOnce();
     expect(deps.close).not.toHaveBeenCalled();
   });
 
   it("keeps watching while dead, in case it is brought back with the danger still near", async () => {
     const { standDown, deps } = setup([], false);
-    await standDown.face(INFERNAL, "Blink it is.");
+    await standDown.face(INFERNAL);
     expect(deps.logout).not.toHaveBeenCalled();
     vi.advanceTimersByTime(RETRY_MS);
     expect(deps.rearm).toHaveBeenCalledOnce();
@@ -82,15 +79,15 @@ describe("StandDown", () => {
 
   it("asks only once at a time", async () => {
     const { standDown, deps } = setup(["logged-out"]);
-    const first = standDown.face(INFERNAL, "Blink it is.");
-    await standDown.face(INFERNAL, "Blink it is.");
+    const first = standDown.face(INFERNAL);
+    await standDown.face(INFERNAL);
     await first;
     expect(deps.logout).toHaveBeenCalledOnce();
   });
 
   it("retries nothing once the connection is over", async () => {
     const { standDown, deps } = setup(["refused"]);
-    await standDown.face(INFERNAL, "Blink it is.");
+    await standDown.face(INFERNAL);
     standDown.dispose();
     vi.advanceTimersByTime(RETRY_MS);
     expect(deps.rearm).not.toHaveBeenCalled();

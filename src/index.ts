@@ -53,7 +53,6 @@ import { ShameList } from "./watcher/shame-list.js";
 import { ShameProfiler } from "./watcher/shame-profiler.js";
 import { ThreatWatch, describeThreat, type Threat } from "./watcher/threat-watch.js";
 import { StandDown } from "./watcher/stand-down.js";
-import { tauntFor } from "./watcher/taunts.js";
 import { thanksFor } from "./watcher/thanks.js";
 import { LifeSigns } from "./watcher/life-signs.js";
 import { WhisperRefusals } from "./chat/whisper-refusals.js";
@@ -1043,12 +1042,7 @@ async function runListener(
               (owner ? `, ${owner.current ? "" : "formerly "}${owner.relation} by 0x${owner.guid.toString(16)}` : ""),
           );
         },
-        onThreat: (threat) => {
-          // A parting shot at whoever sent it, heard by everyone close by — the warlock included.
-          const culprit = threat.kind === "infernal" ? (threat.owner?.guid ?? null) : threat.guid;
-          const name = culprit === null ? null : (hooks.knownName(culprit) ?? world.playerName(culprit) ?? null);
-          void standDown.face(threat, tauntFor(threat.kind, name));
-        },
+        onThreat: (threat) => void standDown.face(threat),
       },
       { radiusYd: config.listenerThreatRadiusYd, fleeShunnedPlayers: config.listenerFleeShunnedPlayers },
     );
@@ -1057,13 +1051,6 @@ async function runListener(
     const standDown = new StandDown(
       {
         isAlive: () => alive !== false,
-        say: (line) => {
-          try {
-            world.say(line);
-          } catch (error) {
-            logger.debug(`${listener.characterName}: no parting /say (${describeError(error)})`);
-          }
-        },
         logout: async () => {
           const outcome = await world.logout(LISTENER_LOGOUT_TIMEOUT_MS);
           if (outcome === "logged-out" || outcome === "refused") return outcome;

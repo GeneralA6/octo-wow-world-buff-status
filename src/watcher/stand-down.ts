@@ -15,8 +15,6 @@ export type LogoutResult = "logged-out" | "refused" | "no-answer";
 export interface StandDownDeps {
   /** Whether the listener is alive — or not known yet, which counts as alive. */
   readonly isAlive: () => boolean;
-  /** A parting line, said before the first attempt to leave. */
-  readonly say: (line: string) => void;
   readonly logout: () => Promise<LogoutResult>;
   /** Drop the connection — logged out, or with no answer to the logout. */
   readonly close: () => void;
@@ -36,7 +34,6 @@ export interface StandDownOptions {
 export class StandDown {
   readonly #deps: StandDownDeps;
   readonly #retryMs: number;
-  #taunted = false;
   #leaving = false;
   #cornered = false;
   #retry: ReturnType<typeof setTimeout> | null = null;
@@ -46,16 +43,12 @@ export class StandDown {
     this.#retryMs = options.retryMs;
   }
 
-  /** The watch reported `threat`: leave if it can, with `taunt` said on the way out. */
-  async face(threat: Threat, taunt: string): Promise<void> {
+  /** The watch reported `threat`: leave if it can. */
+  async face(threat: Threat): Promise<void> {
     if (this.#leaving) return;
     if (!this.#deps.isAlive()) {
       this.#rearmLater();
       return;
-    }
-    if (!this.#taunted) {
-      this.#taunted = true;
-      this.#deps.say(taunt);
     }
     this.#leaving = true;
     const result = await this.#deps.logout();
