@@ -264,6 +264,9 @@ export interface BotConfig {
   readonly interactEntry: number | null;
   /** Guild the bot represents — credited in the intro whisper. */
   readonly guildName: string;
+  /** Whether a player can get a guild invite from the bot: the "invite" command, its help line, and
+   *  the offer to a guild question. Off by default — only on while WOW_GUILD_INVITE says so. */
+  readonly guildInviteEnabled: boolean;
   /** Community name used in the intro whisper. */
   readonly community: string;
   /** Chronicle early-confirm: during a departure we detect, a fresh community Onyxia-kill log by
@@ -579,6 +582,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const interactEntry = interactEntryRaw && /^\d+$/.test(interactEntryRaw) ? Number(interactEntryRaw) : null;
 
   const guildName = env.WOW_GUILD_NAME?.trim() || "Rage Quit";
+  const guildInviteRaw = env.WOW_GUILD_INVITE?.trim().toLowerCase();
+  const guildInviteEnabled = guildInviteRaw === "true" || guildInviteRaw === "1";
   const community = env.WOW_COMMUNITY?.trim() || "OctoWoW";
 
   // Chronicle early-confirm: on by default (a no-op without Mongo), disabled with false/0/none.
@@ -680,6 +685,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     interactMaxYd,
     interactEntry,
     guildName,
+    guildInviteEnabled,
     community,
     chronicleEnabled,
     logLevel,

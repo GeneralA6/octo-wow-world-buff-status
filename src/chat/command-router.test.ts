@@ -15,6 +15,7 @@ function deps(
     faireAnswer?: () => FaireAnswer;
     now?: () => number;
     isShunned?: (name: string) => boolean;
+    guildInvites?: boolean;
   } = {},
 ) {
   const store = new InMemorySubscriberStore();
@@ -33,6 +34,7 @@ function deps(
     isShunned: opts.isShunned,
     areaName: "Onyxia's Lair",
     guildName: "Rage Quit",
+    guildInvites: opts.guildInvites ?? true,
     onFeedback: opts.withFeedback === false ? undefined : (from, text) => feedback.push({ from, text }),
     onSubscribe: (name) => subscribed.push(name),
   });
@@ -315,6 +317,20 @@ describe("CommandRouter", () => {
     expect(reply).not.toMatch(/Rage Quit|recruit/i); // guild attribution removed
   });
 
+  it("offers no guild invite while switched off: no command, no help line, no offer to a guild question", async () => {
+    const { router } = deps({ guildInvites: false });
+    const invited: string[] = [];
+    router.setGuildInvite((name) => invited.push(name));
+    for (const text of ["invite", "join", "how do I join?", "are you recruiting"]) {
+      expect(await router.handle("Raider", text)).toEqual([UNKNOWN_REPLY]);
+    }
+    expect(invited).toEqual([]);
+    const help = await router.handle("Raider", "help");
+    expect(help.some((line) => /^invite\b/i.test(line))).toBe(false);
+    expect(help.join(" ")).not.toMatch(/Rage Quit/);
+    expect(help.join(" ")).toMatch(/discord - our Discord invite link/); // the rest of help is unchanged
+  });
+
   it("guild-invites SILENTLY on 'invite' when wired (no confirmation), else says it can't", async () => {
     const { router } = deps();
     expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
@@ -355,6 +371,7 @@ describe("CommandRouter", () => {
       activeRaids: () => [],
       areaName: "Onyxia's Lair",
       guildName: "Rage Quit",
+      guildInvites: true,
       discordInvite: "https://discord.gg/abc",
     });
     expect((await withInvite.handle("Raider", "whats your discord?")).join(" ")).toContain("https://discord.gg/abc");
@@ -376,6 +393,7 @@ describe("CommandRouter", () => {
       activeRaids: () => [],
       areaName: "Onyxia's Lair",
       guildName: "Rage Quit",
+      guildInvites: true,
       discordInvite: "https://discord.gg/abc",
     });
     const reply = (await withInvite.handle("Raider", "discord")).join(" ");

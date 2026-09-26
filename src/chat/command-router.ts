@@ -65,6 +65,9 @@ export interface CommandDeps {
   readonly areaName: string;
   /** The guild the "invite" help line names ("join <guild>"). */
   readonly guildName: string;
+  /** Whether the bot hands out guild invites. Off, "invite"/"join" are no command, help leaves the
+   *  line out, and a guild question is not answered with an offer. */
+  readonly guildInvites: boolean;
   /** The community Discord server invite link, shared by the "discord" command.
    *  Null/undefined = not configured, and the command says so. */
   readonly discordInvite?: string | null;
@@ -181,6 +184,7 @@ export class CommandRouter {
       }
       case "invite":
       case "join":
+        if (!this.#deps.guildInvites) return [UNKNOWN_REPLY];
         return this.#invite(sender);
       case "feedback":
       case "suggest":
@@ -218,7 +222,7 @@ export class CommandRouter {
           `alliance / horde / both - which capital's buffs to be alerted for`,
           `discord - our Discord invite link`,
           `feedback <message> - send a suggestion or bug report`,
-          `invite - join <${this.#deps.guildName}>`,
+          ...(this.#deps.guildInvites ? [`invite - join <${this.#deps.guildName}>`] : []),
         ];
       default: {
         // Natural-language intent detection over the whole message.
@@ -401,6 +405,7 @@ export class CommandRouter {
         // The phrasing IS the suggestion — pass the whole message through.
         return this.#feedback(sender, text.trim());
       case "guild":
+        if (!this.#deps.guildInvites) return [UNKNOWN_REPLY];
         return [
           `Whisper "invite" and I'll send you a guild invite right now - and "subscribe" for buff alerts.`,
         ];

@@ -476,6 +476,16 @@ describe("loadConfig darkmoon on-site watch", () => {
   });
 });
 
+describe("loadConfig guild invites", () => {
+  it("hands out no guild invites unless switched on", () => {
+    expect(loadConfig({ ...minimalEnv }).guildInviteEnabled).toBe(false);
+    expect(loadConfig({ ...minimalEnv, WOW_GUILD_INVITE: "false" }).guildInviteEnabled).toBe(false);
+    for (const on of ["true", "1", "TRUE"]) {
+      expect(loadConfig({ ...minimalEnv, WOW_GUILD_INVITE: on }).guildInviteEnabled).toBe(true);
+    }
+  });
+});
+
 describe("loadConfig warchief's blessing channel", () => {
   it("falls back to the Onyxia channel unless a channel is given", () => {
     expect(loadConfig({ ...minimalEnv }).discordWarchiefChannelId).toBeNull();
