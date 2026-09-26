@@ -753,11 +753,13 @@ async function runConnection(
             pollTimer.unref?.();
           };
           void poll();
-          // Yell a buff-status board in the capitals on a slow cadence.
-          statusYellTimer = setInterval(() => {
-            if (!settled) void raidService.yellCapitalStatus().catch((e) => logger.debug(`status yell: ${describeError(e)}`));
-          }, config.statusYellMs);
-          statusYellTimer.unref?.();
+          // Yell a buff-status board in the capitals on a slow cadence — when switched on at all.
+          if (config.statusYellMs > 0) {
+            statusYellTimer = setInterval(() => {
+              if (!settled) void raidService.yellCapitalStatus().catch((e) => logger.debug(`status yell: ${describeError(e)}`));
+            }, config.statusYellMs);
+            statusYellTimer.unref?.();
+          }
           // Actively resolve the both-faction backlog in the background, one /who at a time.
           factionResolveTimer = setInterval(() => {
             if (!settled) void resolveNextFaction(Date.now()).catch((e) => logger.debug(`faction resolve: ${describeError(e)}`));

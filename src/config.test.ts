@@ -201,8 +201,9 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_LOCKOUT_HOURS: "12" }).raidLockoutMs).toBe(12 * 60 * 60_000);
   });
 
-  it("defaults the capital status-yell cadence to 10 minutes and accepts an override", () => {
-    expect(loadConfig({ ...minimalEnv }).statusYellMs).toBe(10 * 60_000);
+  it("keeps the capital status yell off by default, and takes a cadence to switch it on", () => {
+    expect(loadConfig({ ...minimalEnv }).statusYellMs).toBe(0);
+    expect(loadConfig({ ...minimalEnv, WOW_STATUS_YELL_MINUTES: "0" }).statusYellMs).toBe(0);
     expect(loadConfig({ ...minimalEnv, WOW_STATUS_YELL_MINUTES: "15" }).statusYellMs).toBe(15 * 60_000);
   });
 

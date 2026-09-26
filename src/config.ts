@@ -134,7 +134,8 @@ export interface BotConfig {
    *  forming" alert fires — filters a group that assembles and leaves without committing. A
    *  disconnect or a drop below the floor and back resets the count. Default 0 = fire immediately. */
   readonly raidFormConfirmMs: number;
-  /** How often the buff-status board is yelled in each capital (default 10 min). */
+  /** How often the buff-status board is yelled in each capital; 0, the default, never. The one-off
+   *  raid event yells — forming, ending soon, cleared, disbanded — are not this. */
   readonly statusYellMs: number;
   /** A time-sensitive whisper still queued past this is dropped unsent (default 5 min), so a
    *  throttled queue never delivers a "park now" long after the raid it was about cleared. */
@@ -454,7 +455,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const listenerFleeShunnedPlayers = fleeShunnedRaw === "true" || fleeShunnedRaw === "1";
   const listenerBanterMs = intWithDefault("WOW_LISTENER_BANTER_MINUTES", 3, 0) * 60_000;
   const listenerBanterLineGapMs = intWithDefault("WOW_LISTENER_BANTER_LINE_GAP_SECONDS", 10, 1) * 1_000;
-  const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 10, 1) * 60_000;
+  // Off by default: a city-wide yell every few minutes, the same words each time, wore on players.
+  const statusYellMs = intWithDefault("WOW_STATUS_YELL_MINUTES", 0, 0) * 60_000;
   // A time-sensitive whisper (park alert, buff drop) still queued past this is dropped unsent — a
   // heavily-throttled queue would otherwise deliver a "park now" minutes after the raid cleared.
   const whisperMaxAgeMs = intWithDefault("WOW_WHISPER_MAX_AGE_MINUTES", 5, 1) * 60_000;
