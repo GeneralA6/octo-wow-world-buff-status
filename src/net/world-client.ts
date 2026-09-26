@@ -7,6 +7,7 @@ import { buildWhoRequestBody, parseWhoResponseBody, type WhoQuery, type WhoResul
 import {
   buildAddFriend,
   buildDelFriend,
+  buildGuildChat,
   buildJoinChannel,
   buildWhisper,
   buildYell,
@@ -42,6 +43,7 @@ import type { NodeSocketLike } from "./socket.js";
 import {
   buildAuthSessionBody,
   buildGameObjUseBody,
+  buildGuildInviteBody,
   buildPingBody,
   buildPlayerLoginBody,
   buildStandStateBody,
@@ -90,6 +92,8 @@ export interface WorldClientHandlers {
   /** A server SYSTEM message — how the server reports command results/errors (e.g. a guild
    *  invite that failed). The wiring layer decides which ones are errors worth alerting on. */
   onSystemMessage?: (text: string) => void;
+  /** A player just JOINED our guild (from SMSG_GUILD_EVENT) — e.g. accepted our invite. */
+  onGuildJoin?: (name: string) => void;
   /** A player LEFT or was removed from our guild (SMSG_GUILD_EVENT) — used to keep the count of
    *  active guildies who joined via the bot accurate. */
   onGuildLeave?: (name: string) => void;
@@ -359,6 +363,13 @@ export class WorldClient {
     this.#send(WorldOpcode.CMSG_FRIEND_LIST, Buffer.alloc(0));
   }
 
+  /** Post to guild chat (/g) — used to welcome a new member. Needs the character guilded. */
+  guildChat(message: string): void {
+    if (!this.#ready) throw new Error("cannot guild-chat before the character is in world");
+    this.#logger.info(`guild chat: ${JSON.stringify(message)}`);
+    this.#send(WorldOpcode.CMSG_MESSAGECHAT, buildGuildChat(message));
+  }
+
   /** Sit the character down (the /sit stand-state) — used to look parked in a city. */
   sit(): void {
     if (!this.#ready) throw new Error("cannot sit before the character is in world");
@@ -377,6 +388,13 @@ export class WorldClient {
     if (!this.#ready) throw new Error("cannot use a game object before the character is in world");
     this.#logger.debug(`world: use gameobject 0x${guid.toString(16)}`);
     this.#send(WorldOpcode.CMSG_GAMEOBJ_USE, buildGameObjUseBody(guid));
+  }
+
+  /** Invite a player to the guild by character name (no-op server-side if not guilded). */
+  guildInvite(name: string): void {
+    if (!this.#ready) throw new Error("cannot guild-invite before the character is in world");
+    this.#logger.debug(`world: guild invite -> ${name}`);
+    this.#send(WorldOpcode.CMSG_GUILD_INVITE, buildGuildInviteBody(name));
   }
 
   close(): void {
@@ -667,7 +685,9 @@ export class WorldClient {
       const event = parseGuildEvent(body);
       // Log every guild event so the real JOINED layout can be confirmed against a live join.
       this.#logger.info(`guild event: type=${event.type} params=${JSON.stringify(event.params)}`);
-      if ((event.type === GuildEvent.Left || event.type === GuildEvent.Removed) && event.params[0]) {
+      if (event.type === GuildEvent.Joined && event.params[0]) {
+        this.#handlers.onGuildJoin?.(event.params[0]);
+      } else if ((event.type === GuildEvent.Left || event.type === GuildEvent.Removed) && event.params[0]) {
         this.#handlers.onGuildLeave?.(event.params[0]);
       }
     } catch (error) {

@@ -52,6 +52,7 @@ export function factionLabel(factions: readonly Faction[]): string {
  *   subscribe | sub | start        — opt in to in-game raid alerts
  *   unsubscribe | unsub | stop      — opt out
  *   alliance | horde | both         — which side's buff you want
+ *   invite | join                   — guild-invite the caller
  *   feedback | suggest              — send a message to the team
  *   discord                         — share the community Discord invite link
  *   darkmoon | dmf | faire          — where the Darkmoon Faire was last seen
@@ -62,6 +63,8 @@ export interface CommandDeps {
   /** Raids in progress across all factions — for the status command. */
   readonly activeRaids: () => readonly ActiveRaid[];
   readonly areaName: string;
+  /** The guild the "invite" help line names ("join <guild>"). */
+  readonly guildName: string;
   /** The community Discord server invite link, shared by the "discord" command.
    *  Null/undefined = not configured, and the command says so. */
   readonly discordInvite?: string | null;
@@ -90,10 +93,10 @@ export interface CommandDeps {
   readonly isShunned?: (name: string) => boolean;
 }
 
+/** What a player on the wall of shame is told, instead of an answer. */
 /** The one answer to a message that is no command and no question we recognise. */
 export const UNKNOWN_REPLY = `Not sure what you mean - whisper "help" for commands.`;
 
-/** What a player on the wall of shame is told, instead of an answer. */
 export const SHUNNED_REPLY =
   "You killed one of my listeners, so you're on the wall of shame. I won't answer you or send you buff alerts anymore.";
 
@@ -103,6 +106,9 @@ const SHUNNED_REPLY_INTERVAL_MS = 24 * 60 * 60_000;
 
 export class CommandRouter {
   readonly #deps: CommandDeps;
+  // Guild invites can only be sent by the connected watcher, which registers this
+  // when it reaches world and clears it on disconnect. Null = can't invite right now.
+  #guildInvite: ((name: string) => void) | null = null;
   // The watcher registers a /who-based faction detector; fired (fire-and-forget) when a
   // new subscriber is added, to auto-set their side. Null = detection unavailable.
   #factionLookup: ((name: string) => void) | null = null;
@@ -114,6 +120,11 @@ export class CommandRouter {
 
   constructor(deps: CommandDeps) {
     this.#deps = deps;
+  }
+
+  /** The watcher offers/withdraws its guild-invite capability as it connects/drops. */
+  setGuildInvite(fn: ((name: string) => void) | null): void {
+    this.#guildInvite = fn;
   }
 
   /** The watcher offers/withdraws /who-based faction detection as it connects/drops. */
@@ -168,6 +179,9 @@ export class CommandRouter {
             : `You weren't subscribed. Whisper "subscribe" to start.`,
         ];
       }
+      case "invite":
+      case "join":
+        return this.#invite(sender);
       case "feedback":
       case "suggest":
       case "suggestion":
@@ -195,7 +209,8 @@ export class CommandRouter {
       case "more":
       case "?":
         // Concise, one command per whisper. Each line is its own whisper and they arrive in order,
-        // so the two people actually ask for — what's raiding, and where the faire is — go first.
+        // so the two people actually ask for — what's raiding, and where the faire is — go first,
+        // and the guild invite last.
         return [
           `status - what's raiding Onyxia now, and when the buff last dropped`,
           `darkmoon - where the Darkmoon Faire was last seen`,
@@ -203,6 +218,7 @@ export class CommandRouter {
           `alliance / horde / both - which capital's buffs to be alerted for`,
           `discord - our Discord invite link`,
           `feedback <message> - send a suggestion or bug report`,
+          `invite - join <${this.#deps.guildName}>`,
         ];
       default: {
         // Natural-language intent detection over the whole message.
@@ -357,6 +373,17 @@ export class CommandRouter {
     return [`Thanks for the feedback - I've passed it along.`];
   }
 
+  /** Send the caller a guild invite. Only works while the watcher is in world; if it
+   *  is offline, or Bufftracker lacks invite rights in the guild, nothing is sent. */
+  #invite(sender: string): string[] {
+    if (!this.#guildInvite) {
+      return [`I can't send a guild invite right now - try again in a moment.`];
+    }
+    // Invite silently — no confirmation whisper. If they accept, they're welcomed in guild chat.
+    this.#guildInvite(sender);
+    return [];
+  }
+
   /** Act on a natural-language intent — re-dispatching to the canonical command where one
    *  exists. `text` is the whole original message, used when an intent carries a payload
    *  (feedback). */
@@ -373,6 +400,10 @@ export class CommandRouter {
       case "feedback":
         // The phrasing IS the suggestion — pass the whole message through.
         return this.#feedback(sender, text.trim());
+      case "guild":
+        return [
+          `Whisper "invite" and I'll send you a guild invite right now - and "subscribe" for buff alerts.`,
+        ];
       case "buff":
         return [
           `I call out Rallying Cry buff drops from ${areaName} raids. ` +

@@ -14,6 +14,7 @@ export type Intent =
   | "unsubscribe"
   | "feedback"
   | "discord"
+  | "guild"
   | "darkmoon"
   | "buff"
   | "status"
@@ -34,6 +35,10 @@ const PATTERNS: readonly (readonly [Intent, RegExp])[] = [
     /\b(feedback|suggest\w*|feature request|report a bug|there'?s a bug|you should (add|make|change|have|include|support)|could you (add|make|change|support)|can you (add|support))\b/,
   ],
   ["discord", /\bdiscord\b/],
+  [
+    "guild",
+    /\b(guild|invite me|how (do i|to) join|joining|recruit\w*|rage\s?quit|who (made|runs|built|created|owns) (you|this|it|the bot)|what guild|your guild|apply|application)\b/,
+  ],
   // Ahead of "buff": the faire hands out its own buffs, so "darkmoon buff" is a faire question,
   // not a Rallying Cry one. "fair" is deliberately absent — "fair enough" is not a faire question.
   ["darkmoon", /\bdark\s?moon\w*\b|\bdmf\b|\bfaire\b/],

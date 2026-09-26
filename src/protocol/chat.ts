@@ -110,6 +110,15 @@ export function buildYell(message: string, language: number = LANG_UNIVERSAL): B
     .toBuffer();
 }
 
+/** Build a CMSG_MESSAGECHAT to guild chat (/g) — no target, like a yell. */
+export function buildGuildChat(message: string, language: number = LANG_UNIVERSAL): Buffer {
+  return new PacketWriter()
+    .u32LE(ChatType.Guild)
+    .u32LE(language)
+    .cString(escapeChatText(message))
+    .toBuffer();
+}
+
 /** Build a CMSG_JOIN_CHANNEL to sit on a global chat channel (1.12: name then password). */
 export function buildJoinChannel(name: string, password = ""): Buffer {
   return new PacketWriter().cString(name).cString(password).toBuffer();

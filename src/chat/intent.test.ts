@@ -9,10 +9,9 @@ describe("parseIntent", () => {
     ["please stop", "unsubscribe"],
     ["unsubscribe me", "unsubscribe"],
     ["remove me from alerts", "unsubscribe"],
-    // guild questions have no intent — the bot offers no invites
-    ["how do I join?", null],
-    ["are you recruiting", null],
-    ["invite me to the guild", null],
+    ["how do I join?", "guild"],
+    ["are you recruiting", "guild"],
+    ["invite me to the guild", "guild"],
     ["when's the buff coming?", "buff"],
     ["is a world buff up", "buff"],
     ["any raid going?", "status"],
@@ -47,9 +46,10 @@ describe("parseIntent", () => {
     ["hook me up", "subscribe"],
     ["mute me", "unsubscribe"],
     ["turn the alerts off", "unsubscribe"],
-    ["who made you?", null],
-    ["what guild is this", null],
-    ["how do i apply", null],
+    // broader phrasings — guild
+    ["who made you?", "guild"],
+    ["what guild is this", "guild"],
+    ["how do i apply", "guild"],
     // broader phrasings — status
     ["is it raiding", "status"],
     ["raid?", "status"],

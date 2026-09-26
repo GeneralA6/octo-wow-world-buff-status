@@ -40,6 +40,7 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
   readonly sentWhispers: { target: string; message: string }[] = [];
   readonly standStates: number[] = [];
   readonly gameObjUses: bigint[] = [];
+  readonly guildInvites: string[] = [];
   readonly nameQueries: bigint[] = [];
   readonly resurrectAnswers: { resurrector: bigint; status: number }[] = [];
 
@@ -215,6 +216,9 @@ class MockServerSocket extends EventEmitter implements NodeSocketLike {
     if (opcode === WorldOpcode.CMSG_RESURRECT_RESPONSE) {
       const reader = new PacketReader(body);
       this.resurrectAnswers.push({ resurrector: reader.u64LE(), status: reader.u8() });
+    }
+    if (opcode === WorldOpcode.CMSG_GUILD_INVITE) {
+      this.guildInvites.push(new PacketReader(body).cString());
     }
     this.#respond(opcode, body);
     return true;
@@ -468,13 +472,13 @@ describe("WorldClient (against a scripted mock server)", () => {
     client.close();
   });
 
-  it("fires onGuildLeave for a member leaving or removed, and ignores a join", async () => {
+  it("fires onGuildJoin for a JOINED guild event, and ignores other guild events", async () => {
     const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
     let markReady: () => void = () => {};
     const ready = new Promise<void>((resolve) => {
       markReady = resolve;
     });
-    const left: string[] = [];
+    const joined: string[] = [];
     const client = new WorldClient({
       socket,
       account: "BOTACCOUNT",
@@ -482,18 +486,17 @@ describe("WorldClient (against a scripted mock server)", () => {
       characterName: "Botchar",
       clientSeed: 0x22,
       pingIntervalMs: 0,
-      handlers: { onReady: () => markReady(), onGuildLeave: (name) => left.push(name) },
+      handlers: { onReady: () => markReady(), onGuildJoin: (name) => joined.push(name) },
     });
 
     client.start();
     socket.begin(0xdeadbeef);
     await withTimeout(ready);
 
-    socket.pushGuildEvent(GuildEvent.Joined, ["Raider"]); // a join → ignored
-    socket.pushGuildEvent(GuildEvent.Left, ["Quitter"]); // a leave → fires
-    socket.pushGuildEvent(GuildEvent.Removed, ["Kicked", "Officer"]); // a removal → fires
+    socket.pushGuildEvent(GuildEvent.Left, ["Quitter"]); // not a join → ignored
+    socket.pushGuildEvent(GuildEvent.Joined, ["Raider"]); // a join → fires
     await new Promise((resolve) => setImmediate(resolve));
-    expect(left).toEqual(["Quitter", "Kicked"]);
+    expect(joined).toEqual(["Raider"]);
 
     client.close();
   });
@@ -523,6 +526,30 @@ describe("WorldClient (against a scripted mock server)", () => {
     client.sit();
     expect(socket.standStates).toContain(1); // STAND_STATE_SIT
 
+    client.close();
+  });
+
+  it("sends CMSG_GUILD_INVITE with the invitee name", async () => {
+    const socket = new MockServerSocket([{ guid: 0xabcdn, name: "Botchar" }]);
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const client = new WorldClient({
+      socket,
+      account: "BOTACCOUNT",
+      sessionKey: SESSION_KEY,
+      characterName: "Botchar",
+      clientSeed: 0x88,
+      pingIntervalMs: 0,
+      handlers: { onReady: () => markReady() },
+    });
+    client.start();
+    socket.begin(0xdeadbeef);
+    await withTimeout(ready);
+
+    client.guildInvite("Raider");
+    expect(socket.guildInvites).toContain("Raider");
     client.close();
   });
 
