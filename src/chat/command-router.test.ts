@@ -321,26 +321,36 @@ describe("CommandRouter", () => {
     const { router } = deps({ guildInvites: false });
     const invited: string[] = [];
     router.setGuildInvite((name) => invited.push(name));
-    for (const text of ["invite", "join", "how do I join?", "are you recruiting"]) {
+    for (const text of ["ginvite", "guildinvite", "/ginvite", "how do I join?", "are you recruiting"]) {
       expect(await router.handle("Raider", text)).toEqual([UNKNOWN_REPLY]);
     }
     expect(invited).toEqual([]);
     const help = await router.handle("Raider", "help");
-    expect(help.some((line) => /^invite\b/i.test(line))).toBe(false);
+    expect(help.some((line) => /^ginvite\b/i.test(line))).toBe(false);
     expect(help.join(" ")).not.toMatch(/Rage Quit/);
     expect(help.join(" ")).toMatch(/discord - our Discord invite link/); // the rest of help is unchanged
   });
 
-  it("guild-invites SILENTLY on 'invite' when wired (no confirmation), else says it can't", async () => {
+  it("guild-invites SILENTLY on 'ginvite' when wired (no confirmation), else says it can't", async () => {
     const { router } = deps();
-    expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
+    expect((await router.handle("Raider", "ginvite"))[0]).toMatch(/can't send a guild invite/i);
     const invited: string[] = [];
     router.setGuildInvite((name) => invited.push(name));
-    const reply = await router.handle("Raider", "invite");
+    const reply = await router.handle("Raider", "ginvite");
     expect(invited).toEqual(["Raider"]); // invited
     expect(reply).toEqual([]); // and NOT told "I sent you" — welcome happens in /g on join
     router.setGuildInvite(null);
-    expect((await router.handle("Raider", "invite"))[0]).toMatch(/can't send a guild invite/i);
+    expect((await router.handle("Raider", "ginvite"))[0]).toMatch(/can't send a guild invite/i);
+  });
+
+  it("answers 'guildinvite' and '/ginvite' as 'ginvite' does, but no longer a bare 'invite' or 'join'", async () => {
+    const { router } = deps();
+    const invited: string[] = [];
+    router.setGuildInvite((name) => invited.push(name));
+    for (const text of ["guildinvite", "/ginvite", "GINVITE"]) await router.handle("Raider", text);
+    expect(invited).toEqual(["Raider", "Raider", "Raider"]);
+    for (const text of ["invite", "join"]) expect(await router.handle("Raider", text)).toEqual([UNKNOWN_REPLY]);
+    expect(invited).toHaveLength(3);
   });
 
   it("answers a buff question with a subscribe nudge", async () => {
@@ -450,7 +460,7 @@ describe("CommandRouter", () => {
     const { router } = deps();
     const lines = await router.handle("Raider", "help");
     expect(lines[0]).toMatch(/^status/i); // status first
-    expect(lines[lines.length - 1]).toMatch(/invite/i); // guild invite last
+    expect(lines[lines.length - 1]).toMatch(/^ginvite - join <Rage Quit>/); // guild invite last
     const help = lines.join(" ");
     expect(help).toMatch(/subscribe \/ unsubscribe/);
     expect(help).toMatch(/discord/i);

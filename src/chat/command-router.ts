@@ -52,7 +52,7 @@ export function factionLabel(factions: readonly Faction[]): string {
  *   subscribe | sub | start        — opt in to in-game raid alerts
  *   unsubscribe | unsub | stop      — opt out
  *   alliance | horde | both         — which side's buff you want
- *   invite | join                   — guild-invite the caller
+ *   ginvite | guildinvite           — guild-invite the caller (while switched on)
  *   feedback | suggest              — send a message to the team
  *   discord                         — share the community Discord invite link
  *   darkmoon | dmf | faire          — where the Darkmoon Faire was last seen
@@ -63,9 +63,9 @@ export interface CommandDeps {
   /** Raids in progress across all factions — for the status command. */
   readonly activeRaids: () => readonly ActiveRaid[];
   readonly areaName: string;
-  /** The guild the "invite" help line names ("join <guild>"). */
+  /** The guild the "ginvite" help line names ("join <guild>"). */
   readonly guildName: string;
-  /** Whether the bot hands out guild invites. Off, "invite"/"join" are no command, help leaves the
+  /** Whether the bot hands out guild invites. Off, "ginvite"/"guildinvite" are no command, help leaves the
    *  line out, and a guild question is not answered with an offer. */
   readonly guildInvites: boolean;
   /** The community Discord server invite link, shared by the "discord" command.
@@ -182,8 +182,9 @@ export class CommandRouter {
             : `You weren't subscribed. Whisper "subscribe" to start.`,
         ];
       }
-      case "invite":
-      case "join":
+      // Named for the guild, so a player saying "invite" or "join" about anything else isn't sent one.
+      case "ginvite":
+      case "guildinvite":
         if (!this.#deps.guildInvites) return [UNKNOWN_REPLY];
         return this.#invite(sender);
       case "feedback":
@@ -222,7 +223,7 @@ export class CommandRouter {
           `alliance / horde / both - which capital's buffs to be alerted for`,
           `discord - our Discord invite link`,
           `feedback <message> - send a suggestion or bug report`,
-          ...(this.#deps.guildInvites ? [`invite - join <${this.#deps.guildName}>`] : []),
+          ...(this.#deps.guildInvites ? [`ginvite - join <${this.#deps.guildName}>`] : []),
         ];
       default: {
         // Natural-language intent detection over the whole message.
@@ -407,7 +408,7 @@ export class CommandRouter {
       case "guild":
         if (!this.#deps.guildInvites) return [UNKNOWN_REPLY];
         return [
-          `Whisper "invite" and I'll send you a guild invite right now - and "subscribe" for buff alerts.`,
+          `Whisper "ginvite" and I'll send you a guild invite right now - and "subscribe" for buff alerts.`,
         ];
       case "buff":
         return [
