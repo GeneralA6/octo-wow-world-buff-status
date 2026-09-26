@@ -328,7 +328,7 @@ describe("CommandRouter", () => {
     const help = await router.handle("Raider", "help");
     expect(help.some((line) => /^ginvite\b/i.test(line))).toBe(false);
     expect(help.join(" ")).not.toMatch(/Rage Quit/);
-    expect(help.join(" ")).toMatch(/discord - our Discord invite link/); // the rest of help is unchanged
+    expect(help.join(" ")).toMatch(/discord - alerts on Discord are instant/); // the rest of help is unchanged
   });
 
   it("guild-invites SILENTLY on 'ginvite' when wired (no confirmation), else says it can't", async () => {
@@ -463,7 +463,8 @@ describe("CommandRouter", () => {
     expect(lines[lines.length - 1]).toMatch(/^ginvite - join <Rage Quit>/); // guild invite last
     const help = lines.join(" ");
     expect(help).toMatch(/subscribe \/ unsubscribe/);
-    expect(help).toMatch(/discord/i);
+    // Says why Discord: in-game whispers are throttled and can lag; Discord is not.
+    expect(lines).toContain("discord - alerts on Discord are instant; in-game whispers can lag");
     expect(help).toMatch(/feedback/i);
     expect(help).toMatch(/alliance \/ horde \/ both/); // pick which capital's alerts
     expect(help).not.toMatch(/profile|notify|\bfaction\b/i);

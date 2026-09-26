@@ -221,7 +221,7 @@ export class CommandRouter {
           `darkmoon - where the Darkmoon Faire was last seen`,
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
           `alliance / horde / both - which capital's buffs to be alerted for`,
-          `discord - our Discord invite link`,
+          `discord - alerts on Discord are instant; in-game whispers can lag`,
           `feedback <message> - send a suggestion or bug report`,
           ...(this.#deps.guildInvites ? [`ginvite - join <${this.#deps.guildName}>`] : []),
         ];
