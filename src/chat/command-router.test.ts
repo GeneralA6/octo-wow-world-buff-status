@@ -484,6 +484,18 @@ describe("CommandRouter darkmoon", () => {
   });
   const faireDeps = (a: FaireAnswer = answer()) => deps({ faireAnswer: () => a, now: () => NOW });
 
+  it("ends the status with where the faire is", async () => {
+    const { router } = faireDeps();
+    const reply = await router.handle("Raider", "status");
+    expect(reply[reply.length - 1]).toBe("Darkmoon Faire is in Mulgore (below Thunder Bluff) - seen 4m ago.");
+  });
+
+  it("leaves the faire out of the status while nobody has spotted it", async () => {
+    const { router } = faireDeps({ known: false });
+    const reply = (await router.handle("Raider", "status")).join(" ");
+    expect(reply).not.toMatch(/Darkmoon/);
+  });
+
   it("answers where the faire was last seen, in one line", async () => {
     const { router } = faireDeps();
     const reply = await router.handle("Raider", "darkmoon");

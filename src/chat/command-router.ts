@@ -288,6 +288,9 @@ export class CommandRouter {
           : `Warchief's Blessing - last dropped in ${CITY_FOR.horde} ~${humanClock(ago)} ago.`,
       );
     }
+    // Where the Darkmoon Faire is, once it has been seen — an unknown faire is left for "darkmoon".
+    const faire = this.#deps.faireAnswer?.();
+    if (faire?.known) lines.push(formatFaire(faire, (this.#deps.now ?? Date.now)()));
     return lines;
   }
 
