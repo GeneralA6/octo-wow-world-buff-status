@@ -31,15 +31,34 @@ describe("WhisperRefusals.ignoredBy", () => {
     expect(lines).toEqual(["whispers: Passerby is ignoring Onyxiabuffog — was not subscribed"]);
   });
 
-  it("deals with each player once a day, whatever the case of the name, letting the echoes be", async () => {
-    const { refusals, unsubscribe, lines, advance } = setup();
+  it("unsubscribes on every notice — one who subscribes again while ignoring us comes straight back off", async () => {
+    const subscribed = new Set(["Grumpy"]);
+    let clock = 0;
+    const lines: string[] = [];
+    const refusals = new WhisperRefusals(
+      { unsubscribe: async (name) => subscribed.delete(name), log: (line) => lines.push(line), now: () => clock },
+      { quietMs: DAY },
+    );
     await refusals.ignoredBy("Onyxiabuffog", "Grumpy");
-    await refusals.ignoredBy("Onybuffogb", "grumpy");
-    expect(unsubscribe).toHaveBeenCalledOnce();
+    subscribed.add("Grumpy"); // whispered "subscribe" again, a minute later
+    clock += 60_000;
+    await refusals.ignoredBy("Onyxiabuffog", "Grumpy");
+    expect(subscribed.has("Grumpy")).toBe(false);
+    expect(lines).toEqual([
+      "whispers: Grumpy is ignoring Onyxiabuffog — unsubscribed",
+      "whispers: Grumpy is ignoring Onyxiabuffog — unsubscribed",
+    ]);
+  });
+
+  it("lets the echoes of one already off the list pass quietly — logged once a day, whatever the case", async () => {
+    const { refusals, unsubscribe, lines, advance } = setup([]);
+    await refusals.ignoredBy("Onyxiabuffog", "Passerby");
+    await refusals.ignoredBy("Onybuffogb", "passerby");
+    expect(unsubscribe).toHaveBeenCalledTimes(2); // every notice still checks the list
     expect(lines).toHaveLength(1);
     advance(DAY);
-    await refusals.ignoredBy("Onyxiabuffog", "Grumpy");
-    expect(unsubscribe).toHaveBeenCalledTimes(2);
+    await refusals.ignoredBy("Onyxiabuffog", "Passerby");
+    expect(lines).toHaveLength(2);
   });
 
   it("logs a failed unsubscribe instead of throwing", async () => {

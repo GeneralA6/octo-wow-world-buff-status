@@ -4,9 +4,10 @@ import { describeError } from "../errors.js";
  * What becomes of the server's word that something one of our characters said never reached a player.
  *
  * "<name> is ignoring you": the player has that character on their ignore list — they plainly want
- * none of our pings, so they come off the subscriber list. The notice comes back for anything their
- * client refused, a whisper or just a /say or /yell in their earshot, so it can repeat on every line
- * nearby: each player is dealt with once a day, the rest of the echoes let be.
+ * none of our pings, so they come off the subscriber list, the moment any such notice comes. It comes
+ * back for anything their client refused, a whisper or just a /say or /yell in their earshot, so it
+ * repeats on every line nearby: the log says "unsubscribed" each time one comes off, but "was not
+ * subscribed" only once a day per player.
  *
  * "No player named <name>": a whisper to someone not online. Only logged — offline is no reason to
  * drop a subscription — and once a day per player too, as a broadcast whispers many at once.
@@ -35,19 +36,25 @@ export class WhisperRefusals {
     this.#quietMs = options.quietMs;
   }
 
-  /** `player` is ignoring our `character`: unsubscribe them. */
+  /** `player` is ignoring our `character`: unsubscribe them — on every notice, so one who subscribes
+   *  again while still ignoring us comes straight back off. */
   async ignoredBy(character: string, player: string): Promise<void> {
-    if (!this.#fresh(this.#ignoredAt, player)) return;
     let unsubscribed: boolean;
     try {
       unsubscribed = await this.#deps.unsubscribe(player);
     } catch (error) {
-      this.#deps.log(`whispers: ${player} is ignoring ${character}, but could not be unsubscribed (${describeError(error)})`);
+      if (this.#fresh(this.#ignoredAt, player)) {
+        this.#deps.log(`whispers: ${player} is ignoring ${character}, but could not be unsubscribed (${describeError(error)})`);
+      }
       return;
     }
-    this.#deps.log(
-      `whispers: ${player} is ignoring ${character} — ` + (unsubscribed ? "unsubscribed" : "was not subscribed"),
-    );
+    if (unsubscribed) {
+      this.#ignoredAt.set(player.toLowerCase(), this.#deps.now());
+      this.#deps.log(`whispers: ${player} is ignoring ${character} — unsubscribed`);
+      return;
+    }
+    // Not on the list: an echo of one already taken off, or one who only heard a /say. Said once a day.
+    if (this.#fresh(this.#ignoredAt, player)) this.#deps.log(`whispers: ${player} is ignoring ${character} — was not subscribed`);
   }
 
   /** A whisper from our `character` to `player` found no such player online. */

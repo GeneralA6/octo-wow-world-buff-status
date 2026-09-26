@@ -954,7 +954,7 @@ async function acceptResurrection(world: WorldClient, resurrector: bigint): Prom
 const LISTENER_LOGOUT_TIMEOUT_MS = 3_000;
 /** How soon a listener that could not log out, mid-fight, tries again — the fight may be over. */
 const LISTENER_LOGOUT_RETRY_MS = 10_000;
-/** How long after acting on a player's "is ignoring you", or a missed whisper to them, the next is let be. */
+/** How long the log keeps quiet about a player's repeated "is ignoring you", or missed whispers to them. */
 const WHISPER_REFUSAL_QUIET_MS = 24 * 60 * 60_000;
 /** How long a character waits on a name query for a GUID another one saw. */
 const PLAYER_NAME_TIMEOUT_MS = 5_000;
@@ -1712,8 +1712,8 @@ async function main(): Promise<void> {
     });
     if (removed) logger.warn(`subscribers: took our own character ${name} off the subscriber list`);
   }
-  // A player ignoring one of our characters wants none of our pings: off the list. A whisper to one
-  // not online is only logged. Once a day each — an ignore echoes back on every line in earshot.
+  // A player ignoring one of our characters wants none of our pings: off the list, on every notice. A
+  // whisper to one not online is only logged. The echoes of either are logged once a day per player.
   const whisperRefusals = new WhisperRefusals(
     { unsubscribe: (name) => store.remove(name), log: (line) => logger.info(line), now: () => Date.now() },
     { quietMs: WHISPER_REFUSAL_QUIET_MS },
