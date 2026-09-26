@@ -492,6 +492,14 @@ describe("loadConfig warchief's blessing channel", () => {
       /DISCORD_WARCHIEF_CHANNEL_ID must be a numeric Discord channel id/,
     );
   });
+
+  it("whispers a drop to the Horde subscribers unless switched off", () => {
+    expect(loadConfig({ ...minimalEnv }).warchiefWhispersEnabled).toBe(true);
+    for (const off of ["false", "0", "none", "FALSE"]) {
+      expect(loadConfig({ ...minimalEnv, WOW_WARCHIEF_WHISPERS: off }).warchiefWhispersEnabled).toBe(false);
+    }
+    expect(loadConfig({ ...minimalEnv, WOW_WARCHIEF_WHISPERS: "true" }).warchiefWhispersEnabled).toBe(true);
+  });
 });
 
 describe("loadConfig spire watch", () => {

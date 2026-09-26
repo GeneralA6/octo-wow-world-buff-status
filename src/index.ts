@@ -683,10 +683,13 @@ async function runConnection(
               void raidService.announceBuffDrop(faction).catch((error) =>
                 logger.error(`buff-drop announce: ${describeError(error)}`),
               );
-            buffDropSink.notifyWarchief = () =>
-              void raidService.announceWarchiefBlessing().catch((error) =>
-                logger.error(`warchief's blessing announce: ${describeError(error)}`),
-              );
+            // The Warchief's Blessing is whispered only while switched on (WOW_WARCHIEF_WHISPERS).
+            if (config.warchiefWhispersEnabled) {
+              buffDropSink.notifyWarchief = () =>
+                void raidService.announceWarchiefBlessing().catch((error) =>
+                  logger.error(`warchief's blessing announce: ${describeError(error)}`),
+                );
+            }
           }
           router.setFactionLookup((name) => void lookupFaction(name));
           router.setFactionDetect(detectFaction);
