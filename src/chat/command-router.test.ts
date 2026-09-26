@@ -426,7 +426,8 @@ describe("CommandRouter", () => {
     expect(help).toMatch(/subscribe \/ unsubscribe/);
     expect(help).toMatch(/discord/i);
     expect(help).toMatch(/feedback/i);
-    expect(help).not.toMatch(/profile|notify|\bfaction\b|alliance/i);
+    expect(help).toMatch(/alliance \/ horde \/ both/); // pick which capital's alerts
+    expect(help).not.toMatch(/profile|notify|\bfaction\b/i);
   });
 });
 

@@ -183,8 +183,8 @@ export class CommandRouter {
       case "suggest":
       case "suggestion":
         return this.#feedback(sender, parts.slice(1).join(" ").trim());
-      // Direct side words still work as a quiet override if the /who detection got it wrong
-      // (or a player wants both) — unlisted in help, since the side is detected automatically.
+      // Side words pick which capital's alerts to get — the side is detected automatically, but a
+      // player may want the other capital, or both, or the detection may have got it wrong.
       case "alliance":
       case "horde":
       case "both":
@@ -209,6 +209,7 @@ export class CommandRouter {
           `status - what's raiding Onyxia now, and when the buff last dropped`,
           `darkmoon - where the Darkmoon Faire was last seen`,
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
+          `alliance / horde / both - which capital's buffs to be alerted for`,
           `discord - our Discord invite link`,
           `feedback <message> - send a suggestion or bug report`,
           `invite - join <${this.#deps.guildName}>`,
