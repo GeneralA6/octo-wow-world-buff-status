@@ -4,6 +4,7 @@ import type { Subscriber } from "../subscribers/store.js";
 import { describeError } from "../errors.js";
 import { groupByRelevantCities } from "./faction-routing.js";
 import { withUnsubscribeHint } from "./format.js";
+import type { AlertWhisper } from "../chat/whisper-queue.js";
 import type { NotifyMessage } from "./notifier.js";
 
 /**
@@ -28,6 +29,8 @@ export interface CityAlert {
   readonly whisperFor: (cities: readonly Faction[]) => string;
   /** Drop a whisper still queued past this (a stale "park now"). */
   readonly whisperMaxAgeMs?: number;
+  /** When the event happened (ms epoch): a whisper's lateness and staleness run from here. */
+  readonly happenedAt?: number;
 }
 
 export interface AlertDeliveryDeps {
@@ -40,13 +43,7 @@ export interface AlertDeliveryDeps {
   /** Every current subscriber. */
   readonly subscribers: () => Promise<readonly Subscriber[]>;
   /** Enqueue a whisper broadcast (presence-gated, split across the listener pool). */
-  readonly broadcastWhisper: (
-    names: readonly string[],
-    message: string,
-    faction: Faction | null,
-    cities?: readonly Faction[],
-    maxAgeMs?: number,
-  ) => void;
+  readonly broadcastWhisper: (names: readonly string[], message: string, faction: Faction | null, alert?: AlertWhisper) => void;
   readonly logger: Pick<Logger, "info" | "error">;
 }
 
@@ -76,19 +73,17 @@ export class AlertDelivery {
     }
     if (subs.length === 0) return;
     for (const { cities, members } of groupByRelevantCities(subs, alert.cities)) {
-      broadcastWhisper(
-        members.map((s) => s.name),
-        withUnsubscribeHint(alert.whisperFor(cities)),
-        cities[0] ?? null,
+      broadcastWhisper(members.map((s) => s.name), withUnsubscribeHint(alert.whisperFor(cities)), cities[0] ?? null, {
         cities,
-        alert.whisperMaxAgeMs,
-      );
+        maxAgeMs: alert.whisperMaxAgeMs,
+        since: alert.happenedAt,
+      });
     }
   }
 
   /** Whisper just one side's subscribers (used by a buff DROP — no Discord/yell here; the caller
-   *  handles the channel post). */
-  async sendFactionWhisper(faction: Faction, line: string, maxAgeMs?: number): Promise<void> {
+   *  handles the channel post). `timing` carries its max age and when its event happened. */
+  async sendFactionWhisper(faction: Faction, line: string, timing: Pick<AlertWhisper, "maxAgeMs" | "since"> = {}): Promise<void> {
     const { whispersEnabled, subscribers, broadcastWhisper, logger } = this.#deps;
     if (!whispersEnabled) return;
     let subs: readonly Subscriber[];
@@ -100,6 +95,6 @@ export class AlertDelivery {
     }
     const targets = subs.filter((s) => s.factions.includes(faction));
     if (targets.length === 0) return;
-    broadcastWhisper(targets.map((s) => s.name), withUnsubscribeHint(line), faction, undefined, maxAgeMs);
+    broadcastWhisper(targets.map((s) => s.name), withUnsubscribeHint(line), faction, timing);
   }
 }

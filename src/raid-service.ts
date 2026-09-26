@@ -29,7 +29,7 @@ import { FACTIONS, type Faction } from "./watcher/buff-store.js";
 import { isPlausibleClear, type DurationStore } from "./watcher/duration-store.js";
 import { confirmingKills } from "./chronicle/confirm.js";
 import { cleanOnyxiaKills } from "./chronicle/parse.js";
-import type { WhisperQueue } from "./chat/whisper-queue.js";
+import type { AlertWhisper, WhisperQueue } from "./chat/whisper-queue.js";
 import type { LairView } from "./watcher/roster-source.js";
 import type { RaidLifecycleEvent } from "./watcher/raid-tracker.js";
 import type { ConfirmedClear, PendingDeparture } from "./watcher/clear-tracker.js";
@@ -94,7 +94,7 @@ export function createRaidService(
   services: RaidServiceDeps,
   config: BotConfig,
   logger: Logger,
-  broadcastWhisper: (names: readonly string[], message: string, faction: Faction | null, cities?: readonly Faction[], maxAgeMs?: number) => void,
+  broadcastWhisper: (names: readonly string[], message: string, faction: Faction | null, alert?: AlertWhisper) => void,
   getWhisperQueue: () => WhisperQueue | null,
 ) {
   const { lanes, chronicle, buffTracker, broadcasts, raidStateStore, lockoutStore, durationStore, snapshots, store, userLedger, inviteLedger, guildieStore, push, whisperPool, yellSink, faireAnswer } = services;
@@ -126,7 +126,7 @@ export function createRaidService(
     // city) and whisper in-game subscribers of that side — and, for a clear alone, yell in each
     // open capital. The caller already deduped `cities` against the ledger, so this fires at most
     // once per cycle.
-    const announceBuff = async (event: RaidEvent, cities: readonly Faction[]): Promise<void> => {
+    const announceBuff = async (event: RaidEvent, cities: readonly Faction[], now: number): Promise<void> => {
       // The "raid starting" alert quotes how long a raid usually takes, so a reader can judge
       // whether to park now; the "raid ended" alert already carries its own duration.
       const typical = event.kind === "raid-forming" ? await typicalClear() : undefined;
@@ -139,11 +139,12 @@ export function createRaidService(
         whisperFor: (groupCities) => formatBuffWhisper(event, groupCities, typical),
         // Tag with the cities this park-now is about, so a buff dropping there purges it as stale.
         whisperMaxAgeMs: config.whisperMaxAgeMs,
+        happenedAt: now,
       });
     };
 
     // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
-    const announceBuffDrop = (faction: Faction, savedHead: boolean): Promise<void> => {
+    const announceBuffDrop = (faction: Faction, savedHead: boolean, appliedAt: Date): Promise<void> => {
       // The buff is UP now, so any still-queued "park now to catch it" whispers for this side are
       // stale — purge them before sending the "it's up" message, or a subscriber would be told to
       // park after being told it already dropped.
@@ -154,21 +155,19 @@ export function createRaidService(
         return Promise.resolve();
       }
       // A drop whisper delivered minutes late (throttle backlog) is the Owlofelune case — expire it.
-      return delivery.sendFactionWhisper(
-        faction,
-        formatBuffDroppedWhisper(faction),
-        config.whisperMaxAgeMs,
-      );
+      return delivery.sendFactionWhisper(faction, formatBuffDroppedWhisper(faction), {
+        maxAgeMs: config.whisperMaxAgeMs,
+        since: appliedAt.getTime(),
+      });
     };
 
     // Rend's head turned in: the Warchief's Blessing is up in Orgrimmar. Horde-only, so only the Horde
     // (and both-sides) subscribers hear of it; no park-now whispers to purge — no raid led up to it.
     const announceWarchiefBlessing = (): Promise<void> =>
-      delivery.sendFactionWhisper(
-        "horde",
-        formatWarchiefBlessingWhisper(),
-        config.whisperMaxAgeMs,
-      );
+      delivery.sendFactionWhisper("horde", formatWarchiefBlessingWhisper(), {
+        maxAgeMs: config.whisperMaxAgeMs,
+        since: Date.now(),
+      });
 
     // The raid in progress for a faction (from the lane covering it), or null.
     const raidStateFor = (faction: Faction, now: number): { number: number | null; elapsedMs: number } | null => {
@@ -267,7 +266,7 @@ export function createRaidService(
         const raidNumber = event.number ?? null;
         const fresh = await alertPolicy.decide({ cities: lane.cities, kind: event.kind, raidNumber, label: lane.label, now });
         if (fresh.length === 0) return;
-        await announceBuff(event, fresh);
+        await announceBuff(event, fresh, now);
         for (const city of fresh) {
           await broadcasts
             .record({
@@ -306,6 +305,7 @@ export function createRaidService(
             : {}),
           whisperFor: (groupCities) => formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, typical),
           whisperMaxAgeMs: config.whisperMaxAgeMs,
+          happenedAt: now,
         });
         for (const city of fresh) {
           await broadcasts
@@ -362,7 +362,11 @@ export function createRaidService(
           try {
             const subs = (await store.all()).filter((s) => notified.some((c) => s.factions.includes(c)));
             if (subs.length > 0) {
-              broadcastWhisper(subs.map((s) => s.name), withUnsubscribeHint(line), notified[0] ?? null, notified, config.whisperMaxAgeMs);
+              broadcastWhisper(subs.map((s) => s.name), withUnsubscribeHint(line), notified[0] ?? null, {
+                cities: notified,
+                maxAgeMs: config.whisperMaxAgeMs,
+                since: now,
+              });
             }
           } catch (error) {
             logger.error(`subscribers: ${describeError(error)}`);

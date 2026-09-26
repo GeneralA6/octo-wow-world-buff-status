@@ -82,9 +82,9 @@ describe("WhisperQueue", () => {
   it("dropForFaction purges only the pending park alerts about that capital", () => {
     const sent: string[] = [];
     const queue = new WhisperQueue((t) => sent.push(t), 1000);
-    queue.enqueue("A", "park SW", ["alliance"]); // sent immediately (idle)
-    queue.enqueue("B", "park SW", ["alliance"]); // queued
-    queue.enqueue("C", "park OG", ["horde"]); // queued, other side
+    queue.enqueue("A", "park SW", { cities: ["alliance"] }); // sent immediately (idle)
+    queue.enqueue("B", "park SW", { cities: ["alliance"] }); // queued
+    queue.enqueue("C", "park OG", { cities: ["horde"] }); // queued, other side
     queue.enqueue("D", "your status: ..."); // queued, untagged (a command reply)
     expect(sent).toEqual(["A"]);
 
@@ -122,7 +122,7 @@ describe("WhisperQueue", () => {
     const sent: string[] = [];
     const queue = new WhisperQueue((t) => sent.push(t), 1000);
     queue.enqueue("A", "immediate"); // sent right away (idle)
-    queue.enqueue("Park", "park now", ["alliance"], 5_000); // maxAge 5s
+    queue.enqueue("Park", "park now", { cities: ["alliance"], maxAgeMs: 5_000 }); // maxAge 5s
     queue.enqueue("Reply", "you're subscribed"); // no maxAge — a command reply
     expect(sent).toEqual(["A"]);
     queue.notifyThrottled(); // 30s cooldown — Park will be >5s old when the queue resumes
@@ -136,7 +136,7 @@ describe("WhisperQueue", () => {
     const metrics: string[] = [];
     const queue = new WhisperQueue(() => {}, 1000, undefined, (line) => metrics.push(line));
     queue.enqueue("A", "immediate");
-    queue.enqueue("Park", "park now", ["alliance"], 5_000);
+    queue.enqueue("Park", "park now", { cities: ["alliance"], maxAgeMs: 5_000 });
     queue.notifyThrottled();
     vi.advanceTimersByTime(31_000);
     expect(metrics.some((m) => /dropped stale whisper to Park/.test(m))).toBe(true);
@@ -148,8 +148,8 @@ describe("WhisperQueue delay note", () => {
     vi.useFakeTimers();
     const sent: { target: string; message: string }[] = [];
     const queue = new WhisperQueue((target, message) => sent.push({ target, message }), 1000);
-    queue.enqueue("Raider", "Onyxia raid cleared. Buff may drop in Stormwind.", undefined, 20 * 60_000);
-    queue.enqueue("Latecomer", "Onyxia raid cleared. Buff may drop in Stormwind.", undefined, 20 * 60_000);
+    queue.enqueue("Raider", "Onyxia raid cleared. Buff may drop in Stormwind.", { maxAgeMs: 20 * 60_000 });
+    queue.enqueue("Latecomer", "Onyxia raid cleared. Buff may drop in Stormwind.", { maxAgeMs: 20 * 60_000 });
     // The first goes out immediately. The realm then spam-mutes us repeatedly — 110 throttle
     // events in 19h of production — and THAT is what stretches a broadcast to minutes.
     for (let i = 0; i < 12; i += 1) {
@@ -161,6 +161,27 @@ describe("WhisperQueue delay note", () => {
     expect(sent[0]?.message).not.toContain("late");
     expect(sent[1]?.message).toContain("late");
     expect(sent[1]?.message).toContain('Whisper "discord" for instant alerts.');
+    vi.useRealTimers();
+  });
+
+  it("counts an alert's lateness from its event, not from when it reached the queue", () => {
+    vi.useFakeTimers();
+    const sent: string[] = [];
+    const queue = new WhisperQueue((_t, m) => sent.push(m), 1000);
+    const dropped = Date.now() - 3 * 60_000; // the buff dropped 3 minutes ago; the online check took that long
+    queue.enqueue("Raider", "The Rallying Cry just dropped in Orgrimmar!", { maxAgeMs: 5 * 60_000, since: dropped });
+    expect(sent[0]).toContain("(sent 3m late"); // sent at once, but three minutes after the drop
+    vi.useRealTimers();
+  });
+
+  it("drops an alert whose event is already older than its max age when it reaches the queue", () => {
+    vi.useFakeTimers();
+    const sent: string[] = [];
+    const queue = new WhisperQueue((_t, m) => sent.push(m), 1000);
+    queue.enqueue("First", "hello"); // occupies the idle slot
+    queue.enqueue("Raider", "park now", { maxAgeMs: 5 * 60_000, since: Date.now() - 6 * 60_000 });
+    vi.advanceTimersByTime(2000);
+    expect(sent).toEqual(["hello"]);
     vi.useRealTimers();
   });
 

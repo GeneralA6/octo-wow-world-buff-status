@@ -10,14 +10,30 @@
  * accepts them and then blocks, so re-sending only duplicates (measured), and a large backlog is
  * better shed than re-delivered.
  *
- * Time-sensitive alerts carry a `maxAgeMs`; one still queued past it is DROPPED unsent — a "park
- * now" that a throttled queue delayed by minutes is worse than silence. Command replies and the
- * drop confirmation carry no maxAge and always go out. A send that throws (recipient offline,
+ * Time-sensitive alerts carry a `maxAgeMs`, counted from when their event happened; one older is
+ * DROPPED unsent — a "park now" that a throttled queue delayed by minutes is worse than silence —
+ * and one sent a minute or more after its event says how late it is. Command replies carry no
+ * maxAge and always go out. A send that throws (recipient offline,
  * transient socket error) is reported and skipped, never stalling the rest of the queue.
  */
 
 import type { Faction } from "../subscribers/store.js";
 import { formatWhisperDelayNote } from "../notify/format.js";
+
+/** What makes a whisper an alert rather than a command reply: the capitals it is about, how long it
+ *  stays worth sending, and when the event it tells of happened. */
+export interface AlertWhisper {
+  /** Capitals this message is about (a "park now" alert). Lets a buff drop in one of them purge
+   *  the now-stale queued park alerts for that side. Undefined for messages nothing supersedes. */
+  readonly cities?: readonly Faction[];
+  /** How long after its event it is still worth sending; one older is dropped unsent. Undefined =
+   *  never expires (command replies). */
+  readonly maxAgeMs?: number;
+  /** When the event it tells of happened (ms epoch). Its age runs from here, not from when it was
+   *  queued — so an alert held up before it reached the queue (the online check before a broadcast)
+   *  still reads as late, and still expires. Defaults to when it is queued. */
+  readonly since?: number;
+}
 
 export type WhisperSend = (target: string, message: string) => void;
 export type WhisperError = (error: unknown, target: string, message: string) => void;
@@ -29,13 +45,9 @@ export type WhisperMetric = (line: string) => void;
 interface QueuedWhisper {
   readonly target: string;
   readonly message: string;
-  /** Capitals this message is about (a "park now" alert). Lets a buff drop in one of them purge
-   *  the now-stale queued park alerts for that side. Undefined for messages nothing supersedes. */
   readonly cities?: readonly Faction[];
-  /** When it was enqueued (ms epoch). */
-  readonly enqueuedAt: number;
-  /** Optional max age (ms): a time-sensitive whisper still queued past it is dropped unsent.
-   *  Undefined = never expires (command replies, the buff-drop confirmation). */
+  /** When its event happened — or, without one, when it was queued (ms epoch). Its age runs from here. */
+  readonly since: number;
   readonly maxAgeMs?: number;
 }
 
@@ -70,8 +82,14 @@ export class WhisperQueue {
     return this.#queue.length;
   }
 
-  enqueue(target: string, message: string, cities?: readonly Faction[], maxAgeMs?: number): void {
-    this.#queue.push({ target, message, cities, maxAgeMs, enqueuedAt: Date.now() });
+  enqueue(target: string, message: string, alert: AlertWhisper = {}): void {
+    this.#queue.push({
+      target,
+      message,
+      cities: alert.cities,
+      maxAgeMs: alert.maxAgeMs,
+      since: alert.since ?? Date.now(),
+    });
     if (!this.#timer) {
       // Idle -> active: a new drain window opens, so reset the throttle measurement.
       this.#activeSince = Date.now();
@@ -141,8 +159,8 @@ export class WhisperQueue {
     }
     // Shed any stale time-sensitive whispers first — they consume no pacing slot, they just go.
     let next = this.#queue.shift();
-    while (next && next.maxAgeMs !== undefined && now - next.enqueuedAt > next.maxAgeMs) {
-      this.#onMetric?.(`dropped stale whisper to ${next.target} (queued ${Math.round((now - next.enqueuedAt) / 1000)}s)`);
+    while (next && next.maxAgeMs !== undefined && now - next.since > next.maxAgeMs) {
+      this.#onMetric?.(`dropped stale whisper to ${next.target} (${Math.round((now - next.since) / 1000)}s old)`);
       next = this.#queue.shift();
     }
     if (!next) {
@@ -157,7 +175,7 @@ export class WhisperQueue {
     try {
       // Time-sensitive whispers carry a maxAge; those are the alerts, and the only ones where
       // lateness changes what the message means. A command reply is answered when it is answered.
-      const late = next.maxAgeMs !== undefined ? formatWhisperDelayNote(now - next.enqueuedAt) : null;
+      const late = next.maxAgeMs !== undefined ? formatWhisperDelayNote(now - next.since) : null;
       this.#send(next.target, late === null ? next.message : `${next.message}${late}`);
       this.#sentSinceActive++;
       this.#sentSinceThrottle++;

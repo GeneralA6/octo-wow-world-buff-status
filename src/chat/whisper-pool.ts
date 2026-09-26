@@ -1,5 +1,5 @@
 import type { Faction } from "../subscribers/store.js";
-import type { WhisperQueue } from "./whisper-queue.js";
+import type { AlertWhisper, WhisperQueue } from "./whisper-queue.js";
 
 /**
  * The set of characters that can whisper — Bufftracker plus the parked listeners — pooled so a
@@ -40,15 +40,14 @@ export class WhisperPool {
     targets: readonly string[],
     message: string,
     faction: Faction | null = null,
-    cities?: readonly Faction[],
-    maxAgeMs?: number,
+    alert: AlertWhisper = {},
   ): number {
     const members = [...this.#members.values()];
     if (members.length === 0 || targets.length === 0) return 0;
     // Same-faction members first, the rest after — a stable preference, not a hard requirement.
     members.sort((a, b) => Number(b.faction === faction) - Number(a.faction === faction));
     targets.forEach((target, i) => {
-      members[i % members.length]?.queue.enqueue(target, message, cities, maxAgeMs);
+      members[i % members.length]?.queue.enqueue(target, message, alert);
     });
     return members.length;
   }

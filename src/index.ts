@@ -129,7 +129,7 @@ import { OwnCharacters, ownCharacterNames } from "./chat/own-characters.js";
 import { InMemoryIntroStore, MongoIntroStore, type IntroStore } from "./chat/intro-store.js";
 import { InMemoryUserLedger, MongoUserLedger, type UserLedger } from "./subscribers/user-ledger.js";
 import { InMemoryGuildieStore, MongoGuildieStore, type GuildieStore } from "./subscribers/guildie-store.js";
-import { WhisperQueue } from "./chat/whisper-queue.js";
+import { WhisperQueue, type AlertWhisper } from "./chat/whisper-queue.js";
 import { WhisperPool } from "./chat/whisper-pool.js";
 import { InMemorySubscriberStore } from "./subscribers/memory-store.js";
 import { MongoSubscriberStore } from "./subscribers/mongo-store.js";
@@ -420,16 +420,15 @@ async function runConnection(
     const makeWhisperSink = (
       message: string,
       faction: Faction | null,
-      cities?: readonly Faction[],
-      maxAgeMs?: number,
+      alert: AlertWhisper,
     ): { add: (name: string) => void; flush: () => void } => {
       let buffer: string[] = [];
       const flush = (): void => {
         if (buffer.length === 0) return;
         const batch = buffer;
         buffer = [];
-        if (whisperPool.fanOut(batch, message, faction, cities, maxAgeMs) === 0) {
-          for (const name of batch) whisperQueue?.enqueue(name, message, cities, maxAgeMs);
+        if (whisperPool.fanOut(batch, message, faction, alert) === 0) {
+          for (const name of batch) whisperQueue?.enqueue(name, message, alert);
         }
       };
       return {
@@ -451,11 +450,10 @@ async function runConnection(
       names: readonly string[],
       message: string,
       faction: Faction | null,
-      cities?: readonly Faction[],
-      maxAgeMs?: number,
+      alert: AlertWhisper = {},
     ): void => {
       void (async () => {
-        const sink = makeWhisperSink(message, faction, cities, maxAgeMs);
+        const sink = makeWhisperSink(message, faction, alert);
         const sweeper = presenceSweeper;
         if (!config.presenceEnabled || !sweeper) {
           for (const name of names) sink.add(name); // presence off — whisper everyone
@@ -679,8 +677,8 @@ async function runConnection(
             outreach.setChannel((nameTo, msg) => whisperQueue?.enqueue(nameTo, msg));
             router.setGuildInvite(guildInvite);
             // The watcher can now whisper, so route listener-heard buff drops through it.
-            buffDropSink.notify = (faction, _appliedAt, savedHead) =>
-              void raidService.announceBuffDrop(faction, savedHead).catch((error) =>
+            buffDropSink.notify = (faction, appliedAt, savedHead) =>
+              void raidService.announceBuffDrop(faction, savedHead, appliedAt).catch((error) =>
                 logger.error(`buff-drop announce: ${describeError(error)}`),
               );
             // The Warchief's Blessing is whispered only while switched on (WOW_WARCHIEF_WHISPERS).

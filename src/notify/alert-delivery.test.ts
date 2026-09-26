@@ -3,6 +3,7 @@ import { AlertDelivery, type AlertDeliveryDeps } from "./alert-delivery.js";
 import type { NotifyMessage } from "./notifier.js";
 import type { Faction } from "../watcher/buff-store.js";
 import type { Subscriber } from "../subscribers/store.js";
+import type { AlertWhisper } from "../chat/whisper-queue.js";
 
 const msg = (body: string): NotifyMessage => ({ kind: "info", title: "t", body });
 const sub = (name: string, factions: Faction[]): Subscriber => ({
@@ -16,14 +17,14 @@ function harness(overrides: Partial<AlertDeliveryDeps> = {}) {
   const calls = {
     push: [] as { message: NotifyMessage; factions?: readonly Faction[] }[],
     yell: [] as { city: Faction; text: string }[],
-    whisper: [] as { names: readonly string[]; message: string; faction: Faction | null }[],
+    whisper: [] as { names: readonly string[]; message: string; faction: Faction | null; alert?: AlertWhisper }[],
   };
   const deps: AlertDeliveryDeps = {
     push: async (message, factions) => void calls.push.push({ message, factions }),
     yell: (city, text) => calls.yell.push({ city, text }),
     whispersEnabled: true,
     subscribers: async () => [sub("Ally", ["alliance"]), sub("Hordie", ["horde"]), sub("Both", ["alliance", "horde"])],
-    broadcastWhisper: (names, message, faction) => calls.whisper.push({ names, message, faction }),
+    broadcastWhisper: (names, message, faction, alert) => calls.whisper.push({ names, message, faction, alert }),
     logger: { info: vi.fn(), error: vi.fn() },
     ...overrides,
   };
@@ -114,10 +115,31 @@ describe("AlertDelivery unsubscribe hint", () => {
   });
 });
 
+describe("AlertDelivery event time", () => {
+  it("dates a city alert's whispers from when its event happened", async () => {
+    const { delivery, calls } = harness();
+    await delivery.sendCityAlert({
+      label: "raid-left",
+      discord: msg("cleared"),
+      cities: ["horde"],
+      whisperFor: () => "cleared",
+      whisperMaxAgeMs: 5 * 60_000,
+      happenedAt: 1_000,
+    });
+    expect(calls.whisper.map((w) => w.alert)).toEqual([{ cities: ["horde"], maxAgeMs: 5 * 60_000, since: 1_000 }]);
+  });
+
+  it("dates a one-side whisper from when its event happened", async () => {
+    const { delivery, calls } = harness();
+    await delivery.sendFactionWhisper("horde", "dropped", { maxAgeMs: 5 * 60_000, since: 2_000 });
+    expect(calls.whisper[0]?.alert).toEqual({ maxAgeMs: 5 * 60_000, since: 2_000 });
+  });
+});
+
 describe("AlertDelivery.sendFactionWhisper", () => {
   it("whispers only that side's subscribers", async () => {
     const { delivery, calls } = harness();
-    await delivery.sendFactionWhisper("horde", "buff up in Orgrimmar", 5 * 60_000);
+    await delivery.sendFactionWhisper("horde", "buff up in Orgrimmar", { maxAgeMs: 5 * 60_000 });
     expect(calls.push).toHaveLength(0); // a drop's channel post is the caller's job, not here
     const names = calls.whisper.flatMap((w) => [...w.names]).sort();
     expect(names).toEqual(["Both", "Hordie"]); // the alliance-only sub is excluded

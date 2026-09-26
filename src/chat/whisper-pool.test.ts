@@ -41,7 +41,7 @@ describe("WhisperPool", () => {
     pool.register("X", null, new WhisperQueue((t) => a.push(t), 1000));
     pool.register("Y", null, new WhisperQueue((t) => b.push(t), 1000));
     // A park alert for alliance, fanned across both members (targets 0..3).
-    pool.fanOut(["1", "2", "3", "4"], "park SW", "alliance", ["alliance"]);
+    pool.fanOut(["1", "2", "3", "4"], "park SW", "alliance", { cities: ["alliance"] });
     const dropped = pool.dropForFaction("alliance"); // alliance buff dropped
     expect(dropped).toBeGreaterThan(0); // pending ones across both members purged
     vi.advanceTimersByTime(5000);
