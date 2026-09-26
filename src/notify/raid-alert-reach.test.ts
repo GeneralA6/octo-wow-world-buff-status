@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { isAnnounced, yelledInCapitals, type RaidAlertKind } from "./raid-alert-reach.js";
+import { isAnnounced, isDropWhispered, yelledInCapitals, type RaidAlertKind } from "./raid-alert-reach.js";
 
 describe("isAnnounced", () => {
   it("sends every raid alert but the start", () => {
     const sent: readonly RaidAlertKind[] = ["raid-ending", "raid-left", "raid-disbanded"];
     for (const kind of sent) expect(isAnnounced(kind)).toBe(true);
     expect(isAnnounced("raid-forming")).toBe(false);
+  });
+});
+
+describe("isDropWhispered", () => {
+  it("whispers a drop that followed a raid, but not a saved head's", () => {
+    expect(isDropWhispered(false)).toBe(true);
+    expect(isDropWhispered(true)).toBe(false);
   });
 });
 

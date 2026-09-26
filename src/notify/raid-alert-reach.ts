@@ -21,6 +21,16 @@ export function isAnnounced(kind: RaidAlertKind): boolean {
   return kind !== "raid-forming";
 }
 
+/**
+ * Whether a buff drop is whispered to the subscribers. A drop they were told was coming — a raid
+ * cleared — is, closing the loop for whoever waited in the city. A saved head is not: nothing led up
+ * to it, the buff reaches only those already standing there, and a whisper minutes later would only
+ * tell everyone else they missed it. Its Discord post stays, saying it was a saved head.
+ */
+export function isDropWhispered(savedHead: boolean): boolean {
+  return !savedHead;
+}
+
 /** Whether `kind` is yelled in the capitals as well. */
 export function yelledInCapitals(kind: RaidAlertKind): boolean {
   return kind === "raid-left";

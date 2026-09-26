@@ -679,8 +679,8 @@ async function runConnection(
             outreach.setChannel((nameTo, msg) => whisperQueue?.enqueue(nameTo, msg));
             router.setGuildInvite(guildInvite);
             // The watcher can now whisper, so route listener-heard buff drops through it.
-            buffDropSink.notify = (faction) =>
-              void raidService.announceBuffDrop(faction).catch((error) =>
+            buffDropSink.notify = (faction, _appliedAt, savedHead) =>
+              void raidService.announceBuffDrop(faction, savedHead).catch((error) =>
                 logger.error(`buff-drop announce: ${describeError(error)}`),
               );
             // The Warchief's Blessing is whispered only while switched on (WOW_WARCHIEF_WHISPERS).

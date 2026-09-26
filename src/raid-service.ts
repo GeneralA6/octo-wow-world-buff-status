@@ -3,7 +3,7 @@ import { describeError } from "./errors.js";
 import type { Logger } from "./logger.js";
 import type { FaireAnswer } from "./darkmoon/observation.js";
 import { AlertDelivery } from "./notify/alert-delivery.js";
-import { isAnnounced, yelledInCapitals } from "./notify/raid-alert-reach.js";
+import { isAnnounced, isDropWhispered, yelledInCapitals } from "./notify/raid-alert-reach.js";
 import {
   formatBuffAlert,
   formatBuffDroppedWhisper,
@@ -143,12 +143,16 @@ export function createRaidService(
     };
 
     // A buff DROP (heard on a listener, routed here via the sink): whisper that side's subs.
-    const announceBuffDrop = (faction: Faction): Promise<void> => {
+    const announceBuffDrop = (faction: Faction, savedHead: boolean): Promise<void> => {
       // The buff is UP now, so any still-queued "park now to catch it" whispers for this side are
       // stale — purge them before sending the "it's up" message, or a subscriber would be told to
       // park after being told it already dropped.
       const dropped = whisperPool.dropForFaction(faction) + (getWhisperQueue()?.dropForFaction(faction) ?? 0);
       if (dropped > 0) logger.info(`dropped ${dropped} stale park-now whisper(s) for ${faction} — buff is up`);
+      if (!isDropWhispered(savedHead)) {
+        logger.info(`buff drop: ${faction} was a saved head — not whispered, nothing led up to it`);
+        return Promise.resolve();
+      }
       // A drop whisper delivered minutes late (throttle backlog) is the Owlofelune case — expire it.
       return delivery.sendFactionWhisper(
         faction,
