@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  buffCooldownRemainingMs,
   InMemoryBroadcastLedger,
   MongoBroadcastLedger,
   onBuffCooldown,
@@ -106,21 +105,6 @@ describe("onBuffCooldown", () => {
     expect(onBuffCooldown(dropped, 1000_000 + COOLDOWN - 1, COOLDOWN)).toBe(true); // just before it elapses
     expect(onBuffCooldown(dropped, 1000_000 + COOLDOWN, COOLDOWN)).toBe(false); // exactly elapsed → off
     expect(onBuffCooldown(dropped, 1000_000 + COOLDOWN + 60_000, COOLDOWN)).toBe(false); // well after
-  });
-});
-
-describe("buffCooldownRemainingMs", () => {
-  const COOLDOWN = 30 * 60_000;
-
-  it("is 0 with no cooldown, no drop, or off cooldown", () => {
-    expect(buffCooldownRemainingMs(at(1000), 1000_000 + 60_000, 0)).toBe(0); // no cooldown
-    expect(buffCooldownRemainingMs(null, 5_000_000, COOLDOWN)).toBe(0); // never dropped
-    expect(buffCooldownRemainingMs(at(1000), 1000_000 + COOLDOWN, COOLDOWN)).toBe(0); // just elapsed
-  });
-
-  it("counts down the remaining time while on cooldown", () => {
-    const dropped = at(1000);
-    expect(buffCooldownRemainingMs(dropped, 1000_000 + 10 * 60_000, COOLDOWN)).toBe(20 * 60_000); // 20m left
   });
 });
 

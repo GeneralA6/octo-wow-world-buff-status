@@ -1875,12 +1875,11 @@ async function main(): Promise<void> {
   const whisperPool = new WhisperPool();
 
   // The buff-drop domain: dedup a second same-city listener, classify fresh/saved/unknown from the
-  // shared lair signal, and persist. Also the last-drop/cooldown state the policy and status read.
+  // shared lair signal, and persist. Also the last-drop state the alert policy reads.
   const buffTracker = new BuffTracker({
     store: buffStore,
     dedupWindowMs: BUFF_DEDUP_MS,
     freshWindowMs: config.raidFreshWindowMs,
-    cooldownMs: config.buffCooldownMs,
     activity: lairActivity,
     logger,
   });
