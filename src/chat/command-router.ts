@@ -7,7 +7,7 @@ import {
   type SubscriberStore,
 } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-events.js";
-import { CITY_FOR, humanClock, withUnsubscribeHint } from "../notify/format.js";
+import { humanClock, withUnsubscribeHint } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
 import { formatFaire, formatFaireBrief } from "../darkmoon/format.js";
 import type { FaireAnswer } from "../darkmoon/observation.js";
@@ -22,23 +22,6 @@ export function isSubscribeRequest(text: string): boolean {
   const command = text.trim().replace(/^[!./]+/, "").split(/\s+/)[0]?.toLowerCase() ?? "";
   if (SUBSCRIBE_COMMANDS.has(command)) return true;
   return parseIntent(text) === "subscribe";
-}
-
-/** Per-faction buff-drop info for the status query. */
-export interface BuffCooldown {
-  readonly faction: Faction;
-  /** ms since the last recorded Rallying Cry drop in this faction's capital, or null if none seen. */
-  readonly sinceLastDropMs: number | null;
-  /** ms until a fresh Rallying Cry can drop again for this side, or 0 when off cooldown / when the
-   *  server has no cooldown configured (a buff drops on any clear). */
-  readonly cooldownRemainingMs: number;
-}
-
-/** A side's Rallying Cry in the status: the wait while a cooldown is set and running, else how long ago
- *  the last one dropped. */
-function rallyingCryState(cd: BuffCooldown): string {
-  if (cd.cooldownRemainingMs > 0) return `on cooldown for ${humanClock(cd.cooldownRemainingMs)}`;
-  return cd.sinceLastDropMs === null ? "none seen yet" : `${humanClock(cd.sinceLastDropMs)} ago`;
 }
 
 /** A reader-friendly name for a set of subscribed sides. */
@@ -88,8 +71,6 @@ export interface CommandDeps {
   readonly raidElapsed?: () => number | null;
   /** The reference number of the raid in progress, or null if none — for status. */
   readonly raidNumber?: () => number | null;
-  /** Per-faction buff cooldown for status — how long until a fresh Rallying Cry can drop. */
-  readonly buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
   /** How long ago the Warchief's Blessing last dropped in Orgrimmar, or null if none was seen — for
    *  a Horde player's status. Undefined = not tracked, and the line is left out. */
   readonly warchiefBlessingAgo?: () => Promise<number | null>;
@@ -224,7 +205,7 @@ export class CommandRouter {
         // so the two people actually ask for — what's raiding, and where the faire is — go first,
         // and the guild invite last.
         return [
-          `status - what's raiding Onyxia now, and when the buff last dropped`,
+          `status - what's raiding Onyxia now`,
           `darkmoon - where the Darkmoon Faire was last seen`,
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
           `alliance / horde / both - which capital's buffs to be alerted for`,
@@ -253,11 +234,10 @@ export class CommandRouter {
     return [SHUNNED_REPLY];
   }
 
-  /** Live-state query for a player: what's raiding the lair now (and how long), and when the
-   *  Rallying Cry last dropped in THEIR capital(s) only — not both, since a player can only use
-   *  their own side's buff. */
+  /** Live-state query for a player: what's raiding the lair now (and how long), the Warchief's
+   *  Blessing for a Horde player, and where the faire is. */
   async #status(sender: string, sourceFaction: Faction | null = null): Promise<string[]> {
-    const { activeRaids, raidElapsed, raidNumber, buffCooldowns, warchiefBlessingAgo } = this.#deps;
+    const { activeRaids, raidElapsed, raidNumber, warchiefBlessingAgo } = this.#deps;
     const raids = activeRaids();
     const elapsed = raidElapsed?.() ?? null;
     const number = raidNumber?.() ?? null;
@@ -268,18 +248,8 @@ export class CommandRouter {
       const id = number !== null ? `raid #${number}` : raids.map((raid) => raid.label).join(", ");
       lines.push(`Onyxia: ${id}${elapsed !== null ? `, ${humanClock(elapsed)} in` : ""}.`);
     }
-    const factions = buffCooldowns || warchiefBlessingAgo ? await this.#relevantFactions(sender, sourceFaction) : [];
-    if (buffCooldowns) {
-      const shown = (await buffCooldowns()).filter((cd) => factions.includes(cd.faction));
-      // One side is the player's own, so it needs no city name; both sides name each.
-      const [first, ...rest] = shown;
-      const part =
-        first && rest.length === 0
-          ? rallyingCryState(first)
-          : shown.map((cd) => `${CITY_FOR[cd.faction]} ${rallyingCryState(cd)}`).join(", ");
-      if (part) lines.push(`Rallying Cry: ${part}.`);
-    }
     // Horde-only: Rend's head, turned in to Thrall in Orgrimmar.
+    const factions = warchiefBlessingAgo ? await this.#relevantFactions(sender, sourceFaction) : [];
     if (warchiefBlessingAgo && factions.includes("horde")) {
       const ago = await warchiefBlessingAgo();
       lines.push(`Warchief's Blessing: ${ago === null ? "none seen yet" : `${humanClock(ago)} ago`}.`);
