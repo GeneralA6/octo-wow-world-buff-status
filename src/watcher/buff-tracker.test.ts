@@ -14,6 +14,7 @@ function harness(over: Partial<BuffTrackerDeps> = {}) {
     store,
     dedupWindowMs: 10 * MIN,
     freshWindowMs: 15 * MIN,
+    cooldownMs: 0,
     activity,
     logger,
     ...over,
@@ -68,6 +69,21 @@ describe("BuffTracker state (for the policy + status)", () => {
     tracker.record("alliance", meta, 5_000);
     expect(await tracker.lastDropAt("alliance")).toEqual(new Date(5_000));
     expect(await tracker.lastDropAt("horde")).toBeNull();
+  });
+
+  it("reports cooldown remaining when a cooldown is configured and active", async () => {
+    const { tracker } = harness({ cooldownMs: 60 * MIN });
+    tracker.record("horde", meta, 10 * MIN);
+    const state = await tracker.cooldownState("horde", 12 * MIN); // 2m since a 60m cooldown drop
+    expect(state).toEqual({ faction: "horde", sinceLastDropMs: 2 * MIN, cooldownRemainingMs: 58 * MIN });
+  });
+
+  it("reports zero cooldown remaining when no cooldown is configured", async () => {
+    const { tracker } = harness({ cooldownMs: 0 });
+    tracker.record("horde", meta, 10 * MIN);
+    const state = await tracker.cooldownState("horde", 12 * MIN);
+    expect(state.cooldownRemainingMs).toBe(0);
+    expect(state.sinceLastDropMs).toBe(2 * MIN);
   });
 
   it("exposes the drop history for interval measurement", async () => {
