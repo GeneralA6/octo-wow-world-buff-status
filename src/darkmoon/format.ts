@@ -19,6 +19,14 @@ export function formatFaire(answer: FaireAnswer, now: number): string {
     : `Darkmoon Faire was last seen in ${where} ~${ago} ago - it moves weekly, so it may have moved on.`;
 }
 
+/** The faire as the "status" reply states it — the zone and the age of the look, the landmark left
+ *  to "darkmoon" — or null when nothing is known worth saying. */
+export function formatFaireBrief(answer: FaireAnswer, now: number): string | null {
+  if (!answer.known) return null;
+  const seen = `Darkmoon Faire: ${answer.site.zone}, seen ${humanSpan(now - answer.observedAt)} ago`;
+  return answer.fresh ? `${seen}.` : `${seen}, may have moved.`;
+}
+
 /** The faire as the capital status yell states it, or null when nothing is known worth saying. */
 export function capitalStatusFaire(answer: FaireAnswer, now: number): CapitalStatusFaire | null {
   if (!answer.known) return null;

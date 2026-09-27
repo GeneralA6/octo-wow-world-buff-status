@@ -9,7 +9,7 @@ import {
 import type { ActiveRaid } from "../watcher/raid-events.js";
 import { CITY_FOR, humanClock, withUnsubscribeHint } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
-import { formatFaire } from "../darkmoon/format.js";
+import { formatFaire, formatFaireBrief } from "../darkmoon/format.js";
 import type { FaireAnswer } from "../darkmoon/observation.js";
 
 /** The exact words that subscribe a caller (also handled in `handle`'s switch). */
@@ -32,6 +32,13 @@ export interface BuffCooldown {
   /** ms until a fresh Rallying Cry can drop again for this side, or 0 when off cooldown / when the
    *  server has no cooldown configured (a buff drops on any clear). */
   readonly cooldownRemainingMs: number;
+}
+
+/** A side's Rallying Cry in the status: the wait while a cooldown is set and running, else how long ago
+ *  the last one dropped. */
+function rallyingCryState(cd: BuffCooldown): string {
+  if (cd.cooldownRemainingMs > 0) return `on cooldown for ${humanClock(cd.cooldownRemainingMs)}`;
+  return cd.sinceLastDropMs === null ? "none seen yet" : `${humanClock(cd.sinceLastDropMs)} ago`;
 }
 
 /** A reader-friendly name for a set of subscribed sides. */
@@ -250,47 +257,37 @@ export class CommandRouter {
    *  Rallying Cry last dropped in THEIR capital(s) only — not both, since a player can only use
    *  their own side's buff. */
   async #status(sender: string, sourceFaction: Faction | null = null): Promise<string[]> {
-    const { activeRaids, areaName, raidElapsed, raidNumber, buffCooldowns, warchiefBlessingAgo } = this.#deps;
+    const { activeRaids, raidElapsed, raidNumber, buffCooldowns, warchiefBlessingAgo } = this.#deps;
     const raids = activeRaids();
     const elapsed = raidElapsed?.() ?? null;
     const number = raidNumber?.() ?? null;
     const lines: string[] = [];
     if (raids.length === 0 && number === null) {
-      lines.push(`No raid in ${areaName} right now.`);
+      lines.push("Onyxia: no raid now.");
     } else {
       const id = number !== null ? `raid #${number}` : raids.map((raid) => raid.label).join(", ");
-      lines.push(`${areaName} now: ${id}${elapsed !== null ? ` (in for ~${humanClock(elapsed)})` : ""}.`);
+      lines.push(`Onyxia: ${id}${elapsed !== null ? `, ${humanClock(elapsed)} in` : ""}.`);
     }
     const factions = buffCooldowns || warchiefBlessingAgo ? await this.#relevantFactions(sender, sourceFaction) : [];
     if (buffCooldowns) {
-      const part = (await buffCooldowns())
-        .filter((cd) => factions.includes(cd.faction))
-        .map((cd) => {
-          const city = CITY_FOR[cd.faction];
-          // On cooldown: a fresh one can't drop yet — report the wait. Otherwise (the default, no
-          // cooldown) show when the last one dropped so a parker knows how fresh the city is.
-          if (cd.cooldownRemainingMs > 0) {
-            return `${city}: on cooldown - a fresh Rallying Cry can drop in ~${humanClock(cd.cooldownRemainingMs)}`;
-          }
-          return cd.sinceLastDropMs === null
-            ? `${city}: no Rallying Cry seen yet - one drops when a raid clears Onyxia`
-            : `${city}: last Rallying Cry ~${humanClock(cd.sinceLastDropMs)} ago - a fresh one drops when a raid clears`;
-        })
-        .join(" | ");
-      if (part) lines.push(`Rallying Cry - ${part}.`);
+      const shown = (await buffCooldowns()).filter((cd) => factions.includes(cd.faction));
+      // One side is the player's own, so it needs no city name; both sides name each.
+      const [first, ...rest] = shown;
+      const part =
+        first && rest.length === 0
+          ? rallyingCryState(first)
+          : shown.map((cd) => `${CITY_FOR[cd.faction]} ${rallyingCryState(cd)}`).join(", ");
+      if (part) lines.push(`Rallying Cry: ${part}.`);
     }
     // Horde-only: Rend's head, turned in to Thrall in Orgrimmar.
     if (warchiefBlessingAgo && factions.includes("horde")) {
       const ago = await warchiefBlessingAgo();
-      lines.push(
-        ago === null
-          ? `Warchief's Blessing - none seen yet in ${CITY_FOR.horde}.`
-          : `Warchief's Blessing - last dropped in ${CITY_FOR.horde} ~${humanClock(ago)} ago.`,
-      );
+      lines.push(`Warchief's Blessing: ${ago === null ? "none seen yet" : `${humanClock(ago)} ago`}.`);
     }
     // Where the Darkmoon Faire is, once it has been seen — an unknown faire is left for "darkmoon".
     const faire = this.#deps.faireAnswer?.();
-    if (faire?.known) lines.push(formatFaire(faire, (this.#deps.now ?? Date.now)()));
+    const faireLine = faire ? formatFaireBrief(faire, (this.#deps.now ?? Date.now)()) : null;
+    if (faireLine) lines.push(faireLine);
     return lines;
   }
 

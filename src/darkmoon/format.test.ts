@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capitalStatusFaire, formatFaire } from "./format.js";
+import { capitalStatusFaire, formatFaire, formatFaireBrief } from "./format.js";
 import { FAIRE_SITES } from "./location.js";
 import type { FaireAnswer } from "./observation.js";
 
@@ -46,5 +46,20 @@ describe("capitalStatusFaire", () => {
 
   it("is null when nothing is known, so the yell leaves the faire out", () => {
     expect(capitalStatusFaire({ known: false }, NOW)).toBeNull();
+  });
+});
+
+describe("formatFaireBrief", () => {
+  it("states the zone and the age of a recent look, the landmark left to 'darkmoon'", () => {
+    expect(formatFaireBrief(known(), NOW)).toBe("Darkmoon Faire: Elwynn Forest, seen 4m ago.");
+  });
+
+  it("warns an old look may have moved on", () => {
+    const stale = known({ fresh: false, observedAt: NOW - 3 * 86_400_000, location: "mulgore", site: FAIRE_SITES.mulgore });
+    expect(formatFaireBrief(stale, NOW)).toBe("Darkmoon Faire: Mulgore, seen 3d ago, may have moved.");
+  });
+
+  it("is null when nothing is known, so the status leaves the faire out", () => {
+    expect(formatFaireBrief({ known: false }, NOW)).toBeNull();
   });
 });

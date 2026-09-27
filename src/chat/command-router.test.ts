@@ -133,11 +133,8 @@ describe("CommandRouter", () => {
     active.push(nightfallRaid);
     // "Raider" isn't subscribed and no /who detect is wired here, so both capitals show.
     const reply = await router.handle("Raider", "status");
-    expect(reply[0]).toMatch(/raid #834.*in for ~42m/);
-    expect(reply[0]).not.toMatch(/\b20\b/); // player count is redundant to a user — omitted
-    expect(reply[1]).toContain("Stormwind: no Rallying Cry seen yet");
-    expect(reply[1]).not.toMatch(/cooldown/); // 0 cooldown here → no cooldown wording
-    expect(reply[1]).toMatch(/Orgrimmar: last Rallying Cry ~1h12m ago/);
+    // The player count is redundant to a user — omitted. 0 cooldown here → no cooldown wording.
+    expect(reply).toEqual(["Onyxia: raid #834, 42m in.", "Rallying Cry: Stormwind none seen yet, Orgrimmar 1h12m ago."]);
   });
 
   it("reports the cooldown wait when a server buff cooldown is configured and active", async () => {
@@ -149,8 +146,7 @@ describe("CommandRouter", () => {
     });
     active.push(nightfallRaid);
     const reply = (await router.handle("Raider", "status")).join(" ");
-    expect(reply).toMatch(/Orgrimmar: on cooldown - a fresh Rallying Cry can drop in ~25m/);
-    expect(reply).toMatch(/Stormwind: last Rallying Cry ~10m ago/); // side off cooldown keeps normal wording
+    expect(reply).toContain("Rallying Cry: Stormwind 10m ago, Orgrimmar on cooldown for 25m.");
   });
 
   it("shows only the subscriber's own side's last drop, not both", async () => {
@@ -162,9 +158,9 @@ describe("CommandRouter", () => {
     });
     await store.add("Raider");
     await store.update("Raider", { factions: ["horde"] }); // subscribed on the horde side
-    const reply = (await router.handle("Raider", "status")).join(" ");
-    expect(reply).toMatch(/Orgrimmar: last Rallying Cry ~1h12m ago/); // their capital
-    expect(reply).not.toMatch(/Stormwind/); // never the other side
+    const reply = await router.handle("Raider", "status");
+    expect(reply).toContain("Rallying Cry: 1h12m ago."); // their capital, so no city named
+    expect(reply.join(" ")).not.toMatch(/Stormwind/); // never the other side
   });
 
   it("detects a non-subscriber's side via /who and shows only that capital", async () => {
@@ -175,21 +171,21 @@ describe("CommandRouter", () => {
       ],
     });
     router.setFactionDetect(async () => "alliance"); // /who resolves them to alliance
-    const reply = (await router.handle("Ghost", "status")).join(" ");
-    expect(reply).toMatch(/Stormwind: no Rallying Cry seen yet/);
-    expect(reply).not.toMatch(/Orgrimmar/);
+    const reply = await router.handle("Ghost", "status");
+    expect(reply).toContain("Rallying Cry: none seen yet."); // Stormwind's
+    expect(reply.join(" ")).not.toMatch(/Orgrimmar/);
   });
 
   it("tells a Horde player when the Warchief's Blessing last dropped", async () => {
     const { router } = deps({ warchiefBlessingAgo: async () => 95 * 60_000 });
     const reply = await router.handle("Grunt", "status", "horde");
-    expect(reply).toContain("Warchief's Blessing - last dropped in Orgrimmar ~1h35m ago.");
+    expect(reply).toContain("Warchief's Blessing: 1h35m ago.");
   });
 
   it("says when no Warchief's Blessing has been seen yet", async () => {
     const { router } = deps({ warchiefBlessingAgo: async () => null });
     const reply = await router.handle("Grunt", "status", "horde");
-    expect(reply).toContain("Warchief's Blessing - none seen yet in Orgrimmar.");
+    expect(reply).toContain("Warchief's Blessing: none seen yet.");
   });
 
   it("never tells an Alliance player about the Warchief's Blessing", async () => {
@@ -280,9 +276,8 @@ describe("CommandRouter", () => {
       detects += 1;
       return "alliance";
     });
-    const reply = (await router.handle("Ghost", "status", "horde")).join(" ");
-    expect(reply).toMatch(/Orgrimmar/); // the hinted side
-    expect(reply).not.toMatch(/Stormwind/);
+    const reply = await router.handle("Ghost", "status", "horde");
+    expect(reply).toContain("Rallying Cry: 1h12m ago."); // the hinted side — Orgrimmar's
     expect(detects).toBe(0); // hint used, the /who was skipped
   });
 
@@ -294,12 +289,8 @@ describe("CommandRouter", () => {
       ],
     });
     const reply = await router.handle("Raider", "status");
-    expect(reply[0]).toMatch(/No raid in Onyxia's Lair/);
-    // None seen yet, no raid in: say a raid must still clear, never "drop now" (the next raid
-    // could be many hours away, so an imminent CTA would be misleading).
-    expect(reply[1]).toContain("no Rallying Cry seen yet");
-    expect(reply[1]).toContain("drops when a raid clears Onyxia");
-    expect(reply[1]).not.toMatch(/drop now/);
+    // Never "drop now": the next raid could be many hours away, so an imminent CTA would mislead.
+    expect(reply).toEqual(["Onyxia: no raid now.", "Rallying Cry: Stormwind none seen yet, Orgrimmar none seen yet."]);
   });
 
   it("understands natural phrasing: 'sign me up' subscribes", async () => {
@@ -488,7 +479,7 @@ describe("CommandRouter darkmoon", () => {
   it("ends the status with where the faire is", async () => {
     const { router } = faireDeps();
     const reply = await router.handle("Raider", "status");
-    expect(reply[reply.length - 1]).toBe("Darkmoon Faire is in Mulgore (below Thunder Bluff) - seen 4m ago.");
+    expect(reply[reply.length - 1]).toBe("Darkmoon Faire: Mulgore, seen 4m ago.");
   });
 
   it("leaves the faire out of the status while nobody has spotted it", async () => {
