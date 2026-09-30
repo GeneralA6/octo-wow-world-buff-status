@@ -9,12 +9,12 @@ describe("isDropWhispered", () => {
 });
 
 describe("yelledInCapitals", () => {
-  it("yells the clear in the capitals — one yell per raid", () => {
-    expect(yelledInCapitals("raid-left")).toBe(true);
+  it("yells the start, the 'might end soon' and the clear in the capitals", () => {
+    const yelled: readonly RaidAlertKind[] = ["raid-forming", "raid-ending", "raid-left"];
+    for (const kind of yelled) expect(yelledInCapitals(kind)).toBe(true);
   });
 
-  it("keeps the start, the 'might end soon' and a disband out of the capitals", () => {
-    const quiet: readonly RaidAlertKind[] = ["raid-forming", "raid-ending", "raid-disbanded"];
-    for (const kind of quiet) expect(yelledInCapitals(kind)).toBe(false);
+  it("keeps a disband out of the capitals", () => {
+    expect(yelledInCapitals("raid-disbanded")).toBe(false);
   });
 });

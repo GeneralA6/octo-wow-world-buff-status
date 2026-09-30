@@ -123,9 +123,8 @@ export function createRaidService(
     });
 
     // A buff-parking alert: post to the Onyxia channel (pinging @alliance/@horde per open
-    // city) and whisper in-game subscribers of that side — and, for a clear alone, yell in each
-    // open capital. The caller already deduped `cities` against the ledger, so this fires at most
-    // once per cycle.
+    // city), whisper in-game subscribers of that side, and yell in each open capital. The caller
+    // already deduped `cities` against the ledger, so this fires at most once per cycle.
     const announceBuff = async (event: RaidEvent, cities: readonly Faction[], now: number): Promise<void> => {
       // The "raid starting" alert quotes how long a raid usually takes, so a reader can judge
       // whether to park now; the "raid ended" alert already carries its own duration.
@@ -134,7 +133,7 @@ export function createRaidService(
         label: event.kind,
         discord: formatBuffAlert(event, cities, typical),
         cities,
-        // Yelled in the capitals only when it is the one raid alert that is (see notify/raid-alert-reach.ts).
+        // Yelled in the capitals when its kind is (see notify/raid-alert-reach.ts).
         ...(yelledInCapitals(event.kind) ? { yellFor: (city: Faction) => formatBuffWhisper(event, [city], typical) } : {}),
         whisperFor: (groupCities) => formatBuffWhisper(event, groupCities, typical),
         // Tag with the cities this park-now is about, so a buff dropping there purges it as stale.
