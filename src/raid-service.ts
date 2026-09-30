@@ -3,7 +3,7 @@ import { describeError } from "./errors.js";
 import type { Logger } from "./logger.js";
 import type { FaireAnswer } from "./darkmoon/observation.js";
 import { AlertDelivery } from "./notify/alert-delivery.js";
-import { isDropWhispered, yelledInCapitals } from "./notify/raid-alert-reach.js";
+import { isDropWhispered, postedAndWhispered, yelledInCapitals } from "./notify/raid-alert-reach.js";
 import {
   formatBuffAlert,
   formatBuffDroppedWhisper,
@@ -123,19 +123,23 @@ export function createRaidService(
     });
 
     // A buff-parking alert: post to the Onyxia channel (pinging @alliance/@horde per open
-    // city), whisper in-game subscribers of that side, and yell in each open capital. The caller
-    // already deduped `cities` against the ledger, so this fires at most once per cycle.
+    // city), whisper in-game subscribers of that side, and yell in each open capital — each only
+    // where its kind reaches (see notify/raid-alert-reach.ts). The caller already deduped `cities`
+    // against the ledger, so this fires at most once per cycle.
     const announceBuff = async (event: RaidEvent, cities: readonly Faction[], now: number): Promise<void> => {
       // The "raid starting" alert quotes how long a raid usually takes, so a reader can judge
       // whether to park now; the "raid ended" alert already carries its own duration.
       const typical = event.kind === "raid-forming" ? await typicalClear() : undefined;
       await delivery.sendCityAlert({
         label: event.kind,
-        discord: formatBuffAlert(event, cities, typical),
         cities,
-        // Yelled in the capitals when its kind is (see notify/raid-alert-reach.ts).
+        ...(postedAndWhispered(event.kind)
+          ? {
+              discord: formatBuffAlert(event, cities, typical),
+              whisperFor: (groupCities: readonly Faction[]) => formatBuffWhisper(event, groupCities, typical),
+            }
+          : {}),
         ...(yelledInCapitals(event.kind) ? { yellFor: (city: Faction) => formatBuffWhisper(event, [city], typical) } : {}),
-        whisperFor: (groupCities) => formatBuffWhisper(event, groupCities, typical),
         // Tag with the cities this park-now is about, so a buff dropping there purges it as stale.
         whisperMaxAgeMs: config.whisperMaxAgeMs,
         happenedAt: now,
@@ -294,12 +298,16 @@ export function createRaidService(
         const typical = await typicalClear();
         await delivery.sendCityAlert({
           label: "raid-ending",
-          discord: formatRaidEnding(raidNumber, fresh, elapsedMs, typical),
           cities: fresh,
+          ...(postedAndWhispered("raid-ending")
+            ? {
+                discord: formatRaidEnding(raidNumber, fresh, elapsedMs, typical),
+                whisperFor: (groupCities: readonly Faction[]) => formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, typical),
+              }
+            : {}),
           ...(yelledInCapitals("raid-ending")
             ? { yellFor: (city: Faction) => formatRaidEndingWhisper(raidNumber, [city], elapsedMs, typical) }
             : {}),
-          whisperFor: (groupCities) => formatRaidEndingWhisper(raidNumber, groupCities, elapsedMs, typical),
           whisperMaxAgeMs: config.whisperMaxAgeMs,
           happenedAt: now,
         });
@@ -333,7 +341,7 @@ export function createRaidService(
       // plausibility floor/ceiling guard both. `killConfirmed` only changes the alert wording.
       // A raid that formed and got a "get ready to park" alert, but left too soon to have really
       // cleared Onyxia, is a DISBAND — no park-now, no duration sample, and a stand-down for the
-      // cities we told to park (found via the forming broadcast for this cycle; a city where a buff
+      // cities we told to park (found via the broadcasts for this cycle; a city where a buff
       // dropped won't match, so a real clear never triggers a stand-down). Purges the queued park
       // whispers so nobody waits for a buff that isn't coming.
       const handleDisband = async (clear: ConfirmedClear): Promise<void> => {
@@ -343,8 +351,9 @@ export function createRaidService(
         const notified: Faction[] = [];
         for (const city of lane.cities) {
           const buffDropAt = await buffTracker.lastDropAt(city);
-          // Told of this raid this cycle — by its start, or by a "might end soon" sent before it gave up.
-          for (const kind of ["raid-forming", "raid-ending"] as const) {
+          // Told of this raid this cycle, on Discord and by whisper where the stand-down goes, by an alert
+          // sent there before it gave up — a start that was only yelled told neither.
+          for (const kind of (["raid-forming", "raid-ending"] as const).filter(postedAndWhispered)) {
             const told = await broadcasts.last(city, kind);
             if (!shouldBroadcast(told, buffDropAt, now, config.broadcastDedupMs)) {
               notified.push(city);
@@ -359,6 +368,7 @@ export function createRaidService(
           getWhisperQueue()?.dropForFaction(city);
           if (yelledInCapitals("raid-disbanded")) yellSink[city]?.(line);
         }
+        if (!postedAndWhispered("raid-disbanded")) return;
         void push(formatRaidDisbanded(clear.number, clear.durationMs), notified);
         if (config.whispersEnabled) {
           try {
