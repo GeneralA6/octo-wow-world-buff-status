@@ -19,14 +19,15 @@ import type { NotifyMessage } from "./notifier.js";
 export interface CityAlert {
   /** Short label for the log line (e.g. the event kind). */
   readonly label: string;
-  /** The Discord channel post; `cities` are role-pinged. */
-  readonly discord: NotifyMessage;
+  /** The Discord channel post, `cities` role-pinged — or none, to keep this alert off Discord. */
+  readonly discord?: NotifyMessage;
   /** The cities/factions this alert concerns. */
   readonly cities: readonly Faction[];
   /** In-capital yell text for one city — or none, to leave the capitals quiet for this alert. */
   readonly yellFor?: (city: Faction) => string;
-  /** Subscriber whisper line for a relevant-city group (each subscriber hears only their side). */
-  readonly whisperFor: (cities: readonly Faction[]) => string;
+  /** Subscriber whisper line for a relevant-city group (each subscriber hears only their side) — or
+   *  none, to whisper no one of this alert. */
+  readonly whisperFor?: (cities: readonly Faction[]) => string;
   /** Drop a whisper still queued past this (a stale "park now"). */
   readonly whisperMaxAgeMs?: number;
   /** When the event happened (ms epoch): a whisper's lateness and staleness run from here. */
@@ -54,16 +55,18 @@ export class AlertDelivery {
     this.#deps = deps;
   }
 
-  /** Discord post + per-capital yell + per-side subscriber whisper, for an alert about some cities. */
+  /** Discord post + per-capital yell + per-side subscriber whisper, for an alert about some cities —
+   *  whichever of the three the alert carries. */
   async sendCityAlert(alert: CityAlert): Promise<void> {
     const { push, yell, whispersEnabled, subscribers, broadcastWhisper, logger } = this.#deps;
-    logger.info(`ALERT ${alert.label} (${alert.cities.join("/")}): ${alert.discord.body}`);
-    await push(alert.discord, alert.cities);
+    const { discord, yellFor, whisperFor } = alert;
+    logger.info(`ALERT ${alert.label} (${alert.cities.join("/")}): ${discord ? discord.body : "not posted to Discord"}`);
+    if (discord) await push(discord, alert.cities);
     if (!whispersEnabled) return;
 
-    const yellFor = alert.yellFor;
     if (yellFor) for (const city of alert.cities) yell(city, yellFor(city));
 
+    if (!whisperFor) return;
     let subs: readonly Subscriber[];
     try {
       subs = await subscribers();
@@ -73,7 +76,7 @@ export class AlertDelivery {
     }
     if (subs.length === 0) return;
     for (const { cities, members } of groupByRelevantCities(subs, alert.cities)) {
-      broadcastWhisper(members.map((s) => s.name), withUnsubscribeHint(alert.whisperFor(cities)), cities[0] ?? null, {
+      broadcastWhisper(members.map((s) => s.name), withUnsubscribeHint(whisperFor(cities)), cities[0] ?? null, {
         cities,
         maxAgeMs: alert.whisperMaxAgeMs,
         since: alert.happenedAt,

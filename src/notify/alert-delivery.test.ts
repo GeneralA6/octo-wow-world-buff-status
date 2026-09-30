@@ -62,6 +62,20 @@ describe("AlertDelivery.sendCityAlert", () => {
     expect(calls.whisper.flatMap((w) => [...w.names]).sort()).toEqual(["Ally", "Both", "Hordie"]);
   });
 
+  it("only yells an alert with no Discord post and no whisper", async () => {
+    const subscribers = vi.fn(async (): Promise<readonly Subscriber[]> => [sub("Hordie", ["horde"])]);
+    const { delivery, calls } = harness({ subscribers });
+    await delivery.sendCityAlert({
+      label: "raid-forming",
+      cities: ["alliance", "horde"],
+      yellFor: (c) => `yell-${c}`,
+    });
+    expect(calls.push).toEqual([]);
+    expect(calls.yell.map((y) => y.text).sort()).toEqual(["yell-alliance", "yell-horde"]);
+    expect(calls.whisper).toEqual([]);
+    expect(subscribers).not.toHaveBeenCalled(); // nothing to whisper, so no subscriber fetch
+  });
+
   it("posts to Discord but does not yell or whisper when whispers are disabled", async () => {
     const { delivery, calls } = harness({ whispersEnabled: false });
     await delivery.sendCityAlert({
