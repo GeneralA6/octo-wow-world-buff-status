@@ -26,6 +26,10 @@ const stay = (name: string, from: number, to: number, raceId = ORC): Stay => ({ 
 const raid = (prefix: string, size: number, from: number, to: number): Stay[] =>
   Array.from({ length: size }, (_, i) => stay(`${prefix}${i}`, from + i, to));
 
+/** The same stays, every player at `level`. */
+const atLevel = (stays: readonly Stay[], level: number): Stay[] =>
+  stays.map((s) => ({ ...s, player: { ...s.player, level } }));
+
 /** One reading a minute over [start, end], as the poll would take them. */
 function readings(stays: readonly Stay[], start: number, end: number, complete = true): SpireView[] {
   const views: SpireView[] = [];
@@ -151,6 +155,26 @@ describe("SpireRunTracker", () => {
     const [end] = ended(events);
     expect(end?.reason).toBe("stale");
     expect(end?.endedAt).toBe(63 * MIN);
+  });
+
+  it("counts players of every level by default", () => {
+    expect(started(replay(readings(atLevel(raid("r", 10, 2, 60), 55), 0, 20)))).toHaveLength(1);
+  });
+
+  it("leaves players below the minimum level out, so a levelling group never makes a run", () => {
+    const tracker = new SpireRunTracker({ ...DEFAULT_SPIRE_RUN_OPTIONS, minLevel: 58 });
+    expect(started(replay(readings(atLevel(raid("r", 10, 2, 60), 55), 0, 20), tracker))).toEqual([]);
+  });
+
+  it("keeps a levelling party that walked in beside a raid off its roster", () => {
+    // Eight 60s one a minute from minute 2, and five 55s in among them from minute 3.
+    const stays = [...raid("r", 8, 2, 60), ...atLevel(raid("p", 5, 3, 60), 55)];
+    const counted = new SpireRunTracker({ ...DEFAULT_SPIRE_RUN_OPTIONS, minLevel: 58 });
+    replay(readings(stays, 0, 20), counted);
+    expect(counted.activeRuns()[0]?.roster.map((p) => p.name)).toEqual(Array.from({ length: 8 }, (_, i) => `r${i}`));
+    const everyone = new SpireRunTracker();
+    replay(readings(stays, 0, 20), everyone);
+    expect(everyone.activeRuns()[0]?.roster).toHaveLength(13);
   });
 
   it("does not let a run's stragglers seed a new one", () => {

@@ -11,12 +11,16 @@ import { spirePlayer, type SpirePlayer, type SpireView } from "./spire-view.js";
  * `minRunSize` is too big to be a five-man party. A later arrival within `joinGapMs` of a run's last
  * one fills it (a late summon), up to `maxRunSize`. The run has ended once fewer than `leftFraction`
  * of its peak are still inside and that has held for `endSustainedMs` — longer than a wipe's run back.
+ * Players below `minLevel` are not counted at all, so a party still levelling through LBRS can
+ * neither make up a run nor swell one it walked in beside.
  *
  * Deliberately a first cut, tuned by replaying the recorded readings against the blessings actually
  * heard; the options are the knobs that replay turns. Pure and clock-free: time is the readings' own.
  */
 
 export interface SpireRunOptions {
+  /** Players below this level are left out — a party still levelling is in LBRS. 1 counts everyone. */
+  readonly minLevel: number;
   /** Co-arriving players it takes to call a cohort a raid — an LBRS party is five. */
   readonly minRunSize: number;
   /** Two arrivals this close belong to one cohort (single linkage, along the arrival order). */
@@ -40,6 +44,7 @@ export interface SpireRunOptions {
 }
 
 export const DEFAULT_SPIRE_RUN_OPTIONS: SpireRunOptions = {
+  minLevel: 1,
   minRunSize: 8,
   linkGapMs: 5 * 60_000,
   joinGapMs: 10 * 60_000,
@@ -129,10 +134,11 @@ export class SpireRunTracker {
     const baseline = this.#lastAt === null || blind;
     this.#lastAt = at;
 
-    const present = new Set(view.present.map((player) => player.name));
+    const counted = view.present.filter((player) => player.level >= this.#options.minLevel);
+    const present = new Set(counted.map((player) => player.name));
     const events: SpireRunEvent[] = [];
     if (blind) events.push(...this.#endUnseenAfterGap(present));
-    this.#note(view, baseline);
+    this.#note(counted, at, baseline);
     this.#forgetDeparted(at, view.complete && this.#lastComplete);
     this.#lastComplete = view.complete;
     this.#fillRuns();
@@ -146,20 +152,20 @@ export class SpireRunTracker {
     return [...this.#runs.values()].map((run) => this.#summary(run));
   }
 
-  #note(view: SpireView, baseline: boolean): void {
-    for (const player of view.present) {
+  #note(players: readonly SpirePlayer[], at: number, baseline: boolean): void {
+    for (const player of players) {
       const known = this.#seen.get(player.name);
       if (known) {
         known.player = spirePlayer(player);
-        known.lastSeen = view.at;
+        known.lastSeen = at;
         continue;
       }
       // A roster member back from a wipe's run back (or a hearth and return) is still that run's.
       const run = [...this.#runs.values()].find((active) => active.roster.has(player.name));
       this.#seen.set(player.name, {
         player: spirePlayer(player),
-        firstSeen: view.at,
-        lastSeen: view.at,
+        firstSeen: at,
+        lastSeen: at,
         arrivalObserved: !baseline,
         runId: run?.id ?? null,
       });
