@@ -157,22 +157,22 @@ describe("SpireRunTracker", () => {
     expect(end?.endedAt).toBe(63 * MIN);
   });
 
-  it("counts players of every level by default", () => {
-    expect(started(replay(readings(atLevel(raid("r", 10, 2, 60), 55), 0, 20)))).toHaveLength(1);
+  it("counts only level 60s by default, so a levelling group never makes a run", () => {
+    expect(started(replay(readings(atLevel(raid("r", 10, 2, 60), 59), 0, 20)))).toEqual([]);
   });
 
-  it("leaves players below the minimum level out, so a levelling group never makes a run", () => {
-    const tracker = new SpireRunTracker({ ...DEFAULT_SPIRE_RUN_OPTIONS, minLevel: 58 });
-    expect(started(replay(readings(atLevel(raid("r", 10, 2, 60), 55), 0, 20), tracker))).toEqual([]);
+  it("counts players of every level when the minimum is 1", () => {
+    const tracker = new SpireRunTracker({ ...DEFAULT_SPIRE_RUN_OPTIONS, minLevel: 1 });
+    expect(started(replay(readings(atLevel(raid("r", 10, 2, 60), 55), 0, 20), tracker))).toHaveLength(1);
   });
 
   it("keeps a levelling party that walked in beside a raid off its roster", () => {
     // Eight 60s one a minute from minute 2, and five 55s in among them from minute 3.
     const stays = [...raid("r", 8, 2, 60), ...atLevel(raid("p", 5, 3, 60), 55)];
-    const counted = new SpireRunTracker({ ...DEFAULT_SPIRE_RUN_OPTIONS, minLevel: 58 });
+    const counted = new SpireRunTracker();
     replay(readings(stays, 0, 20), counted);
     expect(counted.activeRuns()[0]?.roster.map((p) => p.name)).toEqual(Array.from({ length: 8 }, (_, i) => `r${i}`));
-    const everyone = new SpireRunTracker();
+    const everyone = new SpireRunTracker({ ...DEFAULT_SPIRE_RUN_OPTIONS, minLevel: 1 });
     replay(readings(stays, 0, 20), everyone);
     expect(everyone.activeRuns()[0]?.roster).toHaveLength(13);
   });

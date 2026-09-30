@@ -44,7 +44,8 @@ export interface SpireRunOptions {
 }
 
 export const DEFAULT_SPIRE_RUN_OPTIONS: SpireRunOptions = {
-  minLevel: 1,
+  // UBRS raids are level 60s; below that a group is levelling, and LBRS is where it levels.
+  minLevel: 60,
   minRunSize: 8,
   linkGapMs: 5 * 60_000,
   joinGapMs: 10 * 60_000,

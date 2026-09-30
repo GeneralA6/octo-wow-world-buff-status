@@ -121,9 +121,9 @@ describe("replayReport", () => {
 
 describe("describeOptions", () => {
   it("names the minimum level only when one is set", () => {
-    expect(describeOptions(DEFAULT_SPIRE_RUN_OPTIONS, DEFAULT_ATTRIBUTION_OPTIONS)).toMatch(/^runs: 8\+ in within 5m /);
-    expect(describeOptions({ ...DEFAULT_SPIRE_RUN_OPTIONS, minLevel: 58 }, DEFAULT_ATTRIBUTION_OPTIONS)).toMatch(
-      /^runs: 8\+ of level 58\+ in within 5m /,
+    expect(describeOptions(DEFAULT_SPIRE_RUN_OPTIONS, DEFAULT_ATTRIBUTION_OPTIONS)).toMatch(/^runs: 8\+ of level 60\+ in within 5m /);
+    expect(describeOptions({ ...DEFAULT_SPIRE_RUN_OPTIONS, minLevel: 1 }, DEFAULT_ATTRIBUTION_OPTIONS)).toMatch(
+      /^runs: 8\+ in within 5m /,
     );
   });
 });
