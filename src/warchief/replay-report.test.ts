@@ -34,6 +34,7 @@ describe("parseReplayArgs", () => {
   it("takes each threshold, times in minutes", () => {
     const args = parseReplayArgs([
       "--days", "30",
+      "--min-level", "58",
       "--min-run-size", "7",
       "--link-gap", "8",
       "--join-gap", "12",
@@ -49,6 +50,7 @@ describe("parseReplayArgs", () => {
     ]);
     expect(args.days).toBe(30);
     expect(args.tracker).toMatchObject({
+      minLevel: 58,
       minRunSize: 7,
       linkGapMs: 8 * MIN,
       joinGapMs: 12 * MIN,
@@ -64,6 +66,8 @@ describe("parseReplayArgs", () => {
     expect(() => parseReplayArgs(["--min-run-size", "seven"])).toThrow(/--min-run-size must be a positive whole number/);
     expect(() => parseReplayArgs(["--days", "0"])).toThrow(/--days must be a positive whole number/);
     expect(() => parseReplayArgs(["--left-fraction", "1.5"])).toThrow(/--left-fraction must be below 1/);
+    expect(() => parseReplayArgs(["--min-level", "0"])).toThrow(/--min-level must be a positive whole number/);
+    expect(() => parseReplayArgs(["--min-level", "61"])).toThrow(/--min-level must be at most 60/);
   });
 
   it("refuses an option it does not know", () => {
@@ -112,6 +116,15 @@ describe("replayReport", () => {
     const at = lines.indexOf("Sweep, best first (F1 of blessings explained and runs that led to one):");
     expect(at).toBeGreaterThan(0);
     expect(lines[at + 1]).toMatch(/^ {2}F1 1\.00 {2}Score: 1\/1/);
+  });
+});
+
+describe("describeOptions", () => {
+  it("names the minimum level only when one is set", () => {
+    expect(describeOptions(DEFAULT_SPIRE_RUN_OPTIONS, DEFAULT_ATTRIBUTION_OPTIONS)).toMatch(/^runs: 8\+ in within 5m /);
+    expect(describeOptions({ ...DEFAULT_SPIRE_RUN_OPTIONS, minLevel: 58 }, DEFAULT_ATTRIBUTION_OPTIONS)).toMatch(
+      /^runs: 8\+ of level 58\+ in within 5m /,
+    );
   });
 });
 

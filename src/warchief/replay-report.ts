@@ -25,6 +25,8 @@ export interface ReplayArgs {
 }
 
 const MIN = 60_000;
+/** The level cap — a minimum above it would leave everyone out. */
+const MAX_LEVEL = 60;
 
 function positive(name: string, raw: string | undefined, fallback: number, integer = true): number {
   if (raw === undefined) return fallback;
@@ -41,6 +43,7 @@ export function parseReplayArgs(argv: readonly string[]): ReplayArgs {
     args: [...argv],
     options: {
       days: { type: "string" },
+      "min-level": { type: "string" },
       "min-run-size": { type: "string" },
       "link-gap": { type: "string" },
       "join-gap": { type: "string" },
@@ -60,10 +63,13 @@ export function parseReplayArgs(argv: readonly string[]): ReplayArgs {
   if (leftFraction >= 1) throw new Error(`--left-fraction must be below 1, got ${leftFraction}`);
   const d = DEFAULT_SPIRE_RUN_OPTIONS;
   const a = DEFAULT_ATTRIBUTION_OPTIONS;
+  const minLevel = positive("min-level", values["min-level"], d.minLevel);
+  if (minLevel > MAX_LEVEL) throw new Error(`--min-level must be at most ${MAX_LEVEL}, got ${minLevel}`);
   return {
     days: positive("days", values.days, 14),
     tracker: {
       ...d,
+      minLevel,
       minRunSize: positive("min-run-size", values["min-run-size"], d.minRunSize),
       linkGapMs: positive("link-gap", values["link-gap"], d.linkGapMs / MIN) * MIN,
       joinGapMs: positive("join-gap", values["join-gap"], d.joinGapMs / MIN) * MIN,
@@ -89,7 +95,8 @@ const clock = (ms: number): string => `${new Date(ms).toISOString().slice(11, 16
 
 export function describeOptions(tracker: SpireRunOptions, attribution: AttributionOptions): string {
   return (
-    `runs: ${tracker.minRunSize}+ in within ${humanClock(tracker.linkGapMs)} of each other, ` +
+    `runs: ${tracker.minRunSize}+ ${tracker.minLevel > 1 ? `of level ${tracker.minLevel}+ ` : ""}` +
+    `in within ${humanClock(tracker.linkGapMs)} of each other, ` +
     `late joiners within ${humanClock(tracker.joinGapMs)}, cap ${tracker.maxRunSize}, ` +
     `gone when under ${Math.round(tracker.leftFraction * 100)}% for ${humanClock(tracker.endSustainedMs)} | ` +
     `blessings: from ${humanClock(attribution.minRendMs)} into a run to ${humanClock(attribution.windowMs)} after it left, ` +

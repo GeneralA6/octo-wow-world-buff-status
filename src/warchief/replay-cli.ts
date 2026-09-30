@@ -12,6 +12,7 @@ import { MongoSpireSnapshotStore } from "./spire-snapshot-store.js";
  *   railway run npx tsx src/warchief/replay-cli.ts                 score the current thresholds, 14 days
  *   railway run npx tsx src/warchief/replay-cli.ts --days 30 --runs --context
  *   railway run npx tsx src/warchief/replay-cli.ts --min-run-size 7 --link-gap 8 --window 60
+ *   railway run npx tsx src/warchief/replay-cli.ts --min-level 58     leave out players still levelling
  *   railway run npx tsx src/warchief/replay-cli.ts --sweep         rank a grid of thresholds
  *
  * Needs MONGODB_URI (and MONGODB_DB if not the default "onyxiabot") — `railway run` provides them.
