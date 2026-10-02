@@ -126,6 +126,18 @@ describe("isMonsterChatType", () => {
     expect(isMonsterChatType(ChatType.Whisper)).toBe(false);
     expect(isMonsterChatType(ChatType.Yell)).toBe(false);
   });
+
+  it("takes every NPC line on 1.12's numbering: emotes, whispers and boss emotes too", () => {
+    expect(isMonsterChatType(0x0d)).toBe(true); // MonsterEmote
+    expect(isMonsterChatType(0x1a)).toBe(true); // MonsterWhisper
+    expect(isMonsterChatType(0x5a)).toBe(true); // RaidBossEmote
+    expect(isMonsterChatType(ChatType.Channel)).toBe(false);
+  });
+
+  it("reads an NPC emote line with the monster layout", () => {
+    const chat = parseMonsterChat(monsterChat(ChatType.MonsterEmote, 1n, "Thrall", "Thrall grunts."));
+    expect(chat).toMatchObject({ type: ChatType.MonsterEmote, senderName: "Thrall", text: "Thrall grunts." });
+  });
 });
 
 describe("buildWhisper", () => {

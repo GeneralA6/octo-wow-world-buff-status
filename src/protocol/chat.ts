@@ -53,7 +53,9 @@ export interface MonsterChat {
 const MONSTER_CHAT_TYPES: ReadonlySet<number> = new Set([
   ChatType.MonsterSay,
   ChatType.MonsterYell,
+  ChatType.MonsterEmote,
   ChatType.MonsterWhisper,
+  ChatType.RaidBossEmote,
 ]);
 
 /** True if the chat type uses the monster layout (sender name inline). */

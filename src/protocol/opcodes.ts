@@ -119,18 +119,21 @@ export enum ChatType {
   System = 0x0a,
   // Monster/NPC chat — the city buff yell arrives as MonsterYell. These carry the
   // sender's name inline, a different wire layout than player messages (see chat.ts).
+  // Numbered as cmangos-classic's ChatMsg (SharedDefines.h).
   MonsterSay = 0x0b,
   MonsterYell = 0x0c,
-  MonsterWhisper = 0x0d,
-  // Global CHANNEL messages (e.g. the LFT addon-comms channel) arrive with chat type 0x0e on this
-  // server — CONFIRMED from a live capture (672 "PWB:" channel lines all came in as 0x0e). Standard
-  // 1.12 lists 0x0e as MonsterEmote, but Turtle routes channel here and we never act on emotes, so
-  // 0x0e is Channel. The buff yell (MonsterYell 0x0c) is unaffected.
+  /** "<Thrall grunts.>" — an NPC's emote line. */
+  MonsterEmote = 0x0d,
+  // Global CHANNEL messages (e.g. the LFT addon-comms channel) arrive with chat type 0x0e — CONFIRMED
+  // from a live capture (672 "PWB:" channel lines all came in as 0x0e), as stock 1.12 numbers it.
   Channel = 0x0e,
   // "<name> is ignoring you": the player named has us on their ignore list, and their client refused
   // something we said — a whisper, or a /say or /yell in their earshot. The text is their name, the
   // sender their GUID (cmangos-classic ChatMsg: CHAT_MSG_IGNORED = 0x16).
   Ignored = 0x16,
+  MonsterWhisper = 0x1a,
+  /** A boss's emote line, shown to everyone in range in raid-warning style. */
+  RaidBossEmote = 0x5a,
 }
 
 /** SMSG_GUILD_EVENT `type` byte (1.12). We only act on JOINED; the rest are for logging. */
