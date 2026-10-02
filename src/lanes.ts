@@ -20,9 +20,12 @@ export interface DetectionLane {
   players(split: FactionSplit): readonly WhoPlayer[];
 }
 
-/** Each listener (parked in its capital) registers a /yell function for its own side; the watcher
- *  yells through it to broadcast to everyone nearby in the city. */
-export type YellSink = Partial<Record<Faction, (message: string) => void>>;
+/** The listeners parked in each capital lend the watcher their /yell, so it can broadcast to
+ *  everyone nearby in the city. See CityYellers for which listener's yell is used. */
+export interface YellSink {
+  /** The /yell into `faction`'s capital, or undefined when no listener there can yell right now. */
+  yellFor(faction: Faction): ((message: string) => void) | undefined;
+}
 
 /** Chronicle early-confirm dependencies for a lane, or null when it's off (no Mongo / disabled). */
 export interface LaneChronicle {

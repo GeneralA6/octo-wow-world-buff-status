@@ -105,7 +105,7 @@ export function createRaidService(
     // functions below only pick formatters; HOW it's sent lives in AlertDelivery.
     const delivery = new AlertDelivery({
       push,
-      yell: (city, text) => yellSink[city]?.(text),
+      yell: (city, text) => yellSink.yellFor(city)?.(text),
       whispersEnabled: config.whispersEnabled,
       subscribers: () => store.all(),
       broadcastWhisper,
@@ -210,7 +210,7 @@ export function createRaidService(
       const answer = faireAnswer?.(now);
       const faire = answer ? capitalStatusFaire(answer, now) : null;
       for (const faction of FACTIONS) {
-        const yell = yellSink[faction];
+        const yell = yellSink.yellFor(faction);
         if (!yell) continue; // no listener parked in this capital right now
         const raid = raidStateFor(faction, now);
         const status = formatCapitalStatusYell(faction, raid, raid ? typical : undefined, faire);
@@ -366,7 +366,7 @@ export function createRaidService(
         for (const city of notified) {
           whisperPool.dropForFaction(city);
           getWhisperQueue()?.dropForFaction(city);
-          if (yelledInCapitals("raid-disbanded")) yellSink[city]?.(line);
+          if (yelledInCapitals("raid-disbanded")) yellSink.yellFor(city)?.(line);
         }
         if (!postedAndWhispered("raid-disbanded")) return;
         void push(formatRaidDisbanded(clear.number, clear.durationMs), notified);

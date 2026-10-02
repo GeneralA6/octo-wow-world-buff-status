@@ -30,7 +30,8 @@ import { WhoRosterSource, type LairView, type RosterSource } from "./watcher/ros
 import { PresenceSweeper } from "./watcher/presence-sweep.js";
 import { BuffTracker } from "./watcher/buff-tracker.js";
 import { createRaidService } from "./raid-service.js";
-import type { DetectionLane, LaneChronicle, YellSink } from "./lanes.js";
+import type { DetectionLane, LaneChronicle } from "./lanes.js";
+import { CityYellers } from "./city-yellers.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { UnitOwnerTable } from "./protocol/unit-owner.js";
@@ -333,7 +334,7 @@ interface ConnectionServices {
   /** Shared realm-population signal: every watcher /who reply carries the realm-wide online count,
    *  and the status widget reads the latest off this. See realm-population.ts. */
   readonly realmPopulation: RealmPopulation;
-  readonly yellSink: YellSink;
+  readonly yellSink: CityYellers;
   readonly push: (message: NotifyMessage, factions?: readonly Faction[]) => Promise<void>;
   /** Post an operational/error notice to the errors Discord channel (or log-only if unset). */
   readonly notifyAdmin: (title: string, body: string) => Promise<void>;
@@ -970,7 +971,7 @@ async function runListener(
   client: ClientValues,
   onBuffApplied: (faction: Faction, sourceName: string, text: string) => void,
   outreach: Outreach,
-  yellSink: YellSink,
+  yellSink: CityYellers,
   listenerWho: ListenerWho,
   whisperPool: WhisperPool,
   /** Hears the Darkmoon heralds, who wander the capitals these listeners are parked in. */
@@ -1099,8 +1100,8 @@ async function runListener(
     const nearby: WorldGameObject[] = [];
     let selfPos: WorldPoint | null = null;
     let interacted = false;
-    // Our /yell mouthpiece registration, so we only retract it on disconnect if it's still
-    // ours (a reconnect may have already replaced it with the new connection's).
+    // The /yell this connection signed up with, so on disconnect it withdraws only its own (a
+    // reconnect may already have signed up again).
     let registeredYell: ((message: string) => void) | null = null;
     const settle = (error?: Error): void => {
       if (settled) return;
@@ -1115,8 +1116,12 @@ async function runListener(
       listenerWhispers.stop();
       hooks.playerNames.unregister(listener.characterName);
       hooks.playerGuids.unregister(listener.characterName);
-      if (listener.faction && registeredYell && yellSink[listener.faction] === registeredYell) {
-        delete yellSink[listener.faction];
+      if (listener.faction && registeredYell) {
+        const held = yellSink.holder(listener.faction) === listener.characterName;
+        const holder = yellSink.leave(listener.faction, listener.characterName, registeredYell);
+        if (held && holder !== null && holder !== listener.characterName) {
+          logger.info(`${holder} takes over the ${listener.faction} yell while ${listener.characterName} is away`);
+        }
       }
       // Leaving for a threat is not a failure, however the connection ended.
       if (standDownMs > 0) resolve({ standDownMs });
@@ -1167,14 +1172,18 @@ async function runListener(
           // Name GUIDs for the others — the owner of an Infernal another listener fled from.
           hooks.playerNames.register(listener.characterName, (guid) => world.resolveName(guid, PLAYER_NAME_TIMEOUT_MS));
           hooks.playerGuids.register(listener.characterName, (name) => guidProbe.lookup(name));
-          // Become this side's /yell mouthpiece, so a park-alert can be shouted to everyone standing
-          // in this capital — only when a faction is set AND this listener is a yeller. A second bot
-          // in the same city with yeller=false stays whisper-only, so the two don't churn the single
-          // yellSink slot. (All listeners join the whisper pool above regardless.)
+          // Offer this side a /yell, so a park-alert can be shouted to everyone standing in this
+          // capital — only when a faction is set AND this listener is a yeller. The first-listed
+          // yeller in world holds it; a later one stands by until those ahead of it are gone.
+          // (All listeners join the whisper pool above regardless.)
           if (listener.faction && listener.yeller) {
             registeredYell = (message: string): void => world.yell(message);
-            yellSink[listener.faction] = registeredYell;
-            logger.info(`${listener.characterName}: registered as ${listener.faction} yell mouthpiece`);
+            const holder = yellSink.signUp(listener.faction, listener.characterName, registeredYell);
+            logger.info(
+              holder === listener.characterName
+                ? `${listener.characterName}: registered as ${listener.faction} yell mouthpiece`
+                : `${listener.characterName}: standing by as ${listener.faction} yell backup — ${holder} yells`,
+            );
           }
           // A listener that hears nothing is doing nothing, and looks perfectly healthy doing it.
           silenceTimer = setInterval(() => {
@@ -1871,9 +1880,10 @@ async function main(): Promise<void> {
   // Filled from every watcher /who (they all carry the realm-wide online count) and read by the
   // status widget. A reading expires, so an outage shows "unknown" rather than a pre-outage count.
   const realmPopulation = new RealmPopulation();
-  // Each city listener registers its /yell here on login (and clears it on disconnect), so
-  // an alert can be shouted to everyone standing in that capital, not only to subscribers.
-  const yellSink: YellSink = {};
+  // Each city yeller signs up its /yell here on login (and withdraws it on disconnect), so an alert
+  // can be shouted to everyone standing in that capital, not only to subscribers. The first one
+  // listed in WOW_LISTENERS yells; the next stands by for while it is away.
+  const yellSink = new CityYellers(config.listeners.map((listener) => listener.characterName));
   // Listener sockets Bufftracker borrows for faction /who, so lookups stay off its raid poll.
   const listenerWho = new ListenerWho();
   // The listeners' whisper queues, pooled so a broadcast to many subscribers splits across them

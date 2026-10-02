@@ -33,8 +33,9 @@ export interface ListenerConfig {
    *  when unset — the listener still hears buff yells, it just can't be a yell mouthpiece. */
   readonly faction: Faction | null;
   /** Whether this listener may be its city's /yell mouthpiece. All listeners always join the whisper
-   *  pool; this only governs the public city yell, so a second bot in a capital can be whisper-only
-   *  (yeller=false) rather than fight over the single yell slot. Default true. */
+   *  pool; this only governs the public city yell. Of a side's yellers in world, the one listed first
+   *  in WOW_LISTENERS yells and the rest stand by for while it is away; yeller=false never yells.
+   *  Default true. */
   readonly yeller: boolean;
   /** Log every NPC line it hears — says, emotes, whispers — not only the yells every listener logs.
    *  For a listener parked to learn what the NPCs beside it say (e.g. by Thrall). Default false. */
