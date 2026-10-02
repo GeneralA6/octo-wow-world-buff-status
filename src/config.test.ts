@@ -271,23 +271,23 @@ describe("loadConfig", () => {
       WOW_LISTENERS: JSON.stringify([
         { account: "ONYXIABUFFOG", password: "pw;1:with!specials", character: "Onyxiabuffog", faction: "horde", onLogin: "sit", yeller: true },
         { account: "ONYXIABUFFSW", password: "pw2", character: "Onyxiabuffsw", faction: "alliance", onLogin: "interact" },
-        { account: "ONYXIABUFFOGB", password: "pw3", character: "Onybuffogb", faction: "horde", onLogin: "sit", yeller: false },
+        { account: "ONYXIABUFFOGB", password: "pw3", character: "Onybuffogb", faction: "horde", onLogin: "sit", yeller: false, logNpcChat: true },
       ]),
     });
     expect(config.listeners).toEqual([
-      { account: "ONYXIABUFFOG", password: "pw;1:with!specials", characterName: "Onyxiabuffog", onLogin: "sit", faction: "horde", yeller: true },
-      { account: "ONYXIABUFFSW", password: "pw2", characterName: "Onyxiabuffsw", onLogin: "interact", faction: "alliance", yeller: true }, // yeller defaults true
-      { account: "ONYXIABUFFOGB", password: "pw3", characterName: "Onybuffogb", onLogin: "sit", faction: "horde", yeller: false },
+      { account: "ONYXIABUFFOG", password: "pw;1:with!specials", characterName: "Onyxiabuffog", onLogin: "sit", faction: "horde", yeller: true, logNpcChat: false },
+      { account: "ONYXIABUFFSW", password: "pw2", characterName: "Onyxiabuffsw", onLogin: "interact", faction: "alliance", yeller: true, logNpcChat: false }, // yeller defaults true
+      { account: "ONYXIABUFFOGB", password: "pw3", characterName: "Onybuffogb", onLogin: "sit", faction: "horde", yeller: false, logNpcChat: true },
     ]);
   });
 
-  it("defaults optional fields (faction null, onLogin none, yeller true)", () => {
+  it("defaults optional fields (faction null, onLogin none, yeller true, logNpcChat false)", () => {
     const config = loadConfig({
       ...minimalEnv,
       WOW_LISTENERS: JSON.stringify([{ account: "A", password: "p", character: "Ca" }]),
     });
     expect(config.listeners).toEqual([
-      { account: "A", password: "p", characterName: "Ca", onLogin: "none", faction: null, yeller: true },
+      { account: "A", password: "p", characterName: "Ca", onLogin: "none", faction: null, yeller: true, logNpcChat: false },
     ]);
   });
 
@@ -304,7 +304,7 @@ describe("loadConfig", () => {
     ).toThrow(/entry 1 needs a non-empty "password"[\s\S]*entry 1 needs a non-empty "character"/);
   });
 
-  it("rejects a bad faction / onLogin / yeller value in a listener object", () => {
+  it("rejects a bad faction / onLogin / yeller / logNpcChat value in a listener object", () => {
     expect(() =>
       loadConfig({ ...minimalEnv, WOW_LISTENERS: JSON.stringify([{ account: "A", password: "p", character: "C", faction: "pandaren" }]) }),
     ).toThrow(/entry 1 "faction" must be "alliance" or "horde"/);
@@ -314,6 +314,9 @@ describe("loadConfig", () => {
     expect(() =>
       loadConfig({ ...minimalEnv, WOW_LISTENERS: JSON.stringify([{ account: "A", password: "p", character: "C", yeller: "yes" }]) }),
     ).toThrow(/entry 1 "yeller" must be true or false/);
+    expect(() =>
+      loadConfig({ ...minimalEnv, WOW_LISTENERS: JSON.stringify([{ account: "A", password: "p", character: "C", logNpcChat: 1 }]) }),
+    ).toThrow(/entry 1 "logNpcChat" must be true or false/);
   });
 
   it("defaults the broadcast-dedup window to the buff window (120m) and accepts an override", () => {

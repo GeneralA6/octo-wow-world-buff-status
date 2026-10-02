@@ -44,6 +44,7 @@ import {
 } from "./watcher/buff-store.js";
 import { matchBuffYell } from "./watcher/buff-yell.js";
 import { SilenceWatch } from "./watcher/listener-silence.js";
+import { npcChatLogLine } from "./watcher/npc-chat-log.js";
 import { isSpiritHealer } from "./watcher/spirit-healer.js";
 import { ListenerDeathWatch } from "./watcher/listener-death-watch.js";
 import { formatDeathReport, type DeathAccount } from "./watcher/death-report.js";
@@ -1238,11 +1239,16 @@ async function runListener(
             interactTimer.unref?.();
           }
         },
-        // Any monster chat — say, yell or whisper — proves this listener is in earshot of the
+        // Any monster chat — say, yell, emote or whisper — proves this listener is in earshot of the
         // world. That is the only ongoing evidence a parked listener produces about the thing it
         // exists for, since the buff yell it waits for comes once a month; watching for THAT
-        // instead could never tell a deaf listener from a quiet realm.
-        onMonsterChat: () => silence.heard(Date.now()),
+        // instead could never tell a deaf listener from a quiet realm. A listener set to logNpcChat
+        // also logs each line, to learn what the NPCs beside it say.
+        onMonsterChat: (chat) => {
+          silence.heard(Date.now());
+          const line = npcChatLogLine(chat, listener.logNpcChat);
+          if (line !== null) logger.info(line);
+        },
         onCreatureName: (entry, name) => {
           deathWatch.creatureName(entry, name);
           if (name === null || !isSpiritHealer(name) || deadReported) return;

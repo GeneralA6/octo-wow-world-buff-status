@@ -36,6 +36,9 @@ export interface ListenerConfig {
    *  pool; this only governs the public city yell, so a second bot in a capital can be whisper-only
    *  (yeller=false) rather than fight over the single yell slot. Default true. */
   readonly yeller: boolean;
+  /** Log every NPC line it hears — says, emotes, whispers — not only the yells every listener logs.
+   *  For a listener parked to learn what the NPCs beside it say (e.g. by Thrall). Default false. */
+  readonly logNpcChat: boolean;
 }
 
 export interface BotConfig {
@@ -333,8 +336,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   // load. Configured as ONE JSON array in WOW_LISTENERS — each object is a character:
   //   [{"account":"A","password":"p","character":"Char","faction":"horde","onLogin":"sit","yeller":true}]
   // account/password/character are required; faction ("alliance"|"horde") defaults null, onLogin
-  // ("sit"|"interact"|"none") defaults "none", yeller (bool) defaults true. Unset = no listeners
-  // (watcher only). JSON so a password may contain any character and fields are self-labelling.
+  // ("sit"|"interact"|"none") defaults "none", yeller (bool) defaults true, logNpcChat (bool) defaults
+  // false. Unset = no listeners (watcher only). JSON so a password may contain any character and
+  // fields are self-labelling.
   const listeners: ListenerConfig[] = [];
   const isObject = (value: unknown): value is Record<string, unknown> =>
     typeof value === "object" && value !== null && !Array.isArray(value);
@@ -370,6 +374,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
         let yeller = true;
         if (typeof entry.yeller === "boolean") yeller = entry.yeller;
         else if (entry.yeller !== undefined) errors.push(`WOW_LISTENERS entry ${nth} "yeller" must be true or false`);
+        let logNpcChat = false;
+        if (typeof entry.logNpcChat === "boolean") logNpcChat = entry.logNpcChat;
+        else if (entry.logNpcChat !== undefined) {
+          errors.push(`WOW_LISTENERS entry ${nth} "logNpcChat" must be true or false`);
+        }
         listeners.push({
           account: requiredString("account"),
           password: requiredString("password"),
@@ -377,6 +386,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
           faction: parseFaction(optString(entry.faction), `WOW_LISTENERS entry ${nth} "faction"`),
           onLogin: parseOnLogin(optString(entry.onLogin), `WOW_LISTENERS entry ${nth} "onLogin"`),
           yeller,
+          logNpcChat,
         });
       });
     }
