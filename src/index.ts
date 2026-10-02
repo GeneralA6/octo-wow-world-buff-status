@@ -37,6 +37,7 @@ import { UnitOwnerTable } from "./protocol/unit-owner.js";
 import { unitRef } from "./protocol/guid.js";
 import { InMemorySnapshotStore, MongoSnapshotStore, type SnapshotStore } from "./watcher/snapshot-store.js";
 import {
+  FACTIONS,
   InMemoryBuffStore,
   MongoBuffStore,
   type BuffStore,
@@ -1939,6 +1940,10 @@ async function main(): Promise<void> {
         if (n !== null) return n;
       }
       return null;
+    },
+    buffCooldowns: async () => {
+      const nowMs = Date.now();
+      return Promise.all(FACTIONS.map((faction) => buffTracker.cooldownState(faction, nowMs)));
     },
     warchiefBlessingAgo: () => warchiefTracker.lastDropAgo(Date.now()),
     areaName: config.watchAreaName,

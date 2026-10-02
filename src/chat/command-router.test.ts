@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
 import type { ActiveRaid } from "../watcher/raid-events.js";
-import { CommandRouter, isSubscribeRequest, SHUNNED_REPLY, UNKNOWN_REPLY } from "./command-router.js";
+import { CommandRouter, isSubscribeRequest, SHUNNED_REPLY, UNKNOWN_REPLY, type BuffCooldown } from "./command-router.js";
 import { FAIRE_SITES } from "../darkmoon/location.js";
 import type { FaireAnswer } from "../darkmoon/observation.js";
 
@@ -10,6 +10,7 @@ function deps(
     withFeedback?: boolean;
     raidElapsed?: () => number | null;
     raidNumber?: () => number | null;
+    buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
     warchiefBlessingAgo?: () => Promise<number | null>;
     faireAnswer?: () => FaireAnswer;
     now?: () => number;
@@ -26,6 +27,7 @@ function deps(
     activeRaids: () => active,
     raidElapsed: opts.raidElapsed,
     raidNumber: opts.raidNumber,
+    buffCooldowns: opts.buffCooldowns,
     warchiefBlessingAgo: opts.warchiefBlessingAgo,
     faireAnswer: opts.faireAnswer,
     now: opts.now,
@@ -119,25 +121,59 @@ describe("CommandRouter", () => {
     expect(reply[0]).toMatch(/isn't set up/i);
   });
 
-  it("reports the raid # and how long it's been in on status, and no buff drop times", async () => {
-    const { active, router } = deps({ raidElapsed: () => 42 * 60_000, raidNumber: () => 834 });
+  it("reports the raid #, how long it's been in, and when the buff last dropped on status", async () => {
+    const { active, router } = deps({
+      raidElapsed: () => 42 * 60_000,
+      raidNumber: () => 834,
+      buffCooldowns: async () => [
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 }, // none seen yet
+        { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0 }, // last dropped 1h12m ago
+      ],
+    });
     active.push(nightfallRaid);
-    // The player count is redundant to a user — omitted.
-    expect(await router.handle("Raider", "status")).toEqual(["Onyxia: raid #834, 42m in."]);
+    // "Raider" isn't subscribed and no /who detect is wired here, so both capitals show.
+    const reply = await router.handle("Raider", "status");
+    // The player count is redundant to a user — omitted. 0 cooldown here → no cooldown wording.
+    expect(reply).toEqual(["Onyxia: raid #834, 42m in.", "Rallying Cry: Stormwind none seen yet, Orgrimmar 1h12m ago."]);
   });
 
-  it("tells a Horde subscriber of the Warchief's Blessing from their subscribed side", async () => {
-    const { store, router } = deps({ warchiefBlessingAgo: async () => 95 * 60_000 });
+  it("reports the cooldown wait when a server buff cooldown is configured and active", async () => {
+    const { active, router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", sinceLastDropMs: 10 * 60_000, cooldownRemainingMs: 0 }, // off cooldown
+        { faction: "horde", sinceLastDropMs: 5 * 60_000, cooldownRemainingMs: 25 * 60_000 }, // 25m to go
+      ],
+    });
+    active.push(nightfallRaid);
+    const reply = (await router.handle("Raider", "status")).join(" ");
+    expect(reply).toContain("Rallying Cry: Stormwind 10m ago, Orgrimmar on cooldown for 25m.");
+  });
+
+  it("shows only the subscriber's own side's last drop, not both", async () => {
+    const { store, router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0 },
+      ],
+    });
     await store.add("Raider");
     await store.update("Raider", { factions: ["horde"] }); // subscribed on the horde side
-    expect(await router.handle("Raider", "status")).toContain("Warchief's Blessing: 1h35m ago.");
+    const reply = await router.handle("Raider", "status");
+    expect(reply).toContain("Rallying Cry: 1h12m ago."); // their capital, so no city named
+    expect(reply.join(" ")).not.toMatch(/Stormwind/); // never the other side
   });
 
-  it("detects a non-subscriber's side via /who, and an Alliance one hears no Warchief's Blessing", async () => {
-    const { router } = deps({ warchiefBlessingAgo: async () => 95 * 60_000 });
+  it("detects a non-subscriber's side via /who and shows only that capital", async () => {
+    const { router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0 },
+      ],
+    });
     router.setFactionDetect(async () => "alliance"); // /who resolves them to alliance
-    const reply = (await router.handle("Ghost", "status")).join(" ");
-    expect(reply).not.toMatch(/Warchief/);
+    const reply = await router.handle("Ghost", "status");
+    expect(reply).toContain("Rallying Cry: none seen yet."); // Stormwind's
+    expect(reply.join(" ")).not.toMatch(/Orgrimmar/);
   });
 
   it("tells a Horde player when the Warchief's Blessing last dropped", async () => {
@@ -229,20 +265,32 @@ describe("CommandRouter", () => {
   });
 
   it("status for a non-subscriber uses the listener hint instead of a /who", async () => {
-    const { router } = deps({ warchiefBlessingAgo: async () => 95 * 60_000 });
+    const { router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0 },
+      ],
+    });
     let detects = 0;
     router.setFactionDetect(async () => {
       detects += 1;
       return "alliance";
     });
     const reply = await router.handle("Ghost", "status", "horde");
-    expect(reply).toContain("Warchief's Blessing: 1h35m ago."); // the hinted side — Horde
+    expect(reply).toContain("Rallying Cry: 1h12m ago."); // the hinted side — Orgrimmar's
     expect(detects).toBe(0); // hint used, the /who was skipped
   });
 
-  it("status without a raid says so", async () => {
-    const { router } = deps();
-    expect(await router.handle("Raider", "status")).toEqual(["Onyxia: no raid now."]);
+  it("status without a raid still reports when the buff last dropped", async () => {
+    const { router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", sinceLastDropMs: null, cooldownRemainingMs: 0 },
+        { faction: "horde", sinceLastDropMs: null, cooldownRemainingMs: 0 },
+      ],
+    });
+    const reply = await router.handle("Raider", "status");
+    // Never "drop now": the next raid could be many hours away, so an imminent CTA would mislead.
+    expect(reply).toEqual(["Onyxia: no raid now.", "Rallying Cry: Stormwind none seen yet, Orgrimmar none seen yet."]);
   });
 
   it("understands natural phrasing: 'sign me up' subscribes", async () => {
