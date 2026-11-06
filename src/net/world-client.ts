@@ -230,7 +230,7 @@ export class WorldClient {
    * to slice a query by class and merge, beating the 49-result cap).
    *
    * Because nothing ties a reply to its query, a reply that comes after its query timed out would
-   * be taken as the NEXT query's — a Spire roster read as the lair's, say. So after a timeout the
+   * be taken as the NEXT query's — another zone's roster read as the lair's, say. So after a timeout the
    * next query waits as long again before it goes out, letting a straggler land with nothing
    * waiting; and a reply naming only players outside the zones a query asked about is not its
    * reply, so it is passed over while the query waits on.
