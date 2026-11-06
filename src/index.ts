@@ -59,10 +59,6 @@ import { LifeSigns } from "./watcher/life-signs.js";
 import { WhisperRefusals } from "./chat/whisper-refusals.js";
 import { isWarchiefBlessingYell } from "./watcher/warchief-yell.js";
 import { WARCHIEF_DROPS_COLLECTION, WarchiefBlessingTracker } from "./watcher/warchief-tracker.js";
-import { openSpireWatch, type OpenedSpireWatch } from "./warchief/open-spire-watch.js";
-import { spireReadDue } from "./warchief/read-cadence.js";
-import { rotatingWho } from "./watcher/who-rotation.js";
-import type { SpireWatch } from "./warchief/spire-watch.js";
 import { CharacterLookups, type PlayerGuids, type PlayerNames } from "./watcher/character-lookups.js";
 import { GuidProbe } from "./watcher/guid-probe.js";
 import { InMemoryShameListStore, MongoShameListStore, type ShameListStore } from "./watcher/shame-list-store.js";
@@ -340,9 +336,6 @@ interface ConnectionServices {
   readonly notifyAdmin: (title: string, body: string) => Promise<void>;
   /** Post a STAGED/test alert to the tests channel (falls back to errors). */
   readonly notifyTests: (title: string, body: string) => Promise<void>;
-  /** The Warchief's Blessing shadow forecast, fed a Blackrock Spire reading on the lair poll's turn;
-   *  null when WOW_SPIRE_WATCH is off. */
-  readonly spireWatch: SpireWatch | null;
   readonly client: ClientValues;
 }
 
@@ -359,7 +352,7 @@ async function runConnection(
   // on a stable, reasonable ping (a raid can't run on a laggy server).
   onLatency: (rttMs: number) => void,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, faire, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, whisperRefusals, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, spireWatch, client } =
+  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, faire, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, whisperRefusals, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
   // One creature query per NPC entry for the life of this connection; a reconnect starts fresh,
   // which is also when a name we failed to resolve gets another chance.
@@ -530,22 +523,6 @@ async function runConnection(
       sliceDelayMs: config.whoSliceDelayMs,
       logger,
     });
-    // Blackrock Spire, for the Warchief's Blessing shadow forecast. Read on the lair poll's turn (see
-    // readSpire) rather than a timer of its own, so its /who never lands on top of the lair's — the
-    // lair is the reading that matters. And asked through the listeners' sockets in turn, never this
-    // one: the realm drops a character's /who sent this soon after its last (see who-rotation.ts).
-    const spireSource: RosterSource | null = spireWatch
-      ? new WhoRosterSource({
-          who: rotatingWho(() => listenerWho.all()),
-          extraWho: () => listenerWho.all(),
-          areaId: config.spireAreaId,
-          areaName: "Blackrock Spire",
-          sliceDelayMs: config.whoSliceDelayMs,
-          logger,
-        })
-      : null;
-    let lastSpireReadAt: number | null = null;
-
     // Resolve a player's side with a targeted /who — they're online, having just whispered.
     // Null if it can't run, they're not found, or their race is custom. Used to tailor the
     // status to a non-subscriber's capital.
@@ -721,22 +698,6 @@ async function runConnection(
             }, 15_000);
             probeTimer.unref?.();
           }
-          // The Spire, once per WOW_SPIRE_POLL_SECONDS, straight after a lair poll and a slice's breath
-          // behind its last /who.
-          const readSpire = async (): Promise<void> => {
-            if (spireSource === null || spireWatch === null) return;
-            const now = Date.now();
-            if (!spireReadDue(lastSpireReadAt, now, config.spirePollMs, POLL_JITTER_RATIO)) return;
-            lastSpireReadAt = now;
-            await delay(config.whoSliceDelayMs);
-            if (settled) return;
-            try {
-              const view = await spireSource.poll();
-              if (!settled) await spireWatch.observe(view);
-            } catch (error) {
-              logger.warn(`spire who failed: ${describeError(error)}`);
-            }
-          };
           const poll = async (): Promise<void> => {
             try {
               const view = await rosterSource.poll();
@@ -744,7 +705,6 @@ async function runConnection(
             } catch (error) {
               logger.warn(`who failed: ${describeError(error)}`);
             }
-            if (!settled) await readSpire();
             if (settled) return;
             pollTimer = setTimeout(() => void poll(), jitter(config.pollIntervalMs, POLL_JITTER_RATIO));
             pollTimer.unref?.();
@@ -1682,16 +1642,6 @@ async function main(): Promise<void> {
       logger.error(`warchief's blessing: MongoDB connect failed (${describeError(error)}); recording in memory`);
     }
   }
-  // The Warchief's Blessing shadow forecast (WOW_SPIRE_WATCH): follows Blackrock Spire's UBRS runs and
-  // scores them against the blessings heard. The tests channel only — never players, while it is tuned.
-  const spire: OpenedSpireWatch | null = config.spireWatchEnabled
-    ? await openSpireWatch({
-        database: mongo?.db ?? null,
-        blessings: async () => (await warchiefStore.history("horde", 500)).map((drop) => drop.appliedAt),
-        notify: (notice) => notifyTests(notice.title, notice.body),
-        logger,
-      })
-    : null;
   // Per-cycle park-alert dedup, so a redeploy/wipe/churn can't re-broadcast — Mongo when
   // configured, else in memory (which resets on restart, i.e. no cross-deploy dedup).
   let broadcasts: BroadcastLedger = new InMemoryBroadcastLedger();
@@ -1912,13 +1862,9 @@ async function main(): Promise<void> {
   // the Warchief channel pinging the Horde role, and a whisper to Horde subscribers.
   const warchiefTracker = new WarchiefBlessingTracker({ store: warchiefStore, dedupWindowMs: BUFF_DEDUP_MS, logger });
   const recordWarchiefBlessing = (sourceName: string, text: string, detectedBy: string): void => {
-    const appliedAt = warchiefTracker.record({ sourceName, text, detectedBy }, Date.now());
-    if (appliedAt === null) return; // an echo
+    if (warchiefTracker.record({ sourceName, text, detectedBy }, Date.now()) === null) return; // an echo
     void pushWarchief(formatWarchiefBlessing());
     buffDropSink.notifyWarchief?.();
-    void spire?.watch
-      .onBlessing(appliedAt)
-      .catch((error) => logger.error(`warchief forecast: ${describeError(error)}`));
   };
 
   // A player's feedback: persist it (for review) and post it to the feedback channel,
@@ -2009,7 +1955,6 @@ async function main(): Promise<void> {
     push,
     notifyAdmin,
     notifyTests,
-    spireWatch: spire?.watch ?? null,
     client,
   };
 
@@ -2061,7 +2006,6 @@ async function main(): Promise<void> {
       serverMonitorStore.close(),
       statusWidgetStore.close(),
       chronicleStore ? chronicleStore.close() : Promise.resolve(),
-      spire ? spire.close() : Promise.resolve(),
     ])
       .then(() => mongo?.close())
       .finally(() => process.exit(0));

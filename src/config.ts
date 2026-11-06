@@ -252,14 +252,6 @@ export interface BotConfig {
    *  throttles /who, so firing ~9 slices back-to-back trips it and it stops replying; spacing them
    *  keeps it answering. Mirrors DEFAULT_WHO_SLICE_DELAY_MS in watcher/roster.ts. */
   readonly whoSliceDelayMs: number;
-  /** The Warchief's Blessing SHADOW forecast: read Blackrock Spire, follow its UBRS runs and score
-   *  them against the blessings heard — posting only to the tests channel, never to players. Off
-   *  unless WOW_SPIRE_WATCH is set: it is one more /who a minute against a throttled server. */
-  readonly spireWatchEnabled: boolean;
-  /** Blackrock Spire's zone id for /who — LBRS and UBRS share it (1583 in stock 1.12). */
-  readonly spireAreaId: number;
-  /** How often the Spire is read. Each reading waits its turn behind the lair poll's /who. */
-  readonly spirePollMs: number;
   /** Max distance (yards) a GameObject may be for an "interact" listener to `use` it (sit on
    *  the bench). Tunable because the server range-checks the use, so it needs the character
    *  parked within reach of the bench. */
@@ -585,10 +577,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const pollIntervalMs = intWithDefault("POLL_INTERVAL_SECONDS", 20, 5) * 1000;
   const whoTimeoutMs = intWithDefault("WOW_WHO_TIMEOUT_MS", 8_000, 1_000);
   const whoSliceDelayMs = intWithDefault("WOW_WHO_SLICE_DELAY_MS", 1_500, 0);
-  const spireWatchRaw = env.WOW_SPIRE_WATCH?.trim().toLowerCase();
-  const spireWatchEnabled = spireWatchRaw === "true" || spireWatchRaw === "1";
-  const spireAreaId = intWithDefault("WOW_SPIRE_AREA_ID", 1583, 1);
-  const spirePollMs = intWithDefault("WOW_SPIRE_POLL_SECONDS", 60, 20) * 1000;
   const interactMaxYd = intWithDefault("WOW_INTERACT_MAX_YD", 8, 1);
   const interactEntryRaw = env.WOW_INTERACT_ENTRY?.trim();
   const interactEntry = interactEntryRaw && /^\d+$/.test(interactEntryRaw) ? Number(interactEntryRaw) : null;
@@ -691,9 +679,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     pollIntervalMs,
     whoTimeoutMs,
     whoSliceDelayMs,
-    spireWatchEnabled,
-    spireAreaId,
-    spirePollMs,
     interactMaxYd,
     interactEntry,
     guildName,
