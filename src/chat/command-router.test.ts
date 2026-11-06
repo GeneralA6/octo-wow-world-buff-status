@@ -137,6 +137,17 @@ describe("CommandRouter", () => {
     expect(reply).toEqual(["Onyxia: raid #834, 42m in.", "Rallying Cry: Stormwind none seen yet, Orgrimmar 1h12m ago."]);
   });
 
+  it.each(["shtatus", "/shtatus", "SHTATUS"])("answers the drunk spelling %s as status", async (text) => {
+    const { active, router } = deps({ raidElapsed: () => 42 * 60_000, raidNumber: () => 834 });
+    active.push(nightfallRaid);
+    expect(await router.handle("Raider", text)).toEqual(await router.handle("Raider", "status"));
+  });
+
+  it("keeps the drunk spelling out of the help reply", async () => {
+    const { router } = deps();
+    expect((await router.handle("Raider", "help")).join(" ")).not.toMatch(/shtatus/i);
+  });
+
   it("reports the cooldown wait when a server buff cooldown is configured and active", async () => {
     const { active, router } = deps({
       buffCooldowns: async () => [

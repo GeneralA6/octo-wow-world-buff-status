@@ -212,7 +212,9 @@ export class CommandRouter {
       case "dmf":
       case "faire":
         return this.#darkmoon();
+      // "shtatus" is how a drunk character's "status" comes out.
       case "status":
+      case "shtatus":
         return this.#status(sender, sourceFaction);
       case "help":
       case "commands":
