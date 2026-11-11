@@ -1,6 +1,6 @@
-# turtle-world-buff-and-events-status-bot
+# octowow-world-buff-and-events-status-bot
 
-A **clientless** bot for Turtle WoW (WoW 1.12) that logs in with the game's own
+A **clientless** bot for OctoWoW (WoW 1.12) that logs in with the game's own
 network protocol — no game client — polls `/who` for a raid instance, and pushes
 a Discord alert when a raid **enters** and when it **leaves** Onyxia's Lair.
 
@@ -12,15 +12,15 @@ your capital to catch it.
 
 ## ⚠️ Read this first
 
-**Turtle WoW's rules forbid automation and third-party programs that connect to
-their server.** This bot is exactly that. Running it risks a **ban of the account
+**Private servers' rules usually forbid automation and third-party programs that
+connect to their server — check OctoWoW's before running this.** This bot is exactly that. Running it risks a **ban of the account
 it logs in with**.
 
 - Use a **dedicated throwaway account** you are willing to lose. Never your main.
 - The bot parks a character standing still, always online — which is detectable.
 - Keep the poll interval gentle (the default is 20s; don't go below ~15s).
 - Before building anything, check whether a **community "buff timer" Discord**
-  already exists for Turtle — that carries zero risk and may make this moot.
+  already exists for OctoWoW — that carries zero risk and may make this moot.
 
 This code is provided for educational purposes. You are responsible for how you
 use it.
@@ -30,22 +30,23 @@ use it.
 ## The one check that decides if this works at all
 
 WoW's `/who` filters by zone, but whether it lists players **inside an instance**
-depends on the server core. Turtle may or may not expose them. **Verify manually
+depends on the server core. OctoWoW may or may not expose them. **Verify manually
 before relying on the bot:**
 
 1. Have a friend (or an alt) stand inside Onyxia's Lair.
 2. In the game client, type: `/who Onyxia's Lair`
 3. If they appear in the results → the approach works.
-   If not → `/who` can't see instanced players on Turtle, and no bot can either.
+   If not → `/who` can't see instanced players on OctoWoW, and no bot can either.
    In that case, watch for the server's world announcement on a kill instead (see
    *Limitations*).
 
 While you're there, note the **area id** the bot should watch. Onyxia's Lair is
-`2159` in stock 1.12; if Turtle uses a custom id, set `WATCH_AREA_ID` accordingly.
+`2159` in stock 1.12; if OctoWoW uses a custom id, set `WATCH_AREA_ID` accordingly.
 
-Also note: **`/who` only returns your own faction.** A Horde bot sees Horde raids,
-an Alliance bot sees Alliance raids. That's the right side for buff timing (the
-buff is faction-wide), but to watch both factions you'd run two bots.
+Also note: OctoWoW is **cross-faction**, so `/who` returns Horde and Alliance
+players together and one bot sees both (`WOW_REALM_TYPE=crossfaction`, the
+default). On a realm where `/who` only returns your own faction, set
+`WOW_REALM_TYPE=faction` and run one bot per side.
 
 ---
 
@@ -69,7 +70,7 @@ cp .env.example .env
 
 You need:
 
-- A **throwaway Turtle account** (`WOW_ACCOUNT` / `WOW_PASSWORD`).
+- A **throwaway OctoWoW account** (`WOW_ACCOUNT` / `WOW_PASSWORD`).
 - A **character** on it (`WOW_CHARACTER`) — ideally the **only** character on the
   account (see *Limitations*). It just parks wherever it logs in.
 - A **Discord webhook URL** (`DISCORD_WEBHOOK_URL`): in Discord, *Server Settings →
@@ -222,8 +223,8 @@ alerts to players in-game. Whisper the character:
 | `status` / `me` / `help` | current raid state / your settings / commands |
 
 `darkmoon` never predicts. It reports where the faire was last **seen**, and how long ago —
-because Turtle does not run the vanilla calendar (it alternates weekly and is up almost every
-day), and any schedule hardcoded here would be one server patch away from being confidently
+because a private server need not run the vanilla calendar (Turtle WoW, for one, alternates
+weekly and is up almost every day), and any schedule hardcoded here would be one server patch away from being confidently
 wrong for a month before anyone noticed. An observation cannot rot like that; it just gets old,
 and says so. [PizzaWorldBuffs](https://github.com/Pizzahawaiii/PizzaWorldBuffs) reached the same
 conclusion — it has no schedule logic at all.
@@ -301,8 +302,8 @@ Layout:
 
 ## Limitations & things that may need live tuning
 
-This bot has **not** been run against Turtle's live servers by its author; the
-protocol is implemented from the documented 1.12 (MaNGOS-family) behaviour and
+The protocol is implemented from the documented 1.12 (MaNGOS-family) behaviour,
+adapted to OctoWoW's logon (its custom client build and integrity hash), and
 verified end-to-end against a mock. A few spots are where reality most often
 differs — turn on `LOG_LEVEL=debug` and watch where the handshake stops:
 
