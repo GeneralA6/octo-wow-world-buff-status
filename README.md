@@ -1,4 +1,4 @@
-# turtle-onyxia-bot
+# turtle-world-buff-and-events-status-bot
 
 A **clientless** bot for Turtle WoW (WoW 1.12) that logs in with the game's own
 network protocol — no game client — polls `/who` for a raid instance, and pushes
