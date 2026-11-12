@@ -112,9 +112,6 @@ export interface CommandDeps {
   readonly onSubscribe?: (name: string) => void;
   /** Per-faction buff cooldown for status — how long until a fresh Rallying Cry can drop. */
   readonly buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
-  /** How long ago the Warchief's Blessing last dropped in Orgrimmar, or null if none was seen — for
-   *  a Horde player's status. Undefined = not tracked, and the line is left out. */
-  readonly warchiefBlessingAgo?: () => Promise<number | null>;
   /** Where the Darkmoon Faire is, for the "darkmoon" command. Undefined = the tracker isn't
    *  wired and the command says so instead of answering from a guess. */
   readonly faireAnswer?: () => FaireAnswer;
@@ -281,12 +278,12 @@ export class CommandRouter {
    *  Rallying Cry last dropped in THEIR capital(s) only — not both, since a player can only use
    *  their own side's buff. */
   async #status(sender: string, sourceFaction: Faction | null = null): Promise<string[]> {
-    const { lairs, buffCooldowns, warchiefBlessingAgo } = this.#deps;
+    const { lairs, buffCooldowns } = this.#deps;
     const lines: string[] = [];
     // Every lair in one whisper: a status that grows a whisper per lair is a chattier bot.
     const raidLine = lairs().map(lairStatusText).join(" ");
     if (raidLine) lines.push(raidLine);
-    const factions = buffCooldowns || warchiefBlessingAgo ? await this.#relevantFactions(sender, sourceFaction) : [];
+    const factions = buffCooldowns ? await this.#relevantFactions(sender, sourceFaction) : [];
     if (buffCooldowns) {
       const shown = (await buffCooldowns()).filter((cd) => factions.includes(cd.faction));
       // One side is the player's own, so it needs no city name; both sides name each.
@@ -296,11 +293,6 @@ export class CommandRouter {
           ? rallyingCryState(first)
           : shown.map((cd) => `${CITY_FOR[cd.faction]} ${rallyingCryState(cd)}`).join(", ");
       if (part) lines.push(`Rallying Cry: ${part}.`);
-    }
-    // Horde-only: Rend's head, turned in to Thrall in Orgrimmar.
-    if (warchiefBlessingAgo && factions.includes("horde")) {
-      const ago = await warchiefBlessingAgo();
-      lines.push(`Warchief's Blessing: ${ago === null ? "none seen yet" : `${humanClock(ago)} ago`}.`);
     }
     // Where the Darkmoon Faire is, once it has been seen — an unknown faire is left for "darkmoon".
     const faire = this.#deps.faireAnswer?.();

@@ -5,8 +5,6 @@ import {
   formatBuffDropped,
   formatBuffDroppedWhisper,
   formatBuffWhisper,
-  formatWarchiefBlessing,
-  formatWarchiefBlessingWhisper,
   formatRaidEnding,
   formatRaidEndingWhisper,
   formatRaidDisbanded,
@@ -150,22 +148,6 @@ describe("formatBuffDropped", () => {
     expect(saved.body).toMatch(/no raid was in the lair/);
     expect(saved.body).not.toMatch(/tip|appreciated/i);
     expect(saved.title).toBe(fresh.title); // same headline; only the body differs
-  });
-});
-
-describe("formatWarchiefBlessing", () => {
-  it("names the buff, Orgrimmar and Rend's head, and makes no duration claim", () => {
-    const msg = formatWarchiefBlessing();
-    expect(msg.title).toBe("⚔️ Warchief's Blessing dropped in Orgrimmar");
-    expect(msg.body).toContain("Rend Blackhand");
-    expect(msg.body).toMatch(/Horde/);
-    expect(msg.body).not.toMatch(/cooldown|wears off|until|hour/i);
-  });
-});
-
-describe("formatWarchiefBlessingWhisper", () => {
-  it("says it dropped in Orgrimmar, and nothing about Discord", () => {
-    expect(formatWarchiefBlessingWhisper()).toBe("The Warchief's Blessing just dropped in Orgrimmar!");
   });
 });
 
@@ -370,7 +352,6 @@ describe("withUnsubscribeHint", () => {
   it("keeps the longest alert whisper within the 255-char whisper limit", () => {
     const longest = [
       formatBuffDroppedWhisper("alliance", ONYXIA),
-      formatWarchiefBlessingWhisper(),
       formatRaidEndingWhisper(ONYXIA, 99999, ["alliance", "horde"], 135 * M, "30-50m"),
     ];
     for (const line of longest) expect(withUnsubscribeHint(line).length).toBeLessThanOrEqual(255);
