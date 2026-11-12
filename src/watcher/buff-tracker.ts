@@ -1,7 +1,7 @@
 import { describeError } from "../errors.js";
 import type { Logger } from "../logger.js";
 import { buffCooldownRemainingMs } from "./broadcast-ledger.js";
-import type { BuffDrop, BuffStore, Faction } from "./buff-store.js";
+import { headOf, type BuffDrop, type BuffStore, type Faction } from "./buff-store.js";
 import { classifyDropOrigin, type DropOrigin, type LairActivity } from "./drop-origin.js";
 import type { BuffYell } from "./buff-yell.js";
 import type { RaidZoneId } from "./raid-zone.js";
@@ -56,6 +56,8 @@ export interface BuffCooldownState {
   readonly faction: Faction;
   readonly sinceLastDropMs: number | null;
   readonly cooldownRemainingMs: number;
+  /** Whose head the last drop came from; undefined when none was seen. */
+  readonly lastHead?: RaidZoneId;
 }
 
 export class BuffTracker {
@@ -110,11 +112,13 @@ export class BuffTracker {
 
   /** The cooldown readout for a side: time since the last drop and the remaining cooldown (0 if off). */
   async cooldownState(faction: Faction, now: number): Promise<BuffCooldownState> {
-    const at = (await this.#store.current(faction))?.appliedAt ?? null;
+    const current = await this.#store.current(faction);
+    const at = current?.appliedAt ?? null;
     return {
       faction,
       sinceLastDropMs: at ? now - at.getTime() : null,
       cooldownRemainingMs: buffCooldownRemainingMs(at, now, this.#cooldownMs),
+      ...(current ? { lastHead: headOf(current) } : {}),
     };
   }
 

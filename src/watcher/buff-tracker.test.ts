@@ -131,7 +131,14 @@ describe("BuffTracker state (for the policy + status)", () => {
     const { tracker } = harness({ cooldownMs: 60 * MIN });
     tracker.record(ony("horde"), meta, 10 * MIN);
     const state = await tracker.cooldownState("horde", 12 * MIN); // 2m since a 60m cooldown drop
-    expect(state).toEqual({ faction: "horde", sinceLastDropMs: 2 * MIN, cooldownRemainingMs: 58 * MIN });
+    expect(state).toEqual({ faction: "horde", sinceLastDropMs: 2 * MIN, cooldownRemainingMs: 58 * MIN, lastHead: "onyxia" });
+  });
+
+  it("names a Nefarian head as the last drop's, and no head before any drop", async () => {
+    const { tracker } = harness({ cooldownMs: 0 });
+    expect((await tracker.cooldownState("alliance", 12 * MIN)).lastHead).toBeUndefined();
+    tracker.record(nef("alliance"), meta, 10 * MIN);
+    expect((await tracker.cooldownState("alliance", 12 * MIN)).lastHead).toBe("bwl");
   });
 
   it("reports zero cooldown remaining when no cooldown is configured", async () => {
