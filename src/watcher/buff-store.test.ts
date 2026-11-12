@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryBuffStore, MongoBuffStore, type BuffDb, type BuffDrop, type Faction } from "./buff-store.js";
+import { headOf, InMemoryBuffStore, MongoBuffStore, type BuffDb, type BuffDrop, type Faction } from "./buff-store.js";
+
+type StoredDoc = Parameters<BuffDb["insert"]>[0];
 
 const at = (sec: number): Date => new Date(sec * 1000);
 const drop = (faction: Faction, sec: number): BuffDrop => ({ faction, appliedAt: at(sec) });
@@ -39,19 +41,18 @@ describe("InMemoryBuffStore", () => {
 });
 
 describe("MongoBuffStore", () => {
-  function fakeDb(): BuffDb & { docs: BuffDrop[] } {
-    const docs: BuffDrop[] = [];
+  function fakeDb(): BuffDb & { docs: StoredDoc[] } {
+    const docs: StoredDoc[] = [];
     return {
       docs,
-      insert: vi.fn(async (doc) => {
-        docs.push({ faction: doc.faction, appliedAt: doc.appliedAt });
+      insert: vi.fn(async (doc: StoredDoc) => {
+        docs.push(doc);
       }),
       latest: vi.fn(async (faction: Faction, limit: number) =>
         docs
           .filter((d) => d.faction === faction)
           .sort((a, b) => b.appliedAt.getTime() - a.appliedAt.getTime())
-          .slice(0, limit)
-          .map((d) => ({ faction: d.faction, appliedAt: d.appliedAt })),
+          .slice(0, limit),
       ),
       close: vi.fn(async () => {}),
     };
@@ -76,9 +77,40 @@ describe("MongoBuffStore", () => {
     expect(recent.map((d) => d.appliedAt.getTime() / 1000)).toEqual([100, 200, 300]);
   });
 
+  it("persists whose head dropped the buff and reads it back", async () => {
+    const db = fakeDb();
+    const store = new MongoBuffStore(db);
+    await store.record({ faction: "horde", appliedAt: at(100), head: "bwl" });
+    expect(db.docs).toEqual([{ faction: "horde", appliedAt: at(100), head: "bwl" }]);
+    expect(await store.current("horde")).toEqual({ faction: "horde", appliedAt: at(100), head: "bwl" });
+  });
+
+  it("writes no head for a buff no head drops (the Warchief's Blessing)", async () => {
+    const db = fakeDb();
+    await new MongoBuffStore(db).record(drop("horde", 100));
+    expect(db.docs).toEqual([{ faction: "horde", appliedAt: at(100) }]);
+  });
+
+  it("reads a legacy drop with no head as Onyxia's, and ignores an unknown head", async () => {
+    const db = fakeDb();
+    db.docs.push({ faction: "alliance", appliedAt: at(100) }, { faction: "alliance", appliedAt: at(200), head: "zg" });
+    const [legacy, unknown] = await new MongoBuffStore(db).history("alliance", 2);
+    expect(legacy).toEqual({ faction: "alliance", appliedAt: at(100) });
+    expect(unknown).toEqual({ faction: "alliance", appliedAt: at(200) });
+    expect(legacy && headOf(legacy)).toBe("onyxia");
+  });
+
   it("closes the underlying connection", async () => {
     const db = fakeDb();
     await new MongoBuffStore(db).close();
     expect(db.close).toHaveBeenCalled();
+  });
+});
+
+describe("headOf", () => {
+  it("is the recorded head, or Onyxia's for a drop recorded before heads were told apart", () => {
+    expect(headOf({ faction: "alliance", appliedAt: at(1), head: "bwl" })).toBe("bwl");
+    expect(headOf({ faction: "alliance", appliedAt: at(1), head: "onyxia" })).toBe("onyxia");
+    expect(headOf(drop("alliance", 1))).toBe("onyxia");
   });
 });

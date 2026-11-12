@@ -44,7 +44,7 @@ import {
   type BuffStore,
   type Faction,
 } from "./watcher/buff-store.js";
-import { matchBuffYell } from "./watcher/buff-yell.js";
+import { matchBuffYell, type BuffYell } from "./watcher/buff-yell.js";
 import { SilenceWatch } from "./watcher/listener-silence.js";
 import { npcChatLogLine } from "./watcher/npc-chat-log.js";
 import { isSpiritHealer } from "./watcher/spirit-healer.js";
@@ -929,7 +929,7 @@ async function runListener(
   listener: ListenerConfig,
   logger: Logger,
   client: ClientValues,
-  onBuffApplied: (faction: Faction, sourceName: string, text: string) => void,
+  onBuffApplied: (yell: BuffYell, sourceName: string, text: string) => void,
   outreach: Outreach,
   yellSink: CityYellers,
   listenerWho: ListenerWho,
@@ -1234,7 +1234,7 @@ async function runListener(
           void onListenerDead(listener.characterName);
         },
         onMonsterYell: (senderName, text) => {
-          const faction = matchBuffYell(text);
+          const buffYell = matchBuffYell(text);
           // Log EVERY yell heard so a real buff yell that doesn't match the pattern is
           // visible rather than silently dropped. buff-yell.test.ts proves the matcher
           // against the EXPECTED string; only a real yell validates it against the
@@ -1242,9 +1242,9 @@ async function runListener(
           const warchief = isWarchiefBlessingYell(text);
           logger.info(
             `heard yell from ${senderName}: ${JSON.stringify(text)}` +
-              (faction ? ` -> BUFF ${faction}` : warchief ? " -> WARCHIEF'S BLESSING" : ""),
+              (buffYell ? ` -> BUFF ${buffYell.faction} (${buffYell.head} head)` : warchief ? " -> WARCHIEF'S BLESSING" : ""),
           );
-          if (faction) onBuffApplied(faction, senderName, text);
+          if (buffYell) onBuffApplied(buffYell, senderName, text);
           if (warchief) hooks.onWarchiefBlessing(senderName, text);
         },
         // A player whispered this parked character → transfer it to Bufftracker, which
@@ -1827,6 +1827,8 @@ async function main(): Promise<void> {
   const buffDropSink: BuffDropSink = { notify: null, notifyWarchief: null };
   // The watcher stamps this each /who poll; recordBuff (on a listener) reads it to classify a drop.
   const lairActivity = newLairActivity();
+  // Blackwing Lair's poll signal — what a Nefarian-head drop is classified against.
+  const bwlLairActivity = newLairActivity();
   // Filled from every watcher /who (they all carry the realm-wide online count) and read by the
   // status widget. A reading expires, so an outage shows "unknown" rather than a pre-outage count.
   const realmPopulation = new RealmPopulation();
@@ -1846,13 +1848,16 @@ async function main(): Promise<void> {
   const buffTracker = new BuffTracker({
     store: buffStore,
     dedupWindowMs: BUFF_DEDUP_MS,
-    freshWindowMs: config.raidFreshWindowMs,
     cooldownMs: config.buffCooldownMs,
-    activity: lairActivity,
+    lairs: {
+      onyxia: { activity: lairActivity, freshWindowMs: config.raidFreshWindowMs },
+      bwl: { activity: bwlLairActivity, freshWindowMs: config.raidFreshWindowMs },
+    },
     logger,
   });
-  const recordBuff = (faction: Faction, sourceName: string, text: string, detectedBy: string): void => {
-    const drop = buffTracker.record(faction, { sourceName, text, detectedBy }, Date.now());
+  const recordBuff = (yell: BuffYell, sourceName: string, text: string, detectedBy: string): void => {
+    const { faction } = yell;
+    const drop = buffTracker.record(yell, { sourceName, text, detectedBy }, Date.now());
     if (drop === null) return; // a duplicate a second same-city listener heard
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
     void push(formatBuffDropped(faction, drop.origin === "saved"), [faction]); // channel, pinging that side's role
@@ -2352,8 +2357,8 @@ async function main(): Promise<void> {
     const log = prefixed(logger, listener.characterName);
     // Tag each buff detection with the listener that heard it, so the notification
     // line names its source even when the three characters' logs interleave.
-    const onBuff = (faction: Faction, source: string, text: string): void =>
-      recordBuff(faction, source, text, listener.characterName);
+    const onBuff = (yell: BuffYell, source: string, text: string): void =>
+      recordBuff(yell, source, text, listener.characterName);
     const down = new DownTracker(DOWN_ALERT_THRESHOLD);
     let backoffMs = 5_000;
     const hooks: ListenerHooks = {
