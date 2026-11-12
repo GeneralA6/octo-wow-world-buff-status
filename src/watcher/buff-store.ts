@@ -23,8 +23,8 @@ export interface BuffDrop {
   /** When the buff was applied (the yell fired). */
   readonly appliedAt: Date;
   /** Whose head was turned in for a Rallying Cry: Onyxia's ("onyxia") or Nefarian's ("bwl") — the
-   *  same buff either way. Absent for a buff no head drops (the Warchief's Blessing), and on a Rallying
-   *  Cry recorded before the two heads were told apart; read it with {@link headOf}. */
+   *  same buff either way. Absent on a drop recorded before the two heads were told apart; read it
+   *  with {@link headOf}. */
   readonly head?: RaidZoneId;
 }
 
@@ -103,13 +103,8 @@ export class MongoBuffStore implements BuffStore {
     this.#db = db;
   }
 
-  /** `collectionName` keeps a different buff's drops apart — the Warchief's Blessing's, say. */
-  static async open(
-    database: Db,
-    ttlDays: number = DEFAULT_TTL_DAYS,
-    collectionName: string = COLLECTION,
-  ): Promise<MongoBuffStore> {
-    const collection = database.collection<BuffDoc>(collectionName);
+  static async open(database: Db, ttlDays: number = DEFAULT_TTL_DAYS): Promise<MongoBuffStore> {
+    const collection = database.collection<BuffDoc>(COLLECTION);
     await collection.createIndex({ appliedAt: 1 }, { expireAfterSeconds: ttlDays * 86_400 });
     await collection.createIndex({ faction: 1, appliedAt: -1 });
     const db: BuffDb = {

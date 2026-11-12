@@ -199,20 +199,6 @@ export function formatBuffDroppedWhisper(faction: Faction, head: RaidZone): stri
   return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]} (${head.boss} head)!`;
 }
 
-/** The Discord post when Thrall's yell lands the Warchief's Blessing on the Horde in Orgrimmar —
- *  Rend Blackhand's head turned in. Horde-only, so only the Horde role is pinged. */
-export function formatWarchiefBlessing(): NotifyMessage {
-  return {
-    kind: "info",
-    title: `⚔️ Warchief's Blessing dropped in ${CITY_FOR.horde}`,
-    body: "Rend Blackhand's head was turned in - the Warchief's Blessing is up for the Horde.",
-  };
-}
-
-/** The in-game whisper of the same, to Horde subscribers — the news alone, as a buff drop's is. */
-export function formatWarchiefBlessingWhisper(): string {
-  return `The Warchief's Blessing just dropped in ${CITY_FOR.horde}!`;
-}
 
 /**
  * ADVANCE heads-up: an addon on the LFT channel reported an Onyxia head being turned in (OB_INC),

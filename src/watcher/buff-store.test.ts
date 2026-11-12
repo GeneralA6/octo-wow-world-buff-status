@@ -85,7 +85,7 @@ describe("MongoBuffStore", () => {
     expect(await store.current("horde")).toEqual({ faction: "horde", appliedAt: at(100), head: "bwl" });
   });
 
-  it("writes no head for a buff no head drops (the Warchief's Blessing)", async () => {
+  it("writes no head when the drop names none", async () => {
     const db = fakeDb();
     await new MongoBuffStore(db).record(drop("horde", 100));
     expect(db.docs).toEqual([{ faction: "horde", appliedAt: at(100) }]);

@@ -273,15 +273,9 @@ export interface BotConfig {
   readonly discordDarkmoonChannelId: string | null;
   /** Channel holding the pinned wall of shame: every player who killed a bot listener. Null = no wall. */
   readonly discordWallOfShameChannelId: string | null;
-  /** Channel the Warchief's Blessing drops are posted to, pinging the Horde role. Null = the Onyxia
-   *  channel, where the Rallying Cry drops go. */
-  readonly discordWarchiefChannelId: string | null;
   /** Channel the Blackwing Lair raid alerts and Nefarian-head drops are posted to. Null = the Onyxia
    *  channel, where every Rallying Cry goes otherwise. */
   readonly discordBwlChannelId: string | null;
-  /** Whether a Warchief's Blessing drop is whispered to the Horde subscribers. On by default; off
-   *  leaves the Discord post alone as its only announcement. */
-  readonly warchiefWhispersEnabled: boolean;
   /** How often the live server-status widget re-renders (to keep uptime/latency fresh), in ms. The
    *  realm up/down transitions refresh it immediately; this is the idle cadence between them. */
   readonly statusWidgetRefreshMs: number;
@@ -618,14 +612,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordServerStatusChannelId = env.DISCORD_SERVER_STATUS_CHANNEL_ID?.trim() || null;
   const discordDarkmoonChannelId = env.DISCORD_DARKMOON_CHANNEL_ID?.trim() || null;
   const discordWallOfShameChannelId = env.DISCORD_WALL_OF_SHAME_CHANNEL_ID?.trim() || null;
-  const discordWarchiefChannelId = env.DISCORD_WARCHIEF_CHANNEL_ID?.trim() || null;
   const discordBwlChannelId = env.DISCORD_BWL_CHANNEL_ID?.trim() || null;
   if (discordBwlChannelId && !/^[0-9]+$/.test(discordBwlChannelId)) {
     errors.push("DISCORD_BWL_CHANNEL_ID must be a numeric Discord channel id");
   }
-  const warchiefWhispersRaw = env.WOW_WARCHIEF_WHISPERS?.trim().toLowerCase();
-  const warchiefWhispersEnabled =
-    warchiefWhispersRaw !== "false" && warchiefWhispersRaw !== "0" && warchiefWhispersRaw !== "none";
   const statusWidgetRefreshMs = intWithDefault("WOW_STATUS_REFRESH_SECONDS", 300, 30) * 1000;
   const statusNoticeLingerMs = intWithDefault("WOW_STATUS_NOTICE_LINGER_SECONDS", 5, 0) * 1000;
   const statusRenameRaw = env.WOW_STATUS_CHANNEL_RENAME?.trim().toLowerCase();
@@ -644,9 +634,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   }
   if (discordWallOfShameChannelId && !/^\d+$/.test(discordWallOfShameChannelId)) {
     errors.push("DISCORD_WALL_OF_SHAME_CHANNEL_ID must be a numeric Discord channel id");
-  }
-  if (discordWarchiefChannelId && !/^[0-9]+$/.test(discordWarchiefChannelId)) {
-    errors.push("DISCORD_WARCHIEF_CHANNEL_ID must be a numeric Discord channel id");
   }
 
   // Where the watcher's character is parked, when it is parked at a faire site. Set it and the bot
@@ -775,9 +762,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordServerStatusChannelId,
     discordDarkmoonChannelId,
     discordWallOfShameChannelId,
-    discordWarchiefChannelId,
     discordBwlChannelId,
-    warchiefWhispersEnabled,
     statusWidgetRefreshMs,
     statusNoticeLingerMs,
     statusChannelRenameEnabled,

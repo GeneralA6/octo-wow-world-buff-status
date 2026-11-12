@@ -7,7 +7,6 @@ import { isDropWhispered } from "./notify/raid-alert-reach.js";
 import {
   formatBuffDroppedWhisper,
   formatCapitalStatusYell,
-  formatWarchiefBlessingWhisper,
   type CapitalStatusRaid,
 } from "./notify/format.js";
 import { formatHeartbeat } from "./watcher/heartbeat.js";
@@ -58,7 +57,6 @@ export interface RaidService {
   /** A Rallying Cry heard in `faction`'s capital, from `head`'s boss: purge the park-now whispers
    *  and tell that side's subscribers (unless it was a saved head nothing led up to). */
   announceBuffDrop(faction: Faction, head: RaidZoneId, savedHead: boolean, appliedAt: Date): Promise<void>;
-  announceWarchiefBlessing(): Promise<void>;
   yellCapitalStatus(): Promise<void>;
 }
 
@@ -68,8 +66,7 @@ const HEARTBEAT_MS = 15 * 60_000;
 /**
  * The raid service: one pipeline per watched lair (raid-zone-pipeline.ts — alerts, disbands,
  * early-confirm, heads-up, each against its own ledger and timer), plus what all lairs share — the
- * buff-drop whisper (one buff, either head), the Warchief's Blessing whisper, the capital status
- * yell listing every raid in progress, and the 15-minute heartbeat log carrying each lair's timer.
+ * buff-drop whisper (one buff, either head), the capital status yell listing every raid in progress, and the 15-minute heartbeat log carrying each lair's timer.
  * index.ts wires the poll loops, the buffDropSink and the yell timer to the handles it returns.
  */
 export function createRaidService(
@@ -95,8 +92,8 @@ export function createRaidService(
     );
   }
 
-  // The per-faction whispers (drop, Warchief) never post to Discord: the drop is posted by the
-  // listener that heard it, to its head's channel.
+  // The drop whisper never posts to Discord: the drop is posted by the listener that heard it, to
+  // its head's channel.
   const delivery = new AlertDelivery({
     push,
     yell: (city, text) => yellSink.yellFor(city)?.(text),
@@ -121,14 +118,6 @@ export function createRaidService(
       since: appliedAt.getTime(),
     });
   };
-
-  // Rend's head turned in: the Warchief's Blessing is up in Orgrimmar. Horde-only; no park-now
-  // whispers to purge — no raid led up to it.
-  const announceWarchiefBlessing = (): Promise<void> =>
-    delivery.sendFactionWhisper("horde", formatWarchiefBlessingWhisper(), {
-      maxAgeMs: config.whisperMaxAgeMs,
-      since: Date.now(),
-    });
 
   // Every ~10 min, yell a buff-status board in each capital: every raid in progress (with its
   // lair's typical clear) and where the faire is, plus a subscribe/discord CTA — or nothing.
@@ -189,5 +178,5 @@ export function createRaidService(
     await pipeline.onRoster(view);
   };
 
-  return { onRoster, announceBuffDrop, announceWarchiefBlessing, yellCapitalStatus };
+  return { onRoster, announceBuffDrop, yellCapitalStatus };
 }

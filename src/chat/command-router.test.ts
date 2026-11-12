@@ -20,7 +20,6 @@ function deps(
     /** Lairs past Onyxia's, as the status reads them. */
     otherLairs?: readonly LairStatus[];
     buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
-    warchiefBlessingAgo?: () => Promise<number | null>;
     faireAnswer?: () => FaireAnswer;
     now?: () => number;
     isShunned?: (name: string) => boolean;
@@ -38,7 +37,6 @@ function deps(
       ...(opts.otherLairs ?? []),
     ],
     buffCooldowns: opts.buffCooldowns,
-    warchiefBlessingAgo: opts.warchiefBlessingAgo,
     faireAnswer: opts.faireAnswer,
     now: opts.now,
     isShunned: opts.isShunned,
@@ -214,24 +212,6 @@ describe("CommandRouter", () => {
     const reply = await router.handle("Ghost", "status");
     expect(reply).toContain("Rallying Cry: none seen yet."); // Stormwind's
     expect(reply.join(" ")).not.toMatch(/Orgrimmar/);
-  });
-
-  it("tells a Horde player when the Warchief's Blessing last dropped", async () => {
-    const { router } = deps({ warchiefBlessingAgo: async () => 95 * 60_000 });
-    const reply = await router.handle("Grunt", "status", "horde");
-    expect(reply).toContain("Warchief's Blessing: 1h35m ago.");
-  });
-
-  it("says when no Warchief's Blessing has been seen yet", async () => {
-    const { router } = deps({ warchiefBlessingAgo: async () => null });
-    const reply = await router.handle("Grunt", "status", "horde");
-    expect(reply).toContain("Warchief's Blessing: none seen yet.");
-  });
-
-  it("never tells an Alliance player about the Warchief's Blessing", async () => {
-    const { router } = deps({ warchiefBlessingAgo: async () => 95 * 60_000 });
-    const reply = (await router.handle("Footman", "status", "alliance")).join(" ");
-    expect(reply).not.toMatch(/Warchief/);
   });
 
   it("subscribe via a listener sets the side from the hint, with NO /who lookup", async () => {

@@ -489,32 +489,6 @@ describe("loadConfig guild invites", () => {
   });
 });
 
-describe("loadConfig warchief's blessing channel", () => {
-  it("falls back to the Onyxia channel unless a channel is given", () => {
-    expect(loadConfig({ ...minimalEnv }).discordWarchiefChannelId).toBeNull();
-  });
-
-  it("takes the channel id", () => {
-    expect(
-      loadConfig({ ...minimalEnv, DISCORD_WARCHIEF_CHANNEL_ID: "1552723662099062834" }).discordWarchiefChannelId,
-    ).toBe("1552723662099062834");
-  });
-
-  it("rejects anything that is not a Discord snowflake", () => {
-    expect(() => loadConfig({ ...minimalEnv, DISCORD_WARCHIEF_CHANNEL_ID: "#warchief" })).toThrow(
-      /DISCORD_WARCHIEF_CHANNEL_ID must be a numeric Discord channel id/,
-    );
-  });
-
-  it("whispers a drop to the Horde subscribers unless switched off", () => {
-    expect(loadConfig({ ...minimalEnv }).warchiefWhispersEnabled).toBe(true);
-    for (const off of ["false", "0", "none", "FALSE"]) {
-      expect(loadConfig({ ...minimalEnv, WOW_WARCHIEF_WHISPERS: off }).warchiefWhispersEnabled).toBe(false);
-    }
-    expect(loadConfig({ ...minimalEnv, WOW_WARCHIEF_WHISPERS: "true" }).warchiefWhispersEnabled).toBe(true);
-  });
-});
-
 describe("loadConfig wall of shame channel", () => {
   it("is off unless a channel is given", () => {
     expect(loadConfig({ ...minimalEnv }).discordWallOfShameChannelId).toBeNull();
