@@ -16,6 +16,62 @@ function isGroupingMode(value: string): value is GroupingMode {
   return GROUPING_MODES.some((mode) => mode === value);
 }
 
+/**
+ * How one lair is watched: where it is (/who area), how often it is polled, and the sizes and times
+ * its raids are read by. Onyxia's lives in BotConfig's flat raid* fields (see {@link onyxiaWatch});
+ * Blackwing Lair's has its own, since a 40-man raid of hours is nothing like a 20-minute Onyxia.
+ */
+export interface RaidWatchConfig {
+  readonly areaId: number;
+  readonly areaName: string;
+  readonly pollIntervalMs: number;
+  readonly minRaidSize: number;
+  readonly raidClearSize: number;
+  readonly raidStrengthSize: number;
+  readonly raidLeftFloor: number;
+  readonly raidDurationEstimateMs: number;
+  readonly raidLearnMinSamples: number;
+  readonly raidEndingLeadMs: number;
+  readonly raidFillWindowMs: number;
+  readonly raidRosterCap: number;
+  readonly raidMinClearMs: number;
+  readonly raidDisbandMs: number;
+  readonly raidFreshWindowMs: number;
+  readonly raidClearSustainedMs: number;
+  readonly raidLockoutMs: number;
+  readonly raidFormConfirmMs: number;
+  /** A clear longer than this is not one raid — a merge or a bug — and is ignored. */
+  readonly raidMaxClearMs: number;
+}
+
+/** A single Onyxia clear is not 6h+: past that it is a merge or a bug. */
+export const ONYXIA_MAX_CLEAR_MS = 6 * 60 * 60_000;
+
+/** Onyxia's watch, gathered from BotConfig's flat raid fields. */
+export function onyxiaWatch(config: BotConfig): RaidWatchConfig {
+  return {
+    areaId: config.watchAreaId,
+    areaName: config.watchAreaName,
+    pollIntervalMs: config.pollIntervalMs,
+    minRaidSize: config.minRaidSize,
+    raidClearSize: config.raidClearSize,
+    raidStrengthSize: config.raidStrengthSize,
+    raidLeftFloor: config.raidLeftFloor,
+    raidDurationEstimateMs: config.raidDurationEstimateMs,
+    raidLearnMinSamples: config.raidLearnMinSamples,
+    raidEndingLeadMs: config.raidEndingLeadMs,
+    raidFillWindowMs: config.raidFillWindowMs,
+    raidRosterCap: config.raidRosterCap,
+    raidMinClearMs: config.raidMinClearMs,
+    raidDisbandMs: config.raidDisbandMs,
+    raidFreshWindowMs: config.raidFreshWindowMs,
+    raidClearSustainedMs: config.raidClearSustainedMs,
+    raidLockoutMs: config.raidLockoutMs,
+    raidFormConfirmMs: config.raidFormConfirmMs,
+    raidMaxClearMs: ONYXIA_MAX_CLEAR_MS,
+  };
+}
+
 /** What a listener does once it reaches the world (per-character). */
 export type OnLoginAction = "sit" | "interact" | "none";
 
@@ -137,6 +193,9 @@ export interface BotConfig {
    *  forming" alert fires — filters a group that assembles and leaves without committing. A
    *  disconnect or a drop below the floor and back resets the count. Default 0 = fire immediately. */
   readonly raidFormConfirmMs: number;
+  /** Blackwing Lair's watch — its raids alerted like Onyxia's, and what a Nefarian-head drop is read
+   *  against. Null when WOW_BWL_ENABLED turns it off: no BWL polls, alerts or status. */
+  readonly blackwingLair: RaidWatchConfig | null;
   /** How often the buff-status board is yelled in each capital; 0, the default, never. The one-off
    *  raid event yells — forming, ending soon, cleared, disbanded — are not this. */
   readonly statusYellMs: number;
@@ -217,6 +276,9 @@ export interface BotConfig {
   /** Channel the Warchief's Blessing drops are posted to, pinging the Horde role. Null = the Onyxia
    *  channel, where the Rallying Cry drops go. */
   readonly discordWarchiefChannelId: string | null;
+  /** Channel the Blackwing Lair raid alerts and Nefarian-head drops are posted to. Null = the Onyxia
+   *  channel, where every Rallying Cry goes otherwise. */
+  readonly discordBwlChannelId: string | null;
   /** Whether a Warchief's Blessing drop is whispered to the Horde subscribers. On by default; off
    *  leaves the Discord post alone as its only announcement. */
   readonly warchiefWhispersEnabled: boolean;
@@ -442,6 +504,48 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 3, 1) * 60_000;
   const raidLockoutMs = intWithDefault("WOW_RAID_LOCKOUT_HOURS", 2, 1) * 60 * 60_000;
   const raidFormConfirmMs = intWithDefault("WOW_RAID_FORM_CONFIRM_MINUTES", 0, 0) * 60_000;
+
+  // Blackwing Lair, watched on its own: a 40-man raid that takes hours, so every size and time has
+  // its own WOW_BWL_* knob and default. On unless WOW_BWL_ENABLED turns it off.
+  const bwlRaw = env.WOW_BWL_ENABLED?.trim().toLowerCase();
+  const bwlEnabled = bwlRaw !== "false" && bwlRaw !== "0" && bwlRaw !== "none";
+  const blackwingLair = ((): RaidWatchConfig | null => {
+    if (!bwlEnabled) return null;
+    const minutes = (key: string, fallback: number, min: number): number => intWithDefault(key, fallback, min) * 60_000;
+    const bwlMinRaidSize = intWithDefault("WOW_BWL_MIN_RAID_SIZE", 20, 1);
+    const bwlClearSize = intWithDefault("WOW_BWL_RAID_CLEAR_SIZE", Math.max(1, Math.floor(bwlMinRaidSize / 3)), 1);
+    if (bwlClearSize >= bwlMinRaidSize) errors.push("WOW_BWL_RAID_CLEAR_SIZE must be less than WOW_BWL_MIN_RAID_SIZE");
+    const bwlStrengthSize = intWithDefault("WOW_BWL_RAID_STRENGTH_SIZE", bwlMinRaidSize, 1);
+    if (bwlStrengthSize < bwlMinRaidSize) errors.push("WOW_BWL_RAID_STRENGTH_SIZE must be >= WOW_BWL_MIN_RAID_SIZE");
+    const bwlLeftFloor = intWithDefault("WOW_BWL_RAID_LEFT_FLOOR", bwlMinRaidSize, 1);
+    if (bwlLeftFloor > bwlStrengthSize) errors.push("WOW_BWL_RAID_LEFT_FLOOR must be <= WOW_BWL_RAID_STRENGTH_SIZE");
+    const bwlDisbandMs = minutes("WOW_BWL_RAID_DISBAND_MINUTES", 60, 1);
+    const bwlMinClearMs = minutes("WOW_BWL_RAID_MIN_CLEAR_MINUTES", 30, 1);
+    const bwlMaxClearMs = intWithDefault("WOW_BWL_RAID_MAX_CLEAR_HOURS", 10, 1) * 60 * 60_000;
+    if (bwlMaxClearMs <= bwlMinClearMs) errors.push("WOW_BWL_RAID_MAX_CLEAR_HOURS must exceed WOW_BWL_RAID_MIN_CLEAR_MINUTES");
+    return {
+      areaId: intWithDefault("WOW_BWL_AREA_ID", 2677, 1),
+      areaName: env.WOW_BWL_AREA_NAME?.trim() || "Blackwing Lair",
+      // Slower than Onyxia's poll: a BWL raid lasts hours, and every /who spends the per-IP budget.
+      pollIntervalMs: intWithDefault("WOW_BWL_POLL_INTERVAL_SECONDS", 60, 5) * 1000,
+      minRaidSize: bwlMinRaidSize,
+      raidClearSize: bwlClearSize,
+      raidStrengthSize: bwlStrengthSize,
+      raidLeftFloor: bwlLeftFloor,
+      raidDurationEstimateMs: minutes("WOW_BWL_RAID_DURATION_MINUTES", 150, 1),
+      raidLearnMinSamples: intWithDefault("WOW_BWL_RAID_LEARN_MIN_SAMPLES", 10, 1),
+      raidEndingLeadMs: minutes("WOW_BWL_RAID_ENDING_LEAD_MINUTES", 20, 1),
+      raidFillWindowMs: minutes("WOW_BWL_RAID_FILL_WINDOW_MINUTES", 15, 1),
+      raidRosterCap: intWithDefault("WOW_BWL_RAID_ROSTER_CAP", 45, 1),
+      raidMinClearMs: bwlMinClearMs,
+      raidDisbandMs: bwlDisbandMs,
+      raidFreshWindowMs: minutes("WOW_BWL_DROP_FRESH_WINDOW_MINUTES", 40, 1),
+      raidClearSustainedMs: minutes("WOW_BWL_RAID_CLEAR_SUSTAINED_MINUTES", 5, 1),
+      raidLockoutMs: intWithDefault("WOW_BWL_RAID_LOCKOUT_HOURS", 4, 1) * 60 * 60_000,
+      raidFormConfirmMs: minutes("WOW_BWL_RAID_FORM_CONFIRM_MINUTES", 0, 0),
+      raidMaxClearMs: bwlMaxClearMs,
+    };
+  })();
   // How long a parked listener may hear NO npc chat before it is reported as deaf. Capitals are
   // never really silent — criers and roaming vendors yell through the day — so a listener that
   // hears nothing for hours is not where it needs to be. Generous by default: the quietest
@@ -515,6 +619,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const discordDarkmoonChannelId = env.DISCORD_DARKMOON_CHANNEL_ID?.trim() || null;
   const discordWallOfShameChannelId = env.DISCORD_WALL_OF_SHAME_CHANNEL_ID?.trim() || null;
   const discordWarchiefChannelId = env.DISCORD_WARCHIEF_CHANNEL_ID?.trim() || null;
+  const discordBwlChannelId = env.DISCORD_BWL_CHANNEL_ID?.trim() || null;
+  if (discordBwlChannelId && !/^[0-9]+$/.test(discordBwlChannelId)) {
+    errors.push("DISCORD_BWL_CHANNEL_ID must be a numeric Discord channel id");
+  }
   const warchiefWhispersRaw = env.WOW_WARCHIEF_WHISPERS?.trim().toLowerCase();
   const warchiefWhispersEnabled =
     warchiefWhispersRaw !== "false" && warchiefWhispersRaw !== "0" && warchiefWhispersRaw !== "none";
@@ -639,6 +747,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidClearSustainedMs,
     raidLockoutMs,
     raidFormConfirmMs,
+    blackwingLair,
     statusYellMs,
     whisperMaxAgeMs,
     realmStableMs,
@@ -667,6 +776,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     discordDarkmoonChannelId,
     discordWallOfShameChannelId,
     discordWarchiefChannelId,
+    discordBwlChannelId,
     warchiefWhispersEnabled,
     statusWidgetRefreshMs,
     statusNoticeLingerMs,

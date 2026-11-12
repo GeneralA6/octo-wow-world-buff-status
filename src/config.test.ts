@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig, parseAddress } from "./config.js";
+import { loadConfig, onyxiaWatch, ONYXIA_MAX_CLEAR_MS, parseAddress } from "./config.js";
 
 const minimalEnv = {
   WOW_ACCOUNT: "botacct",
@@ -591,5 +591,78 @@ describe("loadConfig listener silence", () => {
     expect(loadConfig({ ...minimalEnv, WOW_LISTENER_SILENCE_HOURS: "2" }).listenerSilenceMs).toBe(
       2 * 60 * 60_000,
     );
+  });
+});
+
+describe("loadConfig blackwing lair watch", () => {
+  it("watches Blackwing Lair by default, with its own 40-man, hours-long defaults", () => {
+    const bwl = loadConfig({ ...minimalEnv }).blackwingLair;
+    expect(bwl).toMatchObject({
+      areaId: 2677,
+      areaName: "Blackwing Lair",
+      pollIntervalMs: 60_000,
+      minRaidSize: 20,
+      raidClearSize: 6,
+      raidStrengthSize: 20,
+      raidLeftFloor: 20,
+      raidDurationEstimateMs: 150 * 60_000,
+      raidRosterCap: 45,
+      raidMinClearMs: 30 * 60_000,
+      raidDisbandMs: 60 * 60_000,
+      raidFreshWindowMs: 40 * 60_000,
+      raidLockoutMs: 4 * 3_600_000,
+      raidMaxClearMs: 10 * 3_600_000,
+    });
+  });
+
+  it("is off when switched off", () => {
+    for (const off of ["false", "0", "none", "FALSE"]) {
+      expect(loadConfig({ ...minimalEnv, WOW_BWL_ENABLED: off }).blackwingLair).toBeNull();
+    }
+  });
+
+  it("takes its own knobs, apart from Onyxia's", () => {
+    const config = loadConfig({
+      ...minimalEnv,
+      WOW_BWL_MIN_RAID_SIZE: "30",
+      WOW_BWL_RAID_DURATION_MINUTES: "180",
+      WOW_BWL_POLL_INTERVAL_SECONDS: "45",
+      WOW_MIN_RAID_SIZE: "12",
+    });
+    expect(config.blackwingLair?.minRaidSize).toBe(30);
+    expect(config.blackwingLair?.raidClearSize).toBe(10);
+    expect(config.blackwingLair?.raidDurationEstimateMs).toBe(180 * 60_000);
+    expect(config.blackwingLair?.pollIntervalMs).toBe(45_000);
+    expect(config.minRaidSize).toBe(12);
+  });
+
+  it("rejects sizes that cannot read a raid", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_BWL_MIN_RAID_SIZE: "20", WOW_BWL_RAID_CLEAR_SIZE: "20" })).toThrow(
+      /WOW_BWL_RAID_CLEAR_SIZE must be less than WOW_BWL_MIN_RAID_SIZE/,
+    );
+    expect(() => loadConfig({ ...minimalEnv, WOW_BWL_RAID_STRENGTH_SIZE: "10" })).toThrow(
+      /WOW_BWL_RAID_STRENGTH_SIZE must be >= WOW_BWL_MIN_RAID_SIZE/,
+    );
+  });
+
+  it("posts to its own channel when given one, else falls back", () => {
+    expect(loadConfig({ ...minimalEnv }).discordBwlChannelId).toBeNull();
+    expect(loadConfig({ ...minimalEnv, DISCORD_BWL_CHANNEL_ID: "1552723662099062835" }).discordBwlChannelId).toBe(
+      "1552723662099062835",
+    );
+    expect(() => loadConfig({ ...minimalEnv, DISCORD_BWL_CHANNEL_ID: "#bwl" })).toThrow(
+      /DISCORD_BWL_CHANNEL_ID must be a numeric Discord channel id/,
+    );
+  });
+});
+
+describe("onyxiaWatch", () => {
+  it("gathers Onyxia's flat raid fields into a watch", () => {
+    const config = loadConfig({ ...minimalEnv, WOW_MIN_RAID_SIZE: "12" });
+    const watch = onyxiaWatch(config);
+    expect(watch.areaId).toBe(config.watchAreaId);
+    expect(watch.minRaidSize).toBe(12);
+    expect(watch.pollIntervalMs).toBe(config.pollIntervalMs);
+    expect(watch.raidMaxClearMs).toBe(ONYXIA_MAX_CLEAR_MS);
   });
 });

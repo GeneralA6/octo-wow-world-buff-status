@@ -1,5 +1,6 @@
 import type { Db } from "mongodb";
 import { releaseSharedClient } from "../mongo-connection.js";
+import { isRaidZoneId, type RaidZoneId } from "./raid-zone.js";
 
 /**
  * Records when the Rallying Cry of the Dragonslayer buff dropped, PER FACTION (a
@@ -21,6 +22,16 @@ export interface BuffDrop {
   readonly faction: Faction;
   /** When the buff was applied (the yell fired). */
   readonly appliedAt: Date;
+  /** Whose head was turned in for a Rallying Cry: Onyxia's ("onyxia") or Nefarian's ("bwl") — the
+   *  same buff either way. Absent for a buff no head drops (the Warchief's Blessing), and on a Rallying
+   *  Cry recorded before the two heads were told apart; read it with {@link headOf}. */
+  readonly head?: RaidZoneId;
+}
+
+/** Whose head a Rallying Cry drop came from. A drop with no head recorded predates Nefarian tracking,
+ *  when every drop the bot announced was Onyxia's. */
+export function headOf(drop: BuffDrop): RaidZoneId {
+  return drop.head ?? "onyxia";
 }
 
 export interface BuffStore {
@@ -65,6 +76,13 @@ export class InMemoryBuffStore implements BuffStore {
 interface BuffDoc {
   readonly faction: Faction;
   readonly appliedAt: Date;
+  readonly head?: string;
+}
+
+/** A stored drop back as a domain drop; an unrecognised head string is dropped rather than trusted. */
+function toDrop(doc: BuffDoc): BuffDrop {
+  const base = { faction: doc.faction, appliedAt: doc.appliedAt };
+  return isRaidZoneId(doc.head) ? { ...base, head: doc.head } : base;
 }
 
 /** Narrow port over a Mongo collection, so the store's logic is unit-tested with a fake. */
@@ -104,17 +122,18 @@ export class MongoBuffStore implements BuffStore {
   }
 
   async record(drop: BuffDrop): Promise<void> {
-    await this.#db.insert({ faction: drop.faction, appliedAt: drop.appliedAt });
+    const doc: BuffDoc = { faction: drop.faction, appliedAt: drop.appliedAt };
+    await this.#db.insert(drop.head ? { ...doc, head: drop.head } : doc);
   }
 
   async current(faction: Faction): Promise<BuffDrop | null> {
     const [latest] = await this.#db.latest(faction, 1);
-    return latest ? { faction: latest.faction, appliedAt: latest.appliedAt } : null;
+    return latest ? toDrop(latest) : null;
   }
 
   async history(faction: Faction, limit: number): Promise<BuffDrop[]> {
     const docs = await this.#db.latest(faction, limit);
-    return docs.reverse().map((doc) => ({ faction: doc.faction, appliedAt: doc.appliedAt }));
+    return docs.reverse().map(toDrop);
   }
 
   async close(): Promise<void> {

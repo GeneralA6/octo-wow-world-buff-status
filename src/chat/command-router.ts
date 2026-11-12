@@ -7,6 +7,7 @@ import {
   type SubscriberStore,
 } from "../subscribers/store.js";
 import type { ActiveRaid } from "../watcher/raid-events.js";
+import { RAID_ZONES, type RaidZoneId } from "../watcher/raid-zone.js";
 import { CITY_FOR, humanClock, withUnsubscribeHint } from "../notify/format.js";
 import { parseIntent, type Intent } from "./intent.js";
 import { formatFaire, formatFaireBrief } from "../darkmoon/format.js";
@@ -32,13 +33,38 @@ export interface BuffCooldown {
   /** ms until a fresh Rallying Cry can drop again for this side, or 0 when off cooldown / when the
    *  server has no cooldown configured (a buff drops on any clear). */
   readonly cooldownRemainingMs: number;
+  /** Whose head the last drop came from — named in the status when it was Nefarian's. Undefined = none
+   *  seen (or Onyxia's, the default). */
+  readonly lastHead?: RaidZoneId;
+}
+
+/** One watched lair's raid in progress, for the status command. */
+export interface LairStatus {
+  /** The raid's short name: "Onyxia", "BWL". */
+  readonly raidName: string;
+  /** Raids in progress there — read when no raid number is known yet. */
+  readonly raids: readonly ActiveRaid[];
+  /** How long the raid in progress has been in the lair (form → now), or null if none. */
+  readonly elapsedMs: number | null;
+  /** The raid in progress's reference number, or null if none. */
+  readonly number: number | null;
+}
+
+/** A lair's part of the status: its raid in progress, or that there is none. */
+function lairStatusText(lair: LairStatus): string {
+  if (lair.raids.length === 0 && lair.number === null) return `${lair.raidName}: no raid now.`;
+  const id = lair.number !== null ? `raid #${lair.number}` : lair.raids.map((raid) => raid.label).join(", ");
+  return `${lair.raidName}: ${id}${lair.elapsedMs !== null ? `, ${humanClock(lair.elapsedMs)} in` : ""}.`;
 }
 
 /** A side's Rallying Cry in the status: the wait while a cooldown is set and running, else how long ago
  *  the last one dropped. */
 function rallyingCryState(cd: BuffCooldown): string {
   if (cd.cooldownRemainingMs > 0) return `on cooldown for ${humanClock(cd.cooldownRemainingMs)}`;
-  return cd.sinceLastDropMs === null ? "none seen yet" : `${humanClock(cd.sinceLastDropMs)} ago`;
+  if (cd.sinceLastDropMs === null) return "none seen yet";
+  // Onyxia's head is the usual one; only a Nefarian head is worth the words.
+  const head = cd.lastHead && cd.lastHead !== "onyxia" ? ` (${RAID_ZONES[cd.lastHead].boss} head)` : "";
+  return `${humanClock(cd.sinceLastDropMs)} ago${head}`;
 }
 
 /** A reader-friendly name for a set of subscribed sides. */
@@ -67,8 +93,8 @@ export function factionLabel(factions: readonly Faction[]): string {
  */
 export interface CommandDeps {
   readonly store: SubscriberStore;
-  /** Raids in progress across all factions — for the status command. */
-  readonly activeRaids: () => readonly ActiveRaid[];
+  /** Each watched lair's raid in progress, Onyxia's first — for the status command. */
+  readonly lairs: () => readonly LairStatus[];
   readonly areaName: string;
   /** The guild the "ginvite" help line names ("join <guild>"). */
   readonly guildName: string;
@@ -84,10 +110,6 @@ export interface CommandDeps {
   /** Fired (fire-and-forget) when a player newly subscribes, so the caller can record them in
    *  the lifetime user ledger — a total that survives a later unsubscribe. Undefined = no-op. */
   readonly onSubscribe?: (name: string) => void;
-  /** How long the raid in progress has been in the lair (form → now), or null if none — for status. */
-  readonly raidElapsed?: () => number | null;
-  /** The reference number of the raid in progress, or null if none — for status. */
-  readonly raidNumber?: () => number | null;
   /** Per-faction buff cooldown for status — how long until a fresh Rallying Cry can drop. */
   readonly buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
   /** How long ago the Warchief's Blessing last dropped in Orgrimmar, or null if none was seen — for
@@ -162,7 +184,7 @@ export class CommandRouter {
     await this.#reResolveFaction(sender, sourceFaction);
     const parts = text.trim().replace(/^[!./]+/, "").split(/\s+/);
     const command = (parts[0] ?? "").toLowerCase();
-    const { store, activeRaids, areaName } = this.#deps;
+    const { store, areaName } = this.#deps;
 
     switch (command) {
       case "subscribe":
@@ -176,7 +198,7 @@ export class CommandRouter {
           this.#deps.onSubscribe?.(sender); // record in the lifetime user ledger
         }
         return added
-          ? [withUnsubscribeHint(`You're subscribed! I'll ping you in-game when a raid clears and the Onyxia buff is about to drop.`)]
+          ? [withUnsubscribeHint(`You're subscribed! I'll ping you in-game when a raid clears and the Rallying Cry is about to drop.`)]
           : [`You're already subscribed to ${areaName} alerts. "help" for more.`];
       }
       case "unsubscribe":
@@ -226,7 +248,7 @@ export class CommandRouter {
         // so the two people actually ask for — what's raiding, and where the faire is — go first,
         // and the guild invite last.
         return [
-          `status - what's raiding Onyxia now, and when the buff last dropped`,
+          `status - what's raiding Onyxia and BWL now, and when the buff last dropped`,
           `darkmoon - where the Darkmoon Faire was last seen`,
           `subscribe / unsubscribe - start or stop in-game buff alerts`,
           `alliance / horde / both - which capital's buffs to be alerted for`,
@@ -255,21 +277,15 @@ export class CommandRouter {
     return [SHUNNED_REPLY];
   }
 
-  /** Live-state query for a player: what's raiding the lair now (and how long), and when the
+  /** Live-state query for a player: what's raiding each lair now (and how long), and when the
    *  Rallying Cry last dropped in THEIR capital(s) only — not both, since a player can only use
    *  their own side's buff. */
   async #status(sender: string, sourceFaction: Faction | null = null): Promise<string[]> {
-    const { activeRaids, raidElapsed, raidNumber, buffCooldowns, warchiefBlessingAgo } = this.#deps;
-    const raids = activeRaids();
-    const elapsed = raidElapsed?.() ?? null;
-    const number = raidNumber?.() ?? null;
+    const { lairs, buffCooldowns, warchiefBlessingAgo } = this.#deps;
     const lines: string[] = [];
-    if (raids.length === 0 && number === null) {
-      lines.push("Onyxia: no raid now.");
-    } else {
-      const id = number !== null ? `raid #${number}` : raids.map((raid) => raid.label).join(", ");
-      lines.push(`Onyxia: ${id}${elapsed !== null ? `, ${humanClock(elapsed)} in` : ""}.`);
-    }
+    // Every lair in one whisper: a status that grows a whisper per lair is a chattier bot.
+    const raidLine = lairs().map(lairStatusText).join(" ");
+    if (raidLine) lines.push(raidLine);
     const factions = buffCooldowns || warchiefBlessingAgo ? await this.#relevantFactions(sender, sourceFaction) : [];
     if (buffCooldowns) {
       const shown = (await buffCooldowns()).filter((cd) => factions.includes(cd.faction));
@@ -364,7 +380,7 @@ export class CommandRouter {
     if (!discordInvite) {
       return [`I don't have a Discord invite link set up right now - sorry!`];
     }
-    return [`Join our Discord to get Onyxia buff alerts outside the game: ${discordInvite}`];
+    return [`Join our Discord to get Rallying Cry alerts outside the game: ${discordInvite}`];
   }
 
   /** Capture a player's feedback/suggestion and hand it off (persisted + posted to the

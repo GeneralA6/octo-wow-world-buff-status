@@ -101,4 +101,36 @@ describe("formatHeartbeat", () => {
     expect(formatHeartbeat({ ...base, accuracy: null })).not.toContain("accuracy");
     expect(formatHeartbeat({ ...base, accuracy: { evaluated: 0, maeMs: 0, biasMs: 0 } })).not.toContain("accuracy");
   });
+
+  it("logs another lair's timer after Onyxia's, under its own name", () => {
+    const line = formatHeartbeat({
+      ...base,
+      samples: 18,
+      learnedMedianMs: 43 * 60_000,
+      buffs: [{ faction: "horde", sinceLastDropMs: null }],
+      otherTimers: [
+        { name: "BWL", samples: 3, learnedMedianMs: null, estimateMs: 150 * 60_000, minSamples: 10 },
+      ],
+    });
+    expect(line).toBe(
+      "monitor: 0 subs; raid timer learned median 43m (18 samples); BWL timer 150m estimate (3/10 to learn); buffs horde no drop yet",
+    );
+  });
+
+  it("gives each lair's timer its own accuracy", () => {
+    const line = formatHeartbeat({
+      ...base,
+      otherTimers: [
+        {
+          name: "BWL",
+          samples: 12,
+          learnedMedianMs: 140 * 60_000,
+          estimateMs: 150 * 60_000,
+          minSamples: 10,
+          accuracy: { evaluated: 4, maeMs: 12 * 60_000, biasMs: -5 * 60_000 },
+        },
+      ],
+    });
+    expect(line).toContain("BWL timer learned median 140m (12 samples); accuracy MAE 12m bias -5m over 4");
+  });
 });

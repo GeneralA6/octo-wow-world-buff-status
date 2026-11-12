@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { InMemorySubscriberStore } from "../subscribers/memory-store.js";
 import type { ActiveRaid } from "../watcher/raid-events.js";
-import { CommandRouter, isSubscribeRequest, SHUNNED_REPLY, UNKNOWN_REPLY, type BuffCooldown } from "./command-router.js";
+import {
+  CommandRouter,
+  isSubscribeRequest,
+  SHUNNED_REPLY,
+  UNKNOWN_REPLY,
+  type BuffCooldown,
+  type LairStatus,
+} from "./command-router.js";
 import { FAIRE_SITES } from "../darkmoon/location.js";
 import type { FaireAnswer } from "../darkmoon/observation.js";
 
@@ -10,6 +17,8 @@ function deps(
     withFeedback?: boolean;
     raidElapsed?: () => number | null;
     raidNumber?: () => number | null;
+    /** Lairs past Onyxia's, as the status reads them. */
+    otherLairs?: readonly LairStatus[];
     buffCooldowns?: () => Promise<readonly BuffCooldown[]>;
     warchiefBlessingAgo?: () => Promise<number | null>;
     faireAnswer?: () => FaireAnswer;
@@ -24,9 +33,10 @@ function deps(
   const subscribed: string[] = [];
   const router = new CommandRouter({
     store,
-    activeRaids: () => active,
-    raidElapsed: opts.raidElapsed,
-    raidNumber: opts.raidNumber,
+    lairs: () => [
+      { raidName: "Onyxia", raids: active, elapsedMs: opts.raidElapsed?.() ?? null, number: opts.raidNumber?.() ?? null },
+      ...(opts.otherLairs ?? []),
+    ],
     buffCooldowns: opts.buffCooldowns,
     warchiefBlessingAgo: opts.warchiefBlessingAgo,
     faireAnswer: opts.faireAnswer,
@@ -41,7 +51,7 @@ function deps(
   return { store, active, router, feedback, subscribed };
 }
 
-/** The status readout of an in-progress raid — what activeRaids() returns while one is tracked. */
+/** The status readout of an in-progress raid — what a lair's raids hold while one is tracked. */
 const nightfallRaid: ActiveRaid = { label: "the lair (mostly <Nightfall>)", count: 20, peak: 20 };
 
 describe("isSubscribeRequest", () => {
@@ -135,6 +145,25 @@ describe("CommandRouter", () => {
     const reply = await router.handle("Raider", "status");
     // The player count is redundant to a user — omitted. 0 cooldown here → no cooldown wording.
     expect(reply).toEqual(["Onyxia: raid #834, 42m in.", "Rallying Cry: Stormwind none seen yet, Orgrimmar 1h12m ago."]);
+  });
+
+  it("reports every watched lair in one line, Onyxia's first", async () => {
+    const { router } = deps({
+      otherLairs: [{ raidName: "BWL", raids: [nightfallRaid], elapsedMs: 95 * 60_000, number: 12 }],
+    });
+    const reply = await router.handle("Raider", "status");
+    expect(reply[0]).toBe("Onyxia: no raid now. BWL: raid #12, 1h35m in.");
+  });
+
+  it("names a Nefarian head on the Rallying Cry line, and leaves Onyxia's unnamed", async () => {
+    const { router } = deps({
+      buffCooldowns: async () => [
+        { faction: "alliance", sinceLastDropMs: 10 * 60_000, cooldownRemainingMs: 0, lastHead: "bwl" },
+        { faction: "horde", sinceLastDropMs: 72 * 60_000, cooldownRemainingMs: 0, lastHead: "onyxia" },
+      ],
+    });
+    const reply = await router.handle("Raider", "status");
+    expect(reply).toContain("Rallying Cry: Stormwind 10m ago (Nefarian head), Orgrimmar 1h12m ago.");
   });
 
   it.each(["shtatus", "/shtatus", "SHTATUS"])("answers the drunk spelling %s as status", async (text) => {
@@ -380,7 +409,7 @@ describe("CommandRouter", () => {
   it("answers a natural-language Discord question by sharing the invite (when set)", async () => {
     const withInvite = new CommandRouter({
       store: new InMemorySubscriberStore(),
-      activeRaids: () => [],
+      lairs: () => [],
       areaName: "Onyxia's Lair",
       guildName: "Rage Quit",
       guildInvites: true,
@@ -402,7 +431,7 @@ describe("CommandRouter", () => {
   it("shares the Discord invite link on 'discord', or says it's not set", async () => {
     const withInvite = new CommandRouter({
       store: new InMemorySubscriberStore(),
-      activeRaids: () => [],
+      lairs: () => [],
       areaName: "Onyxia's Lair",
       guildName: "Rage Quit",
       guildInvites: true,

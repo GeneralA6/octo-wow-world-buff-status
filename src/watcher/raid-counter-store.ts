@@ -59,12 +59,13 @@ export class MongoRaidCounterStore implements RaidCounterStore {
     this.#db = db;
   }
 
-  static async open(database: Db): Promise<MongoRaidCounterStore> {
+  /** `counterId` numbers another raid on its own: BWL raid #3 is not Onyxia raid #835's neighbour. */
+  static async open(database: Db, counterId: string = DOC_ID): Promise<MongoRaidCounterStore> {
     const collection = database.collection<CounterDoc>(COLLECTION);
     const db: RaidCounterDb = {
-      get: () => collection.findOne({ _id: DOC_ID }).then((doc) => doc?.value ?? null),
+      get: () => collection.findOne({ _id: counterId }).then((doc) => doc?.value ?? null),
       set: (value) =>
-        collection.updateOne({ _id: DOC_ID }, { $set: { value } }, { upsert: true }).then(() => undefined),
+        collection.updateOne({ _id: counterId }, { $set: { value } }, { upsert: true }).then(() => undefined),
       close: releaseSharedClient,
     };
     return new MongoRaidCounterStore(db);

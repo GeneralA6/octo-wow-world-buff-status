@@ -200,6 +200,24 @@ threshold. The first poll baselines: a raid already in progress reports once wit
 > them. And the 49-name cap means two full ~25-player raids (≈50) sit right at the
 > limit; three or more undercount. A single raid forming is well under it.
 
+### Blackwing Lair and Nefarian's head
+
+Nefarian's head, turned in, drops the same Rallying Cry of the Dragonslayer as
+Onyxia's, so Blackwing Lair is watched as a second lair (`WOW_BWL_ENABLED`, on
+by default). It runs the same alerts as Onyxia: the start yelled in the capitals,
+the "might end soon" heads-up, the clear and the disband. Each lair has its own:
+
+- `/who` poll (`WOW_BWL_POLL_INTERVAL_SECONDS`, default 60s, on the same queue as Onyxia's)
+- raid numbers, alert dedup, learned clear time and `/who` snapshots, in separate collections
+- Discord channel (`DISCORD_BWL_CHANNEL_ID`, else the Onyxia one)
+- sizes and timings (`WOW_BWL_*`, scaled for a 40-man raid that takes hours)
+
+A heard Rallying Cry is read against its head's lair, so a Nefarian head is called
+fresh or saved by Blackwing Lair's roster, not Onyxia's. It is posted to that
+lair's channel and named "(Nefarian head)" in the post and the whisper. The buff
+cooldown is one for both heads. The capital status yell and the whisper `status`
+list every lair's raid in progress.
+
 Everything below the network edge is pure and unit-tested. The full handshake →
 in-world → `/who` path is covered by an integration test that runs the client
 against a scripted mock server speaking the real framed, encrypted wire format

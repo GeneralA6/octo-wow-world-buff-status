@@ -154,8 +154,9 @@ export class MongoBroadcastLedger implements BroadcastLedger {
     this.#db = db;
   }
 
-  static async open(database: Db): Promise<MongoBroadcastLedger> {
-    const collection = database.collection<BroadcastDoc>(COLLECTION);
+  /** `collectionName` keeps another raid's alerts apart: each lair's raids are deduped on their own. */
+  static async open(database: Db, collectionName: string = COLLECTION): Promise<MongoBroadcastLedger> {
+    const collection = database.collection<BroadcastDoc>(collectionName);
     await collection.createIndex({ city: 1, kind: 1 }, { unique: true });
     const db: BroadcastDb = {
       get: (city, kind) => collection.findOne({ city, kind }),

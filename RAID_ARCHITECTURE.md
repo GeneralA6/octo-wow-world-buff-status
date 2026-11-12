@@ -142,6 +142,21 @@ for (const event of tracker.observe(view)) {
 `RaidService` holds this loop. `index.ts` shrinks to wiring: build the sources/stores/sinks, construct
 the service, hand it the poll tick and the buff-yell callback.
 
+### Several lairs
+
+Onyxia's Lair and Blackwing Lair both feed the Rallying Cry, so the loop above runs once per lair.
+
+- **Per lair** (`RaidZoneServices`, built in `index.ts` with `raid-zone-setup.ts`): the `RosterSource` and its
+  poll cadence, the lanes (`RaidTracker`s), the broadcast ledger, the duration store, the snapshot store,
+  the `LairActivity` signal and the Discord channel. `raid-zone-pipeline.ts` is the loop for one lair.
+  Onyxia keeps its original lane labels and collections, so a deploy resumes a raid in progress; BWL's
+  are named apart (`RAID_ZONE_STORE_NAMES`). Raid state and lockouts share one store, keyed by lane label.
+- **Shared** (`RaidService`): the buff cooldown (one buff, either head), the drop and Warchief whispers,
+  the capital status yell listing every lair's raid, and the heartbeat with each lair's timer.
+- **Drops**: `BuffTracker` reads each drop's head off the yell and classifies it against that head's
+  lair's `LairActivity`. The post goes to that lair's channel.
+- Chronicle early-confirm is Onyxia only; BWL's clears wait out the sustained wait.
+
 ## How it resolves the specific pains
 
 | Pain we hit | Where it lives now (tangled) | Where it lives after |

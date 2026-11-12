@@ -1,5 +1,6 @@
 import type { RaidEvent } from "../watcher/raid-events.js";
 import type { Faction } from "../watcher/buff-store.js";
+import type { RaidZone } from "../watcher/raid-zone.js";
 import type { NotifyMessage } from "./notifier.js";
 
 /** The capital whose buff a faction's turn-in drops. */
@@ -66,6 +67,7 @@ function cityList(cities: readonly Faction[]): string {
  * now or come back. Discord channel post; pings the open sides' roles via the `push` factions arg.
  */
 export function formatBuffAlert(
+  zone: RaidZone,
   event: RaidEvent,
   cities: readonly Faction[],
   typicalClear?: string,
@@ -76,7 +78,7 @@ export function formatBuffAlert(
     const clear = typicalClear ? `, usually ${typicalClear} to clear` : "";
     return {
       kind: "entered",
-      title: "🐲 Onyxia raid starting",
+      title: `🐲 ${zone.raidName} raid starting`,
       body: `${id} formed${clear}. Rallying Cry buff drops in ${where} on a clear.`,
     };
   }
@@ -87,22 +89,27 @@ export function formatBuffAlert(
   const after = event.durationMs != null ? ` after ~${humanClock(event.durationMs)}` : "";
   const body =
     event.killConfirmed === true
-      ? `${id} cleared${after} - Onyxia down, kill confirmed. Buff should drop in ${where}.`
+      ? `${id} cleared${after} - ${zone.boss} down, kill confirmed. Buff should drop in ${where}.`
       : `${id} cleared${after}. Buff may drop in ${where}.`;
-  return { kind: "left", title: "🏁 Onyxia raid has ended", body };
+  return { kind: "left", title: `🏁 ${zone.raidName} raid has ended`, body };
 }
 
 /** A single terse in-game whisper line for a raid-start / raid-ended park alert. */
-export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], typicalClear?: string): string {
+export function formatBuffWhisper(
+  zone: RaidZone,
+  event: RaidEvent,
+  cities: readonly Faction[],
+  typicalClear?: string,
+): string {
   const where = cityList(cities);
   if (event.kind === "raid-left") {
     return event.killConfirmed === true
-      ? `Onyxia raid cleared - Onyxia down, kill confirmed. Buff should drop in ${where}.`
-      : `Onyxia raid cleared. Buff may drop in ${where}.`;
+      ? `${zone.raidName} raid cleared - ${zone.boss} down, kill confirmed. Buff should drop in ${where}.`
+      : `${zone.raidName} raid cleared. Buff may drop in ${where}.`;
   }
   const id = event.number != null ? `Raid #${event.number}` : "a raid";
   const clear = typicalClear ? `, usually ${typicalClear} to clear` : "";
-  return `Onyxia raid starting (${id}${clear}). Rallying Cry buff drops in ${where} on a clear.`;
+  return `${zone.raidName} raid starting (${id}${clear}). Rallying Cry buff drops in ${where} on a clear.`;
 }
 
 /**
@@ -112,6 +119,7 @@ export function formatBuffWhisper(event: RaidEvent, cities: readonly Faction[], 
  * spread so they can judge; the timing stays soft because clear times vary widely.
  */
 export function formatRaidEnding(
+  zone: RaidZone,
   raidNumber: number | null,
   cities: readonly Faction[],
   elapsedMs: number,
@@ -121,13 +129,14 @@ export function formatRaidEnding(
   const typical = typicalClear ? ` (typical clear ${typicalClear})` : "";
   return {
     kind: "entered",
-    title: "⏰ Onyxia raid might end soon",
+    title: `⏰ ${zone.raidName} raid might end soon`,
     body: `${id} has been in ~${humanClock(elapsedMs)}${typical}. Buff may drop soon in ${cityList(cities)}.`,
   };
 }
 
 /** The terse in-game whisper twin of the about-to-clear heads-up. */
 export function formatRaidEndingWhisper(
+  zone: RaidZone,
   raidNumber: number | null,
   cities: readonly Faction[],
   elapsedMs: number,
@@ -135,29 +144,29 @@ export function formatRaidEndingWhisper(
 ): string {
   const num = raidNumber !== null ? `#${raidNumber} ` : "";
   const typical = typicalClear ? `, typical ${typicalClear}` : "";
-  return `Onyxia raid ${num}might end soon (~${humanClock(elapsedMs)} in${typical}). Buff may drop soon in ${cityList(cities)}.`;
+  return `${zone.raidName} raid ${num}might end soon (~${humanClock(elapsedMs)} in${typical}). Buff may drop soon in ${cityList(cities)}.`;
 }
 
 /**
- * A raid that formed and got a heads-up, but left too soon to have cleared Onyxia — a disband, not a
+ * A raid that formed and got a heads-up, but left too soon to have killed its boss — a disband, not a
  * kill. Reports that no buff is coming so a reader who saw the "formed" alert isn't left expecting one;
  * `durationMs` shows how short it was.
  */
-export function formatRaidDisbanded(raidNumber: number | null, durationMs?: number): NotifyMessage {
+export function formatRaidDisbanded(zone: RaidZone, raidNumber: number | null, durationMs?: number): NotifyMessage {
   const id = raidNumber !== null ? `Raid #${raidNumber}` : "A raid";
   const after = durationMs != null ? ` after ~${humanClock(durationMs)}` : "";
   return {
     kind: "info",
-    title: "🚫 Onyxia raid disbanded",
+    title: `🚫 ${zone.raidName} raid disbanded`,
     body: `${id} left${after} without clearing. No buff coming.`,
   };
 }
 
 /** The terse in-game whisper twin of the disband notice. */
-export function formatRaidDisbandedWhisper(raidNumber: number | null, durationMs?: number): string {
+export function formatRaidDisbandedWhisper(zone: RaidZone, raidNumber: number | null, durationMs?: number): string {
   const num = raidNumber !== null ? `#${raidNumber} ` : "";
   const after = durationMs != null ? ` (left after ~${humanClock(durationMs)})` : "";
-  return `Onyxia raid ${num}disbanded${after}. No buff coming.`;
+  return `${zone.raidName} raid ${num}disbanded${after}. No buff coming.`;
 }
 
 /**
@@ -171,22 +180,23 @@ export function formatRaidDisbandedWhisper(raidNumber: number | null, durationMs
  * `drop-origin.ts`), it appends one line explaining the drop came from a head turned in from an
  * earlier kill, so a reader understands why there was no heads-up. A fresh drop just reports the buff.
  */
-export function formatBuffDropped(faction: Faction, savedHead = false): NotifyMessage {
+export function formatBuffDropped(faction: Faction, head: RaidZone, savedHead = false): NotifyMessage {
   const city = CITY_FOR[faction];
   const body = savedHead
-    ? "This one's a saved Onyxia head from an earlier kill - no raid was in the lair, so there was no heads-up."
+    ? `This one's a saved ${head.boss} head from an earlier kill - no raid was in the lair, so there was no heads-up.`
     : "The Rallying Cry of the Dragonslayer is up.";
   return {
     kind: "info",
-    title: `🎉 Onyxia buff dropped in ${city}`,
+    title: `🎉 ${head.boss} buff dropped in ${city}`,
     body,
   };
 }
 
-/** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell fires.
- *  Just the news — no Discord link: that is for a player who asks ("discord", listed in help). */
-export function formatBuffDroppedWhisper(faction: Faction): string {
-  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]}!`;
+/** Plain-text in-game whisper of a buff drop, sent to that side's subscribers when the yell fires,
+ *  naming whose head landed it. Just the news — no Discord link: that is for a player who asks
+ *  ("discord", listed in help). */
+export function formatBuffDroppedWhisper(faction: Faction, head: RaidZone): string {
+  return `The Rallying Cry of the Dragonslayer just dropped in ${CITY_FOR[faction]} (${head.boss} head)!`;
 }
 
 /** The Discord post when Thrall's yell lands the Warchief's Blessing on the Horde in Orgrimmar —
@@ -242,49 +252,66 @@ export interface CapitalStatusFaire {
   readonly fresh: boolean;
 }
 
+/** A raid in progress for the status yell: which lair, its number and time in, and the lair's
+ *  typical clear range (so a passer-by can judge). */
 export interface CapitalStatusRaid {
+  readonly zone: RaidZone;
   readonly number: number | null;
   readonly elapsedMs: number;
+  readonly typicalClear?: string;
 }
 
+/** The most a yell may carry — the server cuts it off past this. */
+export const YELL_MAX_CHARS = 255;
+
 /**
- * The periodic status board yelled in a capital: the raid in the lair (# and time in, with the
+ * The periodic status board yelled in a capital: the raids in progress (# and time in, with the
  * typical clear range so a passer-by can judge) and a park nudge — every clear can drop a fresh
  * buff — and where the Darkmoon Faire is, each followed by the subscribe/discord CTA.
  *
- * With no raid in, the lair goes unmentioned — "no raid right now" is not news worth a yell every few
- * minutes. With neither a raid nor a faire to tell of, there is nothing to yell: null.
+ * One raid in reads as a sentence; an Onyxia AND a BWL raid at once are listed tersely, tag by tag,
+ * so both fit one yell. A lair with no raid in goes unmentioned — "no raid right now" is not news
+ * worth a yell every few minutes. With neither a raid nor a faire to tell of, there is nothing to
+ * yell: null. Should the whole board still overrun the yell cap, the faire line gives way to the raids.
  */
 export function formatCapitalStatusYell(
   faction: Faction,
-  raid: CapitalStatusRaid | null,
-  typicalClear?: string,
+  raids: readonly CapitalStatusRaid[],
   /** Where the Darkmoon Faire was last seen. A recent look is stated in the present tense, an older
    *  one with its age — a yell reaches strangers who cannot ask a follow-up, so it never claims the
    *  present on old information. Null/undefined (nothing seen within a week) omits the line; the
    *  yell never shouts an "I do not know". */
   faire?: CapitalStatusFaire | null,
 ): string | null {
-  if (!raid && !faire) return null;
-  const parts: string[] = [];
-  if (raid) {
-    const id = raid.number !== null ? `#${raid.number}, ` : "";
-    const typical = typicalClear ? `, typical clear ${typicalClear}` : "";
-    parts.push(
-      `[Onyxia] Onyxia raid in progress (${id}~${humanClock(raid.elapsedMs)} in${typical}). The Rallying Cry buff may drop soon.`,
-    );
-  }
+  if (raids.length === 0 && !faire) return null;
+  const raidPart = raids.length > 0 ? raidStatusLine(raids) : null;
   // Bracketed like the [Onyxia] tag: in a busy capital the yell scrolls past, and the tag is what
   // a reader picks out. A second topic in the same yell needs the same handle.
-  if (faire) {
-    parts.push(
-      faire.fresh
-        ? `[Darkmoon Faire] is in ${faire.zone}.`
-        : `[Darkmoon Faire] was last seen in ${faire.zone} ~${humanSpan(faire.ageMs)} ago.`,
-    );
+  const fairePart = faire
+    ? faire.fresh
+      ? `[Darkmoon Faire] is in ${faire.zone}.`
+      : `[Darkmoon Faire] was last seen in ${faire.zone} ~${humanSpan(faire.ageMs)} ago.`
+    : null;
+  const cta = `Whisper "subscribe" for pings, "discord" for discord notifications.`;
+  const full = [raidPart, fairePart, cta].filter((part): part is string => part !== null).join(" ");
+  if (full.length <= YELL_MAX_CHARS || raidPart === null) return full;
+  return `${raidPart} ${cta}`;
+}
+
+function raidStatusLine(raids: readonly CapitalStatusRaid[]): string {
+  const [only] = raids;
+  if (raids.length === 1 && only) {
+    const id = only.number !== null ? `#${only.number}, ` : "";
+    const typical = only.typicalClear ? `, typical clear ${only.typicalClear}` : "";
+    const name = only.zone.raidName;
+    return `[${name}] ${name} raid in progress (${id}~${humanClock(only.elapsedMs)} in${typical}). The Rallying Cry buff may drop soon.`;
   }
-  parts.push(`Whisper "subscribe" for pings, "discord" for discord notifications.`);
-  return parts.join(" ");
+  const each = raids.map((raid) => {
+    const id = raid.number !== null ? ` #${raid.number}` : "";
+    const typical = raid.typicalClear ? `, typical ${raid.typicalClear}` : "";
+    return `[${raid.zone.raidName}] raid${id} ~${humanClock(raid.elapsedMs)} in${typical}.`;
+  });
+  return `${each.join(" ")} The Rallying Cry buff may drop soon.`;
 }
 
 // The realm down/up notification moved OUT of this (buff) channel: it is now a transient,
