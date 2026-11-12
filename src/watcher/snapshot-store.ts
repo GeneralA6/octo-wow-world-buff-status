@@ -62,11 +62,13 @@ export class MongoSnapshotStore implements SnapshotStore {
     this.#db = db;
   }
 
+  /** `collectionName` keeps another lair's polls apart — Blackwing Lair's, say. */
   static async open(
     database: Db,
     ttlDays: number = DEFAULT_TTL_DAYS,
+    collectionName: string = COLLECTION,
   ): Promise<MongoSnapshotStore> {
-    const collection = database.collection<SnapshotDoc>(COLLECTION);
+    const collection = database.collection<SnapshotDoc>(collectionName);
     await collection.createIndex({ ts: 1 }, { expireAfterSeconds: ttlDays * 86_400 });
     const db: SnapshotDb = {
       insert: (doc) => collection.insertOne(doc).then(() => undefined),

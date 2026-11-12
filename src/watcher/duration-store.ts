@@ -92,11 +92,13 @@ export class MongoDurationStore implements DurationStore {
     this.#db = db;
   }
 
+  /** `collectionName` keeps another raid's clear times apart — a BWL clear is hours, not Onyxia's minutes. */
   static async open(
     database: Db,
     ttlDays: number = DEFAULT_TTL_DAYS,
+    collectionName: string = COLLECTION,
   ): Promise<MongoDurationStore> {
-    const collection = database.collection<DurationDoc>(COLLECTION);
+    const collection = database.collection<DurationDoc>(collectionName);
     await collection.createIndex({ ts: 1 }, { expireAfterSeconds: ttlDays * 86_400 });
     const db: DurationDb = {
       insert: (doc) => collection.insertOne(doc).then(() => undefined),
