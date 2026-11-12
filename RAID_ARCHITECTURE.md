@@ -151,7 +151,7 @@ Onyxia's Lair and Blackwing Lair both feed the Rallying Cry, so the loop above r
   the `LairActivity` signal and the Discord channel. `raid-zone-pipeline.ts` is the loop for one lair.
   Onyxia keeps its original lane labels and collections, so a deploy resumes a raid in progress; BWL's
   are named apart (`RAID_ZONE_STORE_NAMES`). Raid state and lockouts share one store, keyed by lane label.
-- **Shared** (`RaidService`): the buff cooldown (one buff, either head), the drop and Warchief whispers,
+- **Shared** (`RaidService`): the buff cooldown (one buff, either head), the drop whisper,
   the capital status yell listing every lair's raid, and the heartbeat with each lair's timer.
 - **Drops**: `BuffTracker` reads each drop's head off the yell and classifies it against that head's
   lair's `LairActivity`. The post goes to that lair's channel.
