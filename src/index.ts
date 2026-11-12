@@ -33,7 +33,7 @@ import type { DetectionLane, LaneChronicle, RaidZoneServices } from "./lanes.js"
 import { buildLanes, lairStatus, RAID_ZONE_STORE_NAMES, trackerOptions } from "./raid-zone-setup.js";
 import { BLACKWING_LAIR, ONYXIA, RAID_ZONES, type RaidZone, type RaidZoneId } from "./watcher/raid-zone.js";
 import { CityYellers } from "./city-yellers.js";
-import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
+import type { WhoPlayer } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
 import { UnitOwnerTable } from "./protocol/unit-owner.js";
 import { unitRef } from "./protocol/guid.js";
@@ -138,6 +138,7 @@ import { ServerMonitor } from "./server-monitor.js";
 import { InMemoryServerMonitorStore, MongoServerMonitorStore, type ServerMonitorStore } from "./server-monitor-store.js";
 import { isRealmStable, latencySpread, medianLatency, type PingSample, type RealmHealthThresholds } from "./realm-health.js";
 import { RealmPopulation, observePopulation } from "./realm-population.js";
+import { WhoPool } from "./net/who-pool.js";
 import {
   ServerStatusWidget,
   serverDownNotice,
@@ -258,42 +259,13 @@ interface BuffDropSink {
   notify: ((faction: Faction, head: RaidZoneId, appliedAt: Date, savedHead: boolean) => void) | null;
 }
 
-/** Runs one /who and returns the result — a socket's queued lookup. */
-type WhoRunner = (query: WhoQuery) => Promise<WhoResult>;
-
-/**
- * A registry of the listeners' /who runners. A faction lookup that can't be answered from the
- * listener's own side (a direct whisper to Bufftracker, or a faction-less listener) borrows a
- * listener's socket through here instead of Bufftracker's, so it never contends with the raid
- * poll — the thing whose /who timing out actually matters. Empty (no listener in world) falls
- * back to Bufftracker's own /who.
- */
-class ListenerWho {
-  readonly #runners = new Map<string, WhoRunner>();
-  register(id: string, run: WhoRunner): void {
-    this.#runners.set(id, run);
-  }
-  unregister(id: string): void {
-    this.#runners.delete(id);
-  }
-  /** Any registered listener runner (they're cross-faction-capable), or null if none is up. */
-  any(): WhoRunner | null {
-    for (const run of this.#runners.values()) return run;
-    return null;
-  }
-  /** Every registered listener runner — so the raid poll can spread its class slices across their
-   *  idle sockets, keeping each socket's /who count under the server's per-socket throttle. */
-  all(): WhoRunner[] {
-    return [...this.#runners.values()];
-  }
-}
-
 /** Everything a connection needs beyond config: shared state and the alert sinks. */
 interface ConnectionServices {
   /** Every watched lair — its lanes, stores, channel and poll signal. Onyxia's first. */
   readonly raidZones: readonly RaidZoneServices[];
-  /** Listener sockets Bufftracker can borrow for a faction /who, off its own raid-poll socket. */
-  readonly listenerWho: ListenerWho;
+  /** Every in-world character's /who (the watcher's and each listener's), shared by the lair polls
+   *  and the faction lookups so no character sends inside the server's per-character gap. */
+  readonly whoPool: WhoPool;
   /** The listeners' whisper queues, pooled so a broadcast splits across them; Bufftracker falls
    *  back to its own queue only when the pool is empty. */
   readonly whisperPool: WhisperPool;
@@ -342,7 +314,7 @@ async function runConnection(
   // on a stable, reasonable ping (a raid can't run on a laggy server).
   onLatency: (rttMs: number) => void,
 ): Promise<void> {
-  const { raidZones, listenerWho, whisperPool, buffTracker, raidStateStore, faire, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, whisperRefusals, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, client } =
+  const { raidZones, whoPool, whisperPool, buffTracker, raidStateStore, faire, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, whisperRefusals, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
   // One creature query per NPC entry for the life of this connection; a reconnect starts fresh,
   // which is also when a name we failed to resolve gets another chance.
@@ -385,6 +357,7 @@ async function runConnection(
       if (statusYellTimer) clearInterval(statusYellTimer);
       if (factionResolveTimer) clearInterval(factionResolveTimer);
       if (readyTimer) clearTimeout(readyTimer);
+      whoPool.unregister(config.characterName); // stop offering this socket once it's gone
       whisperQueue?.stop();
       outreach.setChannel(null); // watcher going away — stop greeting through it
       router.setGuildInvite(null); // and stop offering guild invites until reconnected
@@ -487,35 +460,21 @@ async function runConnection(
       })();
     };
 
-    // One /who at a time on this socket: the poll (sliced into several) and the subscribe
-    // faction lookups all queue here so they never collide (world.whoOnce allows one).
-    let whoChain: Promise<unknown> = Promise.resolve();
-    const runQueuedWho = (query: WhoQuery): Promise<WhoResult> => {
-      const run = (): Promise<WhoResult> => world.whoOnce(query, config.whoTimeoutMs);
-      const result = whoChain.then(run, run);
-      whoChain = result.then(
-        () => undefined,
-        () => undefined,
-      );
-      return result;
-    };
-    // Every /who reply carries the realm-wide online count, whatever the query filtered on, so the
-    // status widget's population is read HERE rather than from a census query of its own — the
-    // server's per-IP /who throttle is tight enough that the raid poll already has to pace itself.
-    const queuedWho = observePopulation(runQueuedWho, realmPopulation);
+    // Every /who goes through the shared pool, which sends it on whichever character has gone longest
+    // without one. Each reply carries the realm-wide online count, whatever the query filtered on, so
+    // the status widget's population is read HERE rather than from a census query of its own.
+    const who = observePopulation(whoPool.who, realmPopulation);
 
     // Where the lair roster comes from. The poll consumes this interface, never /who directly, so a
     // friends-list source can replace it later without touching detection (see RAID_ARCHITECTURE.md).
-    // One per watched lair, all on the same queued /who, so Blackwing Lair's polls wait their turn
-    // behind Onyxia's rather than doubling the per-IP rate.
+    // One per watched lair, both on the pool: the server drops a /who sent within about 30s of the
+    // same character's last one, so two lairs polled from one character collided and timed out.
     const rosterSources = raidZones.map((raidZone): { raidZone: RaidZoneServices; source: RosterSource } => ({
       raidZone,
       source: new WhoRosterSource({
-        who: queuedWho,
-        extraWho: () => listenerWho.all(), // fresh each poll — listeners come and go
+        who,
         areaId: raidZone.watch.areaId,
         areaName: raidZone.watch.areaName,
-        sliceDelayMs: config.whoSliceDelayMs,
         logger,
       }),
     }));
@@ -523,10 +482,6 @@ async function runConnection(
     // Null if it can't run, they're not found, or their race is custom. Used to tailor the
     // status to a non-subscriber's capital.
     const detectFaction = async (name: string): Promise<Faction | null> => {
-      // Prefer a listener's socket so a /who never steals a slot from the raid poll — the
-      // listeners don't run the 20s/60s census, so their /who chain is idle. Falls back to
-      // Bufftracker's own /who only when no listener is in world.
-      const who = listenerWho.any() ?? queuedWho;
       try {
         const result = await who({ minLevel: 0, maxLevel: 100, playerName: name });
         const player = result.players.find((p) => subscriberKey(p.name) === subscriberKey(name));
@@ -547,8 +502,8 @@ async function runConnection(
 
     // Actively clear the both-faction backlog: each tick, /who ONE subscriber still on the
     // unresolved "both" default and set their side — so they get the right city's alerts WITHOUT
-    // ever whispering us. Runs through a LISTENER's /who (idle chain, so it never competes with or
-    // delays the raid poll), slowly, as a low-priority background cleanup. Covers future stragglers
+    // ever whispering us. One /who every couple of minutes through the shared pool, slowly, as a
+    // low-priority background cleanup. Covers future stragglers
     // too: a failed /who at subscribe, or a direct-to-Bufftracker whisper (no listener to infer
     // from), lands back on the both-default and is picked up on the next re-scan. Offline /
     // custom-race lookups return nothing and are retried on a later pass.
@@ -566,7 +521,7 @@ async function runConnection(
         logger.info(`faction: resolving ${resolveQueue.length} both-faction subscriber(s) in the background`);
       }
       const name = resolveQueue.shift();
-      if (name) await lookupFaction(name); // via a listener's /who — never competes with the raid poll
+      if (name) await lookupFaction(name); // one /who, queued in the pool behind the lair polls
     };
 
     // Guild invites the bot sends, so a matching JOIN can be welcomed in guild chat. An invite not
@@ -645,6 +600,8 @@ async function runConnection(
             `in world; watching ${config.watchAreaName} about every ${config.pollIntervalMs / 1000}s`,
           );
           onConnected(); // realm-recovery signal fires on reconnect, not on the next close
+          // Offer this socket's /who to the pool before the first lair poll asks for one.
+          whoPool.register(config.characterName, (query) => world.whoOnce(query, config.whoTimeoutMs));
 
           // Offer Bufftracker's outbound channel so listeners can greet players through it,
           // and give the command router the guild-invite capability for the "invite" command.
@@ -923,7 +880,7 @@ async function runListener(
   onBuffApplied: (yell: BuffYell, sourceName: string, text: string) => void,
   outreach: Outreach,
   yellSink: CityYellers,
-  listenerWho: ListenerWho,
+  whoPool: WhoPool,
   whisperPool: WhisperPool,
   /** Hears the Darkmoon heralds, who wander the capitals these listeners are parked in. */
   faire: FaireService,
@@ -1062,7 +1019,7 @@ async function runListener(
       if (silenceTimer) clearInterval(silenceTimer);
       deathWatch.dispose();
       standDown.dispose();
-      listenerWho.unregister(listener.characterName); // stop offering this socket once it's gone
+      whoPool.unregister(listener.characterName); // stop offering this socket once it's gone
       whisperPool.unregister(listener.characterName); // and stop routing broadcasts through it
       listenerWhispers.stop();
       hooks.playerNames.unregister(listener.characterName);
@@ -1078,19 +1035,6 @@ async function runListener(
       if (standDownMs > 0) resolve({ standDownMs });
       else if (error) reject(error);
       else resolve({ standDownMs: 0 });
-    };
-
-    // A one-at-a-time /who on THIS listener's socket, offered to Bufftracker for faction lookups
-    // so they don't queue behind its raid poll. Idle otherwise — a listener never polls.
-    let whoChain: Promise<unknown> = Promise.resolve();
-    const queuedWho = (query: WhoQuery): Promise<WhoResult> => {
-      const run = (): Promise<WhoResult> => world.whoOnce(query, config.whoTimeoutMs);
-      const result = whoChain.then(run, run);
-      whoChain = result.then(
-        () => undefined,
-        () => undefined,
-      );
-      return result;
     };
 
     // This listener's own whisper queue, wired to its socket. Registered in the pool while in
@@ -1116,8 +1060,8 @@ async function runListener(
           readyTimer = null;
           logger.info(`in world as ${listener.characterName}; listening for buff yells`);
           onConnected(); // realm-recovery signal fires on reconnect, not on the next close
-          // Offer this socket for Bufftracker's faction lookups, keeping them off its raid poll.
-          listenerWho.register(listener.characterName, queuedWho);
+          // Offer this socket's /who to the pool: the lair polls and the faction lookups rotate over it.
+          whoPool.register(listener.characterName, (query) => world.whoOnce(query, config.whoTimeoutMs));
           // Join the whisper pool so broadcasts can fan across this listener's own throttle budget.
           whisperPool.register(listener.characterName, listener.faction, listenerWhispers);
           // Name GUIDs for the others — the owner of an Infernal another listener fled from.
@@ -1812,8 +1756,9 @@ async function main(): Promise<void> {
   // can be shouted to everyone standing in that capital, not only to subscribers. The first one
   // listed in WOW_LISTENERS yells; the next stands by for while it is away.
   const yellSink = new CityYellers(config.listeners.map((listener) => listener.characterName));
-  // Listener sockets Bufftracker borrows for faction /who, so lookups stay off its raid poll.
-  const listenerWho = new ListenerWho();
+  // Every in-world character's /who, shared: each character keeps its own gap between lookups
+  // (WOW_WHO_MIN_GAP_SECONDS) and the bot spaces any two of them (WOW_WHO_SLICE_DELAY_MS).
+  const whoPool = new WhoPool({ minGapMs: config.whoMinGapMs, minSpacingMs: config.whoSliceDelayMs });
   // The listeners' whisper queues, pooled so a broadcast to many subscribers splits across them
   // (each has its own server throttle budget). Bufftracker whispers through it, falling back to
   // its own queue only if no listener is in world.
@@ -1910,7 +1855,7 @@ async function main(): Promise<void> {
   }
   const services: ConnectionServices = {
     raidZones,
-    listenerWho,
+    whoPool,
     whisperPool,
     buffStore,
     buffTracker,
@@ -2184,7 +2129,7 @@ async function main(): Promise<void> {
   const playerGuids: PlayerGuids = new CharacterLookups();
   const shameProfiler = new ShameProfiler({
     list: shameList,
-    who: () => listenerWho.any(),
+    who: () => (whoPool.size > 0 ? whoPool.who : null),
     guidOf: (name) => playerGuids.resolve(name),
     onDescribed: () => void wallOfShame?.show(shameList.players),
     logger,
@@ -2373,7 +2318,7 @@ async function main(): Promise<void> {
           onBuff,
           outreach,
           yellSink,
-          listenerWho,
+          whoPool,
           whisperPool,
           faire,
           hooks,

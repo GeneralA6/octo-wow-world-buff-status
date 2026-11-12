@@ -29,7 +29,7 @@ describe("fetchRoster", () => {
   it("does a single query and does not slice when under the cap", async () => {
     const players = Array.from({ length: 20 }, (_, i) => player(`p${i}`, 1));
     const who = vi.fn<WhoFn>().mockResolvedValue({ players, onlineCount: 20 });
-    const r = await fetchRoster(who, [], 2159, 0);
+    const r = await fetchRoster(who, 2159);
     expect(r.sliced).toBe(false);
     expect(r.complete).toBe(true);
     expect(r.failedSlices).toBe(0);
@@ -39,7 +39,7 @@ describe("fetchRoster", () => {
 
   it("slices by class-BUCKET (3 queries, not 9) and merges past the 49 cap", async () => {
     const who = slicingWho(roster60());
-    const r = await fetchRoster(who, [], 2159, 0);
+    const r = await fetchRoster(who, 2159);
     expect(r.sliced).toBe(true);
     expect(r.complete).toBe(true);
     expect(r.players).toHaveLength(60);
@@ -48,25 +48,11 @@ describe("fetchRoster", () => {
     expect(CLASS_BUCKETS.length).toBe(3);
   });
 
-  it("runs the buckets on the idle listener sockets, never the poll socket, still complete", async () => {
-    const all = roster60();
-    const poll = slicingWho(all);
-    const l1 = slicingWho(all);
-    const l2 = slicingWho(all);
-    const r = await fetchRoster(poll, [l1, l2], 2159, 0);
-    expect(r.complete).toBe(true);
-    expect(r.players).toHaveLength(60);
-    // The poll socket does ONLY the base (it must not fire base + a bucket back-to-back); the 3
-    // buckets run on the listener sockets, rotated (l1 gets buckets 0 and 2, l2 gets bucket 1).
-    expect(poll).toHaveBeenCalledTimes(1);
-    expect(l1.mock.calls.length + l2.mock.calls.length).toBe(CLASS_BUCKETS.length);
-  });
-
   it("sub-slices a bucket that itself comes back capped (an extreme zerg) into its classes", async () => {
     // 55 of one class (in bucket [1,2,3]) makes the combined bucket query hit the cap.
     const warriors = Array.from({ length: 55 }, (_, i) => player(`w${i}`, 1));
     const who = slicingWho(warriors);
-    const r = await fetchRoster(who, [], 2159, 0);
+    const r = await fetchRoster(who, 2159);
     expect(r.complete).toBe(false); // one class alone exceeds 49 — genuinely can't be completed
     expect(r.failedSlices).toBe(0);
     // base + bucket[1,2,3] (capped) + its 3 class sub-slices + the other 2 buckets = 1+1+3+2 = 7.
@@ -74,46 +60,17 @@ describe("fetchRoster", () => {
   });
 
   it("keeps a PARTIAL roster when a bucket query times out", async () => {
-    const all = roster60();
-    const poll = slicingWho(all); // base only
-    const l1 = slicingWho(all); // buckets 0 [1,2,3] and 2 [8,9,11]
-    const l2 = slicingWho(all, (classes) => classes.includes(4)); // bucket 1 [4,5,7] runs here, fails
-    const r = await fetchRoster(poll, [l1, l2], 2159, 0);
+    const who = slicingWho(roster60(), (classes) => classes.includes(4)); // bucket [4,5,7] fails
+    const r = await fetchRoster(who, 2159);
     expect(r.failedSlices).toBe(1);
     expect(r.complete).toBe(false);
     expect(r.players.length).toBeGreaterThanOrEqual(49); // base + the buckets that answered, kept
-    expect(poll).toHaveBeenCalledTimes(1); // poll socket only ever did the base
   });
 
   it("counts every failed bucket", async () => {
-    const all = roster60();
-    const poll = slicingWho(all);
-    const failAll = () => slicingWho(all, () => true); // every bucket query times out
-    const r = await fetchRoster(poll, [failAll(), failAll()], 2159, 0);
+    const who = slicingWho(roster60(), (classes) => classes.length > 0); // every bucket query times out
+    const r = await fetchRoster(who, 2159);
     expect(r.failedSlices).toBe(CLASS_BUCKETS.length); // all 3 buckets failed
     expect(r.complete).toBe(false);
-  });
-
-  it("falls back to the poll socket alone when no listeners are up", async () => {
-    const who = slicingWho(roster60());
-    const r = await fetchRoster(who, [], 2159, 0);
-    expect(r.complete).toBe(true);
-    expect(who).toHaveBeenCalledTimes(1 + CLASS_BUCKETS.length); // all 3 buckets on the one socket
-  });
-
-  it("paces a socket's own queries behind timers instead of firing them at once", async () => {
-    vi.useFakeTimers();
-    try {
-      const who = slicingWho(roster60());
-      const promise = fetchRoster(who, [], 2159, 1_000); // one socket, 3 paced buckets
-      await vi.advanceTimersByTimeAsync(0); // base + first bucket fire; the rest are gated on timers
-      expect(who.mock.calls.length).toBeLessThan(1 + CLASS_BUCKETS.length);
-      await vi.runAllTimersAsync();
-      const r = await promise;
-      expect(who).toHaveBeenCalledTimes(1 + CLASS_BUCKETS.length);
-      expect(r.players).toHaveLength(60);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

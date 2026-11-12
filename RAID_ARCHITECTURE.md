@@ -63,8 +63,8 @@ interface LairPlayer { readonly name: string; readonly faction: Faction | null; 
 interface RosterSource { poll(): Promise<LairView> }
 ```
 
-- Isolates all `/who` mess (the 49 cap, class-bucket slicing, socket spreading, serialized pacing —
-  today's `roster.ts`) behind one call. `complete` tells the tracker how much to trust the view.
+- Isolates all `/who` mess (the 49 cap and class-bucket slicing in `roster.ts`; spreading the queries
+  over every in-world character and pacing them in `net/who-pool.ts`) behind one call. `complete` tells the tracker how much to trust the view.
 - Implementations: `WhoRosterSource` (wraps `fetchRoster`), later `FriendRosterSource` (below), later a
   `FusedRosterSource` that trusts friend pushes and backfills gaps with `/who`.
 - A `SnapshotRecorder` decorator taps every `LairView` into the `snapshots` store for replay — recording

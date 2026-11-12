@@ -1,6 +1,6 @@
 import type { Logger } from "../logger.js";
 import type { WhoPlayer } from "../protocol/who.js";
-import { DEFAULT_WHO_SLICE_DELAY_MS, fetchRoster, type WhoFn } from "./roster.js";
+import { fetchRoster, type WhoFn } from "./roster.js";
 
 /**
  * One reading of who is in the lair, from whatever source produced it. The detection pipeline
@@ -27,38 +27,31 @@ export interface RosterSource {
 }
 
 /**
- * The `/who`-backed source: the base zone query, class-bucket-sliced past the 49 cap and spread across
- * the idle listener sockets when the lair is crowded (see roster.ts). All of that stays behind this
+ * The `/who`-backed source: the base zone query, class-bucket-sliced past the 49 cap when the lair is
+ * crowded (see roster.ts), every query sent through the bot's shared who pool. All of that stays behind this
  * one call. It logs its own acquisition line and filters to the watch area, so the loop just gets the
  * lair occupants.
  */
 export class WhoRosterSource implements RosterSource {
   readonly #who: WhoFn;
-  readonly #extraWho: () => readonly WhoFn[];
   readonly #areaId: number;
   readonly #areaName: string;
-  readonly #sliceDelayMs: number;
   readonly #logger: Pick<Logger, "info">;
 
   constructor(opts: {
     who: WhoFn;
-    /** Idle listener sockets to spread class slices across; read fresh each poll (listeners come and go). */
-    extraWho: () => readonly WhoFn[];
     areaId: number;
     areaName: string;
-    sliceDelayMs?: number;
     logger: Pick<Logger, "info">;
   }) {
     this.#who = opts.who;
-    this.#extraWho = opts.extraWho;
     this.#areaId = opts.areaId;
     this.#areaName = opts.areaName;
-    this.#sliceDelayMs = opts.sliceDelayMs ?? DEFAULT_WHO_SLICE_DELAY_MS;
     this.#logger = opts.logger;
   }
 
   async poll(): Promise<LairView> {
-    const roster = await fetchRoster(this.#who, this.#extraWho(), this.#areaId, this.#sliceDelayMs);
+    const roster = await fetchRoster(this.#who, this.#areaId);
     const present = roster.players.filter((player) => player.areaId === this.#areaId);
     this.#logger.info(
       `who ${this.#areaName}: ${present.length} in zone ` +
