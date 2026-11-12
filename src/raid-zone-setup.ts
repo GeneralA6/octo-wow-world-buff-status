@@ -1,8 +1,9 @@
+import type { LairStatus } from "./chat/command-router.js";
 import type { RaidWatchConfig, RealmType } from "./config.js";
 import type { DetectionLane } from "./lanes.js";
 import type { GroupingMode } from "./watcher/raid-events.js";
 import { RaidTracker, type RaidTrackerOptions } from "./watcher/raid-tracker.js";
-import type { RaidZoneId } from "./watcher/raid-zone.js";
+import type { RaidZone, RaidZoneId } from "./watcher/raid-zone.js";
 
 /**
  * Where one lair's raids are kept apart in MongoDB: its raid-number counter, alert ledger, clear
@@ -73,4 +74,17 @@ export function buildLanes(zone: RaidZoneId, realmType: RealmType, options: Raid
       players: (s) => [...s.alliance, ...s.horde, ...s.unknown],
     },
   ];
+}
+
+/** A lair's raid in progress for the whisper status, read across its lanes: the longest-running
+ *  raid's time in, and the first numbered raid. */
+export function lairStatus(zone: RaidZone, lanes: readonly DetectionLane[], now: number): LairStatus {
+  const elapsed = lanes.map((lane) => lane.watch.raidElapsedMs(now)).filter((ms): ms is number => ms !== null);
+  const number = lanes.map((lane) => lane.watch.raidNumber()).find((n): n is number => n !== null) ?? null;
+  return {
+    raidName: zone.raidName,
+    raids: lanes.flatMap((lane) => lane.watch.activeRaids()),
+    elapsedMs: elapsed.length > 0 ? Math.max(...elapsed) : null,
+    number,
+  };
 }

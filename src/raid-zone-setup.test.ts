@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig, onyxiaWatch } from "./config.js";
-import { buildLanes, laneLabel, RAID_ZONE_STORE_NAMES, trackerOptions } from "./raid-zone-setup.js";
+import { buildLanes, lairStatus, laneLabel, RAID_ZONE_STORE_NAMES, trackerOptions } from "./raid-zone-setup.js";
+import { BLACKWING_LAIR } from "./watcher/raid-zone.js";
 import type { WhoPlayer } from "./protocol/who.js";
 
 const env = { WOW_ACCOUNT: "a", WOW_PASSWORD: "p", WOW_CHARACTER: "C" } satisfies NodeJS.ProcessEnv;
@@ -79,5 +80,29 @@ describe("buildLanes", () => {
     ]);
     const split = { alliance: [player("A")], horde: [player("H")], unknown: [] };
     expect(lanes[1]?.players(split).map((p) => p.name)).toEqual(["H"]);
+  });
+});
+
+describe("lairStatus", () => {
+  it("reads no raid off an empty lair, under the lair's own name", () => {
+    const config = loadConfig(env);
+    const bwl = config.blackwingLair;
+    if (!bwl) throw new Error("BWL is on by default");
+    const lanes = buildLanes("bwl", "crossfaction", trackerOptions(bwl, "auto", () => 1));
+    expect(lairStatus(BLACKWING_LAIR, lanes, 0)).toEqual({ raidName: "BWL", raids: [], elapsedMs: null, number: null });
+  });
+
+  it("reads the raid in progress's number and time in", () => {
+    const config = loadConfig(env);
+    const bwl = config.blackwingLair;
+    if (!bwl) throw new Error("BWL is on by default");
+    const lanes = buildLanes("bwl", "crossfaction", trackerOptions(bwl, "auto", () => 7));
+    const present = Array.from({ length: 25 }, (_, i) => player(`Dawn${i}`));
+    lanes[0]?.watch.observe({ present, complete: true, at: 0 });
+
+    const status = lairStatus(BLACKWING_LAIR, lanes, 12 * 60_000);
+    expect(status.number).toBe(7);
+    expect(status.elapsedMs).toBe(12 * 60_000);
+    expect(status.raids).toHaveLength(1);
   });
 });

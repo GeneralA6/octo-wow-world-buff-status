@@ -31,7 +31,7 @@ import { PresenceSweeper } from "./watcher/presence-sweep.js";
 import { BuffTracker } from "./watcher/buff-tracker.js";
 import { createRaidService } from "./raid-service.js";
 import type { DetectionLane, LaneChronicle, RaidZoneServices } from "./lanes.js";
-import { buildLanes, RAID_ZONE_STORE_NAMES, trackerOptions } from "./raid-zone-setup.js";
+import { buildLanes, lairStatus, RAID_ZONE_STORE_NAMES, trackerOptions } from "./raid-zone-setup.js";
 import { BLACKWING_LAIR, ONYXIA, RAID_ZONES, type RaidZone, type RaidZoneId } from "./watcher/raid-zone.js";
 import { CityYellers } from "./city-yellers.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
@@ -1520,9 +1520,6 @@ async function main(): Promise<void> {
     const options = trackerOptions(watch, config.raidGrouping, await openRaidNumbering(zone.id));
     zoneLanes.set(zone.id, buildLanes(zone.id, config.realmType, options));
   }
-  // Onyxia's lanes — what the whisper "status" reports on.
-  const lanes = zoneLanes.get("onyxia") ?? [];
-
   // Resume any raid that was in progress when we last stopped, so its exit is still caught, and
   // reload the lockout ledger so the "a player can't be in two raids" rule survives the restart.
   for (const lane of [...zoneLanes.values()].flat()) {
@@ -1900,20 +1897,9 @@ async function main(): Promise<void> {
   };
   const router = new CommandRouter({
     store,
-    activeRaids: () => lanes.flatMap((lane) => lane.watch.activeRaids()),
-    raidElapsed: () => {
+    lairs: () => {
       const now = Date.now();
-      const elapsed = lanes
-        .map((lane) => lane.watch.raidElapsedMs(now))
-        .filter((ms): ms is number => ms !== null);
-      return elapsed.length > 0 ? Math.max(...elapsed) : null;
-    },
-    raidNumber: () => {
-      for (const lane of lanes) {
-        const n = lane.watch.raidNumber();
-        if (n !== null) return n;
-      }
-      return null;
+      return watches.map(({ zone }) => lairStatus(zone, zoneLanes.get(zone.id) ?? [], now));
     },
     buffCooldowns: async () => {
       const nowMs = Date.now();
