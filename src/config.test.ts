@@ -212,6 +212,15 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_WHO_TIMEOUT_MS: "15000" }).whoTimeoutMs).toBe(15_000);
   });
 
+  it("holds each character to 31s between /who lookups by default, and accepts an override", () => {
+    expect(loadConfig({ ...minimalEnv }).whoMinGapMs).toBe(31_000);
+    expect(loadConfig({ ...minimalEnv, WOW_WHO_MIN_GAP_SECONDS: "45" }).whoMinGapMs).toBe(45_000);
+  });
+
+  it("rejects a per-character /who gap that is not a whole number of seconds", () => {
+    expect(() => loadConfig({ ...minimalEnv, WOW_WHO_MIN_GAP_SECONDS: "-1" })).toThrow(/WOW_WHO_MIN_GAP_SECONDS/);
+  });
+
   it("defaults the interact range to 8 yards and accepts an override", () => {
     expect(loadConfig({ ...minimalEnv }).interactMaxYd).toBe(8);
     expect(loadConfig({ ...minimalEnv, WOW_INTERACT_MAX_YD: "5" }).interactMaxYd).toBe(5);

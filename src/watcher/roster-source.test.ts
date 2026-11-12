@@ -6,13 +6,11 @@ import type { WhoFn } from "./roster.js";
 const AREA = 2159; // Onyxia's Lair
 const player = (name: string, areaId: number): WhoPlayer => ({ name, guild: "", level: 60, classId: 1, raceId: 1, areaId });
 
-function source(who: WhoFn, logs: string[] = [], extraWho: () => readonly WhoFn[] = () => []) {
+function source(who: WhoFn, logs: string[] = []) {
   return new WhoRosterSource({
     who,
-    extraWho,
     areaId: AREA,
     areaName: "Onyxia's Lair",
-    sliceDelayMs: 0,
     logger: { info: (m) => logs.push(m) },
   });
 }
@@ -33,14 +31,5 @@ describe("WhoRosterSource", () => {
     const logs: string[] = [];
     await source(who, logs).poll();
     expect(logs.some((l) => l.includes("who Onyxia's Lair: 1 in zone (2 returned, 2000 online)"))).toBe(true);
-  });
-
-  it("consults the idle listener sockets fresh each poll (for slice spreading)", async () => {
-    const who = vi.fn<WhoFn>().mockResolvedValue({ players: [player("A", AREA)], onlineCount: 1 });
-    const extraWho = vi.fn(() => []);
-    const src = source(who, [], extraWho);
-    await src.poll();
-    await src.poll();
-    expect(extraWho).toHaveBeenCalledTimes(2); // re-read every poll, not captured once
   });
 });

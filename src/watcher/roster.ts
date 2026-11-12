@@ -30,12 +30,6 @@ export const CLASS_BUCKETS: readonly (readonly number[])[] = [
 /** classMask (bitmask) selecting every class in the group at once — bit for class C is 1 << (C-1). */
 const maskFor = (classes: readonly number[]): number => classes.reduce((mask, c) => mask | (1 << (c - 1)), 0);
 
-/** Default gap between /who queries — enforced GLOBALLY (the bucket queries run sequentially, not in
- *  parallel across sockets). The server's throttle appears to be per-IP, so even queries on different
- *  sockets fired at once trip it and it stops replying; one query per this interval keeps it
- *  answering. Measured live: 3 buckets fired in parallel still left 1-2 timing out at a two-raid peak. */
-export const DEFAULT_WHO_SLICE_DELAY_MS = 1_500;
-
 export type WhoFn = (query: WhoQuery) => Promise<WhoResult>;
 
 export interface Roster {
@@ -50,20 +44,12 @@ export interface Roster {
   readonly failedSlices: number;
 }
 
-const sleep = (ms: number): Promise<void> =>
-  ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
-
 /**
- * @param pollWho   the watcher's own socket — does the base census query.
- * @param extraWho  idle listener sockets to also spread class slices across (may be empty).
+ * @param who  the bot's shared `/who` (the who pool): it picks the character for each query and paces
+ *             them, so this asks one query after another and leaves the timing to it.
  */
-export async function fetchRoster(
-  pollWho: WhoFn,
-  extraWho: readonly WhoFn[],
-  areaId: number,
-  sliceDelayMs: number = DEFAULT_WHO_SLICE_DELAY_MS,
-): Promise<Roster> {
-  const base = await pollWho({ minLevel: 0, maxLevel: 100, zoneIds: [areaId] });
+export async function fetchRoster(who: WhoFn, areaId: number): Promise<Roster> {
+  const base = await who({ minLevel: 0, maxLevel: 100, zoneIds: [areaId] });
   if (base.players.length < WHO_RESULT_CAP) {
     return { players: [...base.players], onlineCount: base.onlineCount, complete: true, sliced: false, failedSlices: 0 };
   }
@@ -71,39 +57,28 @@ export async function fetchRoster(
   // Truncated — fill in per-class-BUCKET slices to beat the cap: ask for three classes at once (one
   // query per bucket) rather than one class at a time, so a crowded lair takes 3 /who not 9.
   //
-  // Run the buckets SEQUENTIALLY with a gap between every one. The server's /who throttle is (as far
-  // as we can tell) per-IP — it counts all our sockets together — so firing the buckets in parallel,
-  // even on different sockets, still bursts past it and 1-2 come back timed out (which kept the crowd
-  // roster partial and fed spurious raid splits). One query per `sliceDelayMs`, rotated across the
-  // idle listener sockets (never the poll socket, which just did the base), so no socket fires two
-  // back-to-back either. A bucket that still comes back capped (an extreme zerg) is sub-sliced into
-  // its own classes, still paced. A query that times out is skipped (partial, marked incomplete)
-  // rather than losing the whole poll.
-  const sliceSockets = extraWho.length > 0 ? [...extraWho] : [pollWho];
-  let socketIndex = 0;
-  const nextSocket = (): WhoFn => sliceSockets[socketIndex++ % sliceSockets.length]!;
-  const query = (who: WhoFn, mask: number): Promise<WhoResult> =>
+  // The buckets run one after another; the who pool sends each on a character past its own gap and
+  // spaces them bot-wide. A bucket that still comes back capped (an extreme zerg) is sub-sliced into
+  // its own classes. A query that times out is skipped (partial, marked incomplete) rather than
+  // losing the whole poll.
+  const query = (mask: number): Promise<WhoResult> =>
     who({ minLevel: 0, maxLevel: 100, zoneIds: [areaId], classMask: mask });
 
   const byName = new Map<string, WhoPlayer>();
   for (const player of base.players) byName.set(player.name, player);
   let complete = true;
   let failedSlices = 0;
-  let queriesSent = 0;
   for (const bucket of CLASS_BUCKETS) {
-    if (queriesSent > 0) await sleep(sliceDelayMs); // global pacing between every bucket query
-    queriesSent += 1;
     try {
-      const slice = await query(nextSocket(), maskFor(bucket));
+      const slice = await query(maskFor(bucket));
       if (slice.players.length < WHO_RESULT_CAP) {
         for (const player of slice.players) byName.set(player.name, player);
         continue;
       }
-      // Bucket itself hit the cap (an extreme zerg) — sub-slice it into individual classes, paced.
+      // Bucket itself hit the cap (an extreme zerg) — sub-slice it into individual classes.
       for (const classId of bucket) {
-        await sleep(sliceDelayMs);
         try {
-          const sub = await query(nextSocket(), 1 << (classId - 1));
+          const sub = await query(1 << (classId - 1));
           for (const player of sub.players) byName.set(player.name, player);
           if (sub.players.length >= WHO_RESULT_CAP) complete = false; // >49 of one class — still truncated
         } catch {

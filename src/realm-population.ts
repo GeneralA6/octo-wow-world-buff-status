@@ -9,9 +9,8 @@ import type { WhoFn } from "./watcher/roster.js";
  * filters on, hands back the realm population for free.
  *
  * Which is why this observes the `WhoFn` seam (`observePopulation`) instead of taking a census of its
- * own: the server throttles `/who` per-IP hard enough that the roster poll has to pace its class
- * slices (see watcher/roster.ts), so a dedicated population query would spend throttle budget the
- * raid detection needs. The watcher polls every ~20s, so the reading is near-live at zero extra cost.
+ * own: the server lets each character `/who` only about once every 30s (see net/who-pool.ts), so a
+ * dedicated population query would spend lookups the raid detection needs. The watcher polls every ~20s, so the reading is near-live at zero extra cost.
  *
  * A reading EXPIRES (`staleAfterMs`). When the realm goes down — or the watcher simply stops polling
  * — no `/who` lands, and the widget has to say "unknown" rather than freeze the last count from
