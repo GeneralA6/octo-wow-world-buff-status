@@ -1,5 +1,5 @@
 import { connect, type Socket } from "node:net";
-import { loadConfig, parseAddress, type BotConfig, type ListenerConfig } from "./config.js";
+import { loadConfig, onyxiaWatch, parseAddress, type BotConfig, type ListenerConfig, type RaidWatchConfig } from "./config.js";
 import { createLogger, prefixed, type Logger } from "./logger.js";
 import { describeError, FatalError, VersionMismatchError } from "./errors.js";
 import { AuthClient } from "./net/auth-client.js";
@@ -30,7 +30,9 @@ import { WhoRosterSource, type LairView, type RosterSource } from "./watcher/ros
 import { PresenceSweeper } from "./watcher/presence-sweep.js";
 import { BuffTracker } from "./watcher/buff-tracker.js";
 import { createRaidService } from "./raid-service.js";
-import type { DetectionLane, LaneChronicle } from "./lanes.js";
+import type { DetectionLane, LaneChronicle, RaidZoneServices } from "./lanes.js";
+import { buildLanes, RAID_ZONE_STORE_NAMES, trackerOptions } from "./raid-zone-setup.js";
+import { BLACKWING_LAIR, ONYXIA, RAID_ZONES, type RaidZone, type RaidZoneId } from "./watcher/raid-zone.js";
 import { CityYellers } from "./city-yellers.js";
 import type { WhoPlayer, WhoQuery, WhoResult } from "./protocol/who.js";
 import { nearestGameObject, parseUpdateObject, type WorldGameObject, type WorldPoint } from "./protocol/update-object.js";
@@ -90,7 +92,7 @@ import {
   isPlausibleClear,
   type DurationStore,
 } from "./watcher/duration-store.js";
-import { RaidTracker, type RaidLifecycleEvent, type RaidTrackerOptions } from "./watcher/raid-tracker.js";
+import type { RaidLifecycleEvent } from "./watcher/raid-tracker.js";
 import { newLairActivity, noteLairPoll, type LairActivity } from "./watcher/drop-origin.js";
 import { parseHeadIncoming, isOnyxiaHead } from "./watcher/lft-signals.js";
 import { printableAsciiRuns } from "./protocol/chat.js";
@@ -256,7 +258,7 @@ function connectSocket(host: string, port: number, timeoutMs = 15_000): Promise<
 /** A buff drop is heard on a listener but must be whispered from the watcher — the
  *  watcher fills this sink when in world so the listener's recordBuff can reach it. */
 interface BuffDropSink {
-  notify: ((faction: Faction, appliedAt: Date, savedHead: boolean) => void) | null;
+  notify: ((faction: Faction, head: RaidZoneId, appliedAt: Date, savedHead: boolean) => void) | null;
   /** Whispers the Warchief's Blessing to Horde subscribers, while the watcher can whisper. */
   notifyWarchief: (() => void) | null;
 }
@@ -293,9 +295,8 @@ class ListenerWho {
 
 /** Everything a connection needs beyond config: shared state and the alert sinks. */
 interface ConnectionServices {
-  readonly lanes: readonly DetectionLane[];
-  /** Chronicle early-confirm, or null when off. */
-  readonly chronicle: LaneChronicle | null;
+  /** Every watched lair — its lanes, stores, channel and poll signal. Onyxia's first. */
+  readonly raidZones: readonly RaidZoneServices[];
   /** Listener sockets Bufftracker can borrow for a faction /who, off its own raid-poll socket. */
   readonly listenerWho: ListenerWho;
   /** The listeners' whisper queues, pooled so a broadcast splits across them; Bufftracker falls
@@ -304,13 +305,10 @@ interface ConnectionServices {
   readonly buffStore: BuffStore;
   /** The buff-drop domain: last-drop/cooldown state for the alert policy, and drop classification. */
   readonly buffTracker: BuffTracker;
-  readonly broadcasts: BroadcastLedger;
   readonly raidStateStore: RaidStateStore;
   readonly lockoutStore: LockoutStore;
-  readonly durationStore: DurationStore;
   /** Where the Darkmoon Faire is — fed by the LFT channel, read by the "darkmoon" command. */
   readonly faire: FaireService;
-  readonly snapshots: SnapshotStore;
   readonly store: SubscriberStore;
   /** Lifetime distinct-subscriber count for the heartbeat stat (survives unsubscribing). */
   readonly userLedger: UserLedger;
@@ -324,9 +322,6 @@ interface ConnectionServices {
   /** What becomes of the server's word that a player ignores us, or was not online for a whisper. */
   readonly whisperRefusals: WhisperRefusals;
   readonly buffDropSink: BuffDropSink;
-  /** Shared lair-poll signal: the watcher stamps it each /who, the listener's recordBuff reads it to
-   *  tell a fresh-kill drop from a saved-head turn-in (empty lair). */
-  readonly lairActivity: LairActivity;
   /** Shared realm-population signal: every watcher /who reply carries the realm-wide online count,
    *  and the status widget reads the latest off this. See realm-population.ts. */
   readonly realmPopulation: RealmPopulation;
@@ -352,7 +347,7 @@ async function runConnection(
   // on a stable, reasonable ping (a raid can't run on a laggy server).
   onLatency: (rttMs: number) => void,
 ): Promise<void> {
-  const { lanes, chronicle, listenerWho, whisperPool, buffTracker, broadcasts, raidStateStore, durationStore, faire, snapshots, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, whisperRefusals, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, client } =
+  const { raidZones, listenerWho, whisperPool, buffTracker, raidStateStore, faire, store, userLedger, inviteLedger, guildieStore, router, dm, outreach, whisperRefusals, buffDropSink, realmPopulation, yellSink, push, notifyAdmin, notifyTests, client } =
     services;
   // One creature query per NPC entry for the life of this connection; a reconnect starts fresh,
   // which is also when a name we failed to resolve gets another chance.
@@ -371,7 +366,8 @@ async function runConnection(
   const socket = await connectSocket(target.host, target.port);
 
   await new Promise<void>((resolve, reject) => {
-    let pollTimer: NodeJS.Timeout | null = null;
+    // One poll loop per watched lair, each on its own cadence; all share the queued /who.
+    const pollTimers = new Map<RaidZoneId, NodeJS.Timeout>();
     let statusYellTimer: NodeJS.Timeout | null = null;
     let factionResolveTimer: NodeJS.Timeout | null = null;
     let whisperQueue: WhisperQueue | null = null;
@@ -389,7 +385,8 @@ async function runConnection(
     const settle = (error?: Error): void => {
       if (settled) return;
       settled = true;
-      if (pollTimer) clearTimeout(pollTimer);
+      for (const timer of pollTimers.values()) clearTimeout(timer);
+      pollTimers.clear();
       if (statusYellTimer) clearInterval(statusYellTimer);
       if (factionResolveTimer) clearInterval(factionResolveTimer);
       if (readyTimer) clearTimeout(readyTimer);
@@ -515,14 +512,19 @@ async function runConnection(
 
     // Where the lair roster comes from. The poll consumes this interface, never /who directly, so a
     // friends-list source can replace it later without touching detection (see RAID_ARCHITECTURE.md).
-    const rosterSource: RosterSource = new WhoRosterSource({
-      who: queuedWho,
-      extraWho: () => listenerWho.all(), // fresh each poll — listeners come and go
-      areaId: config.watchAreaId,
-      areaName: config.watchAreaName,
-      sliceDelayMs: config.whoSliceDelayMs,
-      logger,
-    });
+    // One per watched lair, all on the same queued /who, so Blackwing Lair's polls wait their turn
+    // behind Onyxia's rather than doubling the per-IP rate.
+    const rosterSources = raidZones.map((raidZone): { raidZone: RaidZoneServices; source: RosterSource } => ({
+      raidZone,
+      source: new WhoRosterSource({
+        who: queuedWho,
+        extraWho: () => listenerWho.all(), // fresh each poll — listeners come and go
+        areaId: raidZone.watch.areaId,
+        areaName: raidZone.watch.areaName,
+        sliceDelayMs: config.whoSliceDelayMs,
+        logger,
+      }),
+    }));
     // Resolve a player's side with a targeted /who — they're online, having just whispered.
     // Null if it can't run, they're not found, or their race is custom. Used to tailor the
     // status to a non-subscriber's capital.
@@ -656,8 +658,8 @@ async function runConnection(
             outreach.setChannel((nameTo, msg) => whisperQueue?.enqueue(nameTo, msg));
             router.setGuildInvite(guildInvite);
             // The watcher can now whisper, so route listener-heard buff drops through it.
-            buffDropSink.notify = (faction, appliedAt, savedHead) =>
-              void raidService.announceBuffDrop(faction, savedHead, appliedAt).catch((error) =>
+            buffDropSink.notify = (faction, head, appliedAt, savedHead) =>
+              void raidService.announceBuffDrop(faction, head, savedHead, appliedAt).catch((error) =>
                 logger.error(`buff-drop announce: ${describeError(error)}`),
               );
             // The Warchief's Blessing is whispered only while switched on (WOW_WARCHIEF_WHISPERS).
@@ -698,18 +700,22 @@ async function runConnection(
             }, 15_000);
             probeTimer.unref?.();
           }
-          const poll = async (): Promise<void> => {
-            try {
-              const view = await rosterSource.poll();
-              if (!settled) await raidService.onRoster(view);
-            } catch (error) {
-              logger.warn(`who failed: ${describeError(error)}`);
-            }
-            if (settled) return;
-            pollTimer = setTimeout(() => void poll(), jitter(config.pollIntervalMs, POLL_JITTER_RATIO));
-            pollTimer.unref?.();
-          };
-          void poll();
+          for (const { raidZone, source } of rosterSources) {
+            const zoneId = raidZone.zone.id;
+            const poll = async (): Promise<void> => {
+              try {
+                const view = await source.poll();
+                if (!settled) await raidService.onRoster(zoneId, view);
+              } catch (error) {
+                logger.warn(`who (${raidZone.zone.areaName}) failed: ${describeError(error)}`);
+              }
+              if (settled) return;
+              const timer = setTimeout(() => void poll(), jitter(raidZone.watch.pollIntervalMs, POLL_JITTER_RATIO));
+              timer.unref?.();
+              pollTimers.set(zoneId, timer);
+            };
+            void poll();
+          }
           // Yell a buff-status board in the capitals on a slow cadence — when switched on at all.
           if (config.statusYellMs > 0) {
             statusYellTimer = setInterval(() => {
@@ -1434,19 +1440,24 @@ async function main(): Promise<void> {
 
   // Monotonic raid reference number (#834) — persisted so it climbs across restarts. Seeded
   // once, bumped in memory when a raid forms, saved as it goes.
-  let raidCounterStore: RaidCounterStore = new InMemoryRaidCounterStore();
-  if (mongo) {
-    try {
-      raidCounterStore = await MongoRaidCounterStore.open(mongo.db);
-    } catch (error) {
-      logger.error(`raid counter: MongoDB connect failed (${describeError(error)}); numbering in memory`);
+  // Each lair numbers its own raids: BWL raid #3 sits beside Onyxia raid #835, not after it.
+  const raidCounterStores: RaidCounterStore[] = [];
+  const openRaidNumbering = async (zone: RaidZoneId): Promise<() => number> => {
+    let counterStore: RaidCounterStore = new InMemoryRaidCounterStore();
+    if (mongo) {
+      try {
+        counterStore = await MongoRaidCounterStore.open(mongo.db, RAID_ZONE_STORE_NAMES[zone].counterId);
+      } catch (error) {
+        logger.error(`raid counter (${zone}): MongoDB connect failed (${describeError(error)}); numbering in memory`);
+      }
     }
-  }
-  let raidCounter = await raidCounterStore.load();
-  const nextRaidNumber = (): number => {
-    raidCounter += 1;
-    void raidCounterStore.save(raidCounter).catch((error) => logger.debug(`raid counter save: ${describeError(error)}`));
-    return raidCounter;
+    raidCounterStores.push(counterStore);
+    let raidCounter = await counterStore.load();
+    return (): number => {
+      raidCounter += 1;
+      void counterStore.save(raidCounter).catch((error) => logger.debug(`raid counter save: ${describeError(error)}`));
+      return raidCounter;
+    };
   };
 
   // The raid in progress per lane — persisted so a restart RESUMES it (keeps its number,
@@ -1499,37 +1510,22 @@ async function main(): Promise<void> {
   let shameSweepTimer: ReturnType<typeof setInterval> | null = null;
   let wallOfShame: WallOfShame | null = null;
 
-  const watchOptions: RaidTrackerOptions = {
-    minRaidSize: config.minRaidSize,
-    grouping: config.raidGrouping,
-    clearSize: config.raidClearSize,
-    strengthSize: config.raidStrengthSize,
-    leftFloor: config.raidLeftFloor,
-    clearSustainedMs: config.raidClearSustainedMs,
-    formConfirmMs: config.raidFormConfirmMs,
-    fillWindowMs: config.raidFillWindowMs,
-    rosterCap: config.raidRosterCap,
-    lockoutMs: config.raidLockoutMs,
-    nextRaidNumber,
-  };
-  const lanes: DetectionLane[] =
-    config.realmType === "faction"
-      ? [
-          { label: "alliance", watch: new RaidTracker(watchOptions), cities: ["alliance"], players: (s) => s.alliance },
-          { label: "horde", watch: new RaidTracker(watchOptions), cities: ["horde"], players: (s) => s.horde },
-        ]
-      : [
-          {
-            label: "lair",
-            watch: new RaidTracker(watchOptions),
-            cities: ["alliance", "horde"],
-            players: (s) => [...s.alliance, ...s.horde, ...s.unknown],
-          },
-        ];
+  // Every watched lair: Onyxia's always, Blackwing Lair's unless WOW_BWL_ENABLED turns it off.
+  const watches: readonly { zone: RaidZone; watch: RaidWatchConfig }[] = [
+    { zone: ONYXIA, watch: onyxiaWatch(config) },
+    ...(config.blackwingLair ? [{ zone: BLACKWING_LAIR, watch: config.blackwingLair }] : []),
+  ];
+  const zoneLanes = new Map<RaidZoneId, DetectionLane[]>();
+  for (const { zone, watch } of watches) {
+    const options = trackerOptions(watch, config.raidGrouping, await openRaidNumbering(zone.id));
+    zoneLanes.set(zone.id, buildLanes(zone.id, config.realmType, options));
+  }
+  // Onyxia's lanes — what the whisper "status" reports on.
+  const lanes = zoneLanes.get("onyxia") ?? [];
 
   // Resume any raid that was in progress when we last stopped, so its exit is still caught, and
   // reload the lockout ledger so the "a player can't be in two raids" rule survives the restart.
-  for (const lane of lanes) {
+  for (const lane of [...zoneLanes.values()].flat()) {
     const state = await raidStateStore.load(lane.label);
     if (state) {
       lane.watch.restoreRaidState(state);
@@ -1571,6 +1567,10 @@ async function main(): Promise<void> {
   };
   const push = (message: NotifyMessage, factions: readonly Faction[] = []): Promise<void> =>
     postAlert(config.discordOnyxiaChannelId, message, factions);
+  // Blackwing Lair's raids and Nefarian-head drops: its own channel when set, else the Onyxia one.
+  const pushBwl = (message: NotifyMessage, factions: readonly Faction[] = []): Promise<void> =>
+    postAlert(config.discordBwlChannelId ?? config.discordOnyxiaChannelId, message, factions);
+  const pushFor: Readonly<Record<RaidZoneId, typeof push>> = { onyxia: push, bwl: pushBwl };
   // The Warchief's Blessing is Horde-only: its own channel when set, pinging only the Horde role.
   const pushWarchief = (message: NotifyMessage): Promise<void> =>
     postAlert(config.discordWarchiefChannelId ?? config.discordOnyxiaChannelId, message, ["horde"]);
@@ -1613,15 +1613,18 @@ async function main(): Promise<void> {
   );
 
   // Raw /who snapshots for offline replay/stats — Mongo when configured, else memory.
-  let snapshots: SnapshotStore = new InMemorySnapshotStore();
-  if (mongo) {
+  // Each lair keeps its own (see RAID_ZONE_STORE_NAMES).
+  const openSnapshots = async (zone: RaidZoneId): Promise<SnapshotStore> => {
+    if (!mongo) return new InMemorySnapshotStore();
     try {
-      snapshots = await MongoSnapshotStore.open(mongo.db);
-      logger.info("snapshots: recording /who history to MongoDB");
+      const opened = await MongoSnapshotStore.open(mongo.db, undefined, RAID_ZONE_STORE_NAMES[zone].snapshots);
+      logger.info(`snapshots (${zone}): recording /who history to MongoDB`);
+      return opened;
     } catch (error) {
-      logger.error(`snapshots: MongoDB connect failed (${describeError(error)}); recording in memory`);
+      logger.error(`snapshots (${zone}): MongoDB connect failed (${describeError(error)}); recording in memory`);
+      return new InMemorySnapshotStore();
     }
-  }
+  };
 
   // Buff-drop times per faction, fed by the city listeners — Mongo when configured.
   let buffStore: BuffStore = new InMemoryBuffStore();
@@ -1644,25 +1647,30 @@ async function main(): Promise<void> {
   }
   // Per-cycle park-alert dedup, so a redeploy/wipe/churn can't re-broadcast — Mongo when
   // configured, else in memory (which resets on restart, i.e. no cross-deploy dedup).
-  let broadcasts: BroadcastLedger = new InMemoryBroadcastLedger();
-  if (mongo) {
+  // Each lair dedups its own alerts.
+  const openBroadcasts = async (zone: RaidZoneId): Promise<BroadcastLedger> => {
+    if (!mongo) return new InMemoryBroadcastLedger();
     try {
-      broadcasts = await MongoBroadcastLedger.open(mongo.db);
-      logger.info("broadcasts: recording park-alert times to MongoDB");
+      const opened = await MongoBroadcastLedger.open(mongo.db, RAID_ZONE_STORE_NAMES[zone].broadcasts);
+      logger.info(`broadcasts (${zone}): recording park-alert times to MongoDB`);
+      return opened;
     } catch (error) {
-      logger.error(`broadcasts: MongoDB connect failed (${describeError(error)}); deduping in memory`);
+      logger.error(`broadcasts (${zone}): MongoDB connect failed (${describeError(error)}); deduping in memory`);
+      return new InMemoryBroadcastLedger();
     }
-  }
-  // Learned raid clear-times for the self-improving forming heads-up.
-  let durationStore: DurationStore = new InMemoryDurationStore();
-  if (mongo) {
+  };
+  // Learned raid clear-times for the self-improving heads-up — each lair learns its own.
+  const openDurations = async (zone: RaidZoneId): Promise<DurationStore> => {
+    if (!mongo) return new InMemoryDurationStore();
     try {
-      durationStore = await MongoDurationStore.open(mongo.db);
-      logger.info("durations: recording raid clear-times to MongoDB");
+      const opened = await MongoDurationStore.open(mongo.db, undefined, RAID_ZONE_STORE_NAMES[zone].durations);
+      logger.info(`durations (${zone}): recording raid clear-times to MongoDB`);
+      return opened;
     } catch (error) {
-      logger.error(`durations: MongoDB connect failed (${describeError(error)}); recording in memory`);
+      logger.error(`durations (${zone}): MongoDB connect failed (${describeError(error)}); recording in memory`);
+      return new InMemoryDurationStore();
     }
-  }
+  };
   // Where the Darkmoon Faire was last seen, learned from PizzaWorldBuffs' broadcasts on the LFT
   // channel. Worth persisting even though the faire only visits weekly: the sighting also pins the
   // calendar's zone alternation, and that fact stays true long after the faire has left.
@@ -1825,10 +1833,10 @@ async function main(): Promise<void> {
 
   // The watcher fills this once in world, so a listener-heard buff drop can be whispered.
   const buffDropSink: BuffDropSink = { notify: null, notifyWarchief: null };
-  // The watcher stamps this each /who poll; recordBuff (on a listener) reads it to classify a drop.
-  const lairActivity = newLairActivity();
-  // Blackwing Lair's poll signal — what a Nefarian-head drop is classified against.
-  const bwlLairActivity = newLairActivity();
+  // Each lair's poll signal: its watcher stamps it each /who, and recordBuff (on a listener) reads
+  // it to classify a drop of that lair's boss's head. An unwatched lair's is never stamped, so a
+  // drop of its head reads as unknown.
+  const lairActivity: Readonly<Record<RaidZoneId, LairActivity>> = { onyxia: newLairActivity(), bwl: newLairActivity() };
   // Filled from every watcher /who (they all carry the realm-wide online count) and read by the
   // status widget. A reading expires, so an outage shows "unknown" rather than a pre-outage count.
   const realmPopulation = new RealmPopulation();
@@ -1850,8 +1858,11 @@ async function main(): Promise<void> {
     dedupWindowMs: BUFF_DEDUP_MS,
     cooldownMs: config.buffCooldownMs,
     lairs: {
-      onyxia: { activity: lairActivity, freshWindowMs: config.raidFreshWindowMs },
-      bwl: { activity: bwlLairActivity, freshWindowMs: config.raidFreshWindowMs },
+      onyxia: { activity: lairActivity.onyxia, freshWindowMs: config.raidFreshWindowMs },
+      bwl: {
+        activity: lairActivity.bwl,
+        freshWindowMs: config.blackwingLair?.raidFreshWindowMs ?? config.raidFreshWindowMs,
+      },
     },
     logger,
   });
@@ -1860,8 +1871,10 @@ async function main(): Promise<void> {
     const drop = buffTracker.record(yell, { sourceName, text, detectedBy }, Date.now());
     if (drop === null) return; // a duplicate a second same-city listener heard
     // Announce it: the Discord channel post, and (via the watcher) that side's subscribers.
-    void push(formatBuffDropped(faction, drop.origin === "saved"), [faction]); // channel, pinging that side's role
-    buffDropSink.notify?.(faction, drop.appliedAt, drop.origin === "saved");
+    const saved = drop.origin === "saved";
+    // The head's lair's channel, pinging that side's role.
+    void pushFor[drop.head](formatBuffDropped(faction, RAID_ZONES[drop.head], saved), [faction]);
+    buffDropSink.notify?.(faction, drop.head, drop.appliedAt, saved);
   };
   // The Warchief's Blessing: Thrall's yell in Orgrimmar, Horde-only. Announced to the Horde alone —
   // the Warchief channel pinging the Horde role, and a whisper to Horde subscribers.
@@ -1932,19 +1945,30 @@ async function main(): Promise<void> {
   );
   // A whisper to a listener is transferred to Bufftracker's command engine and answered.
   outreach.setHandler((sender, text, sourceFaction) => router.handle(sender, text, sourceFaction));
+  const raidZones: RaidZoneServices[] = [];
+  for (const { zone, watch } of watches) {
+    raidZones.push({
+      zone,
+      watch,
+      lanes: zoneLanes.get(zone.id) ?? [],
+      // The Chronicle feed is Onyxia kills only: Blackwing Lair's clears wait out the sustained wait.
+      chronicle: zone.id === "onyxia" ? chronicle : null,
+      broadcasts: await openBroadcasts(zone.id),
+      durationStore: await openDurations(zone.id),
+      snapshots: await openSnapshots(zone.id),
+      lairActivity: lairActivity[zone.id],
+      push: pushFor[zone.id],
+    });
+  }
   const services: ConnectionServices = {
-    lanes,
-    chronicle,
+    raidZones,
     listenerWho,
     whisperPool,
     buffStore,
     buffTracker,
-    broadcasts,
     raidStateStore,
     lockoutStore,
-    durationStore,
     faire,
-    snapshots,
     store,
     userLedger,
     inviteLedger,
@@ -1954,7 +1978,6 @@ async function main(): Promise<void> {
     outreach,
     whisperRefusals,
     buffDropSink,
-    lairActivity,
     realmPopulation,
     yellSink,
     push,
@@ -1991,11 +2014,13 @@ async function main(): Promise<void> {
     hardExit.unref?.();
     void Promise.allSettled([
       store.close(),
-      snapshots.close(),
+      ...raidZones.flatMap((raidZone) => [
+        raidZone.snapshots.close(),
+        raidZone.broadcasts.close(),
+        raidZone.durationStore.close(),
+      ]),
       buffStore.close(),
       warchiefStore.close(),
-      broadcasts.close(),
-      durationStore.close(),
       knowledgeStore.close(),
       darkmoonWidgetStore.close(),
       shameListStore.close(),
@@ -2005,7 +2030,7 @@ async function main(): Promise<void> {
       userLedger.close(),
       inviteLedger.close(),
       guildieStore.close(),
-      raidCounterStore.close(),
+      ...raidCounterStores.map((counterStore) => counterStore.close()),
       raidStateStore.close(),
       lockoutStore.close(),
       serverMonitorStore.close(),

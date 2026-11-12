@@ -4,6 +4,13 @@ import type { WhoPlayer } from "./protocol/who.js";
 import type { Faction } from "./watcher/buff-store.js";
 import type { FactionSplit } from "./watcher/faction.js";
 import type { RaidTracker } from "./watcher/raid-tracker.js";
+import type { RaidWatchConfig } from "./config.js";
+import type { NotifyMessage } from "./notify/notifier.js";
+import type { BroadcastLedger } from "./watcher/broadcast-ledger.js";
+import type { LairActivity } from "./watcher/drop-origin.js";
+import type { DurationStore } from "./watcher/duration-store.js";
+import type { RaidZone } from "./watcher/raid-zone.js";
+import type { SnapshotStore } from "./watcher/snapshot-store.js";
 
 /**
  * The small wiring types shared between index.ts (which builds the connection) and the raid service
@@ -34,4 +41,24 @@ export interface LaneChronicle {
   readonly realm: string;
   /** How far a kill's pull time may sit from the raid's span and still count as this raid's. */
   readonly matchWindowMs: number;
+}
+
+/**
+ * One watched lair's own wiring: its descriptor and watch settings, its detection lanes, and the
+ * stores and channel its raids keep apart from every other lair's — its own alert dedup, clear
+ * times, poll history, and drop-origin signal. Onyxia's lair is one; Blackwing Lair another.
+ */
+export interface RaidZoneServices {
+  readonly zone: RaidZone;
+  readonly watch: RaidWatchConfig;
+  readonly lanes: readonly DetectionLane[];
+  /** Chronicle early-confirm for this lair's kills, or null (off, or no kill feed for this boss). */
+  readonly chronicle: LaneChronicle | null;
+  readonly broadcasts: BroadcastLedger;
+  readonly durationStore: DurationStore;
+  readonly snapshots: SnapshotStore;
+  /** This lair's poll signal: a drop of its boss's head is read fresh or saved against it. */
+  readonly lairActivity: LairActivity;
+  /** Posts to this lair's Discord channel. */
+  readonly push: (message: NotifyMessage, factions?: readonly Faction[]) => Promise<void>;
 }
