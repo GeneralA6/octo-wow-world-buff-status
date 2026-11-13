@@ -530,7 +530,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
       raidStrengthSize: bwlStrengthSize,
       raidLeftFloor: bwlLeftFloor,
       raidDurationEstimateMs: minutes("WOW_BWL_RAID_DURATION_MINUTES", 150, 1),
-      raidLearnMinSamples: intWithDefault("WOW_BWL_RAID_LEARN_MIN_SAMPLES", 10, 1),
+      raidLearnMinSamples: intWithDefault("WOW_BWL_RAID_LEARN_MIN_SAMPLES", 3, 1),
       raidEndingLeadMs: minutes("WOW_BWL_RAID_ENDING_LEAD_MINUTES", 20, 1),
       raidFillWindowMs: minutes("WOW_BWL_RAID_FILL_WINDOW_MINUTES", 15, 1),
       raidRosterCap: intWithDefault("WOW_BWL_RAID_ROSTER_CAP", 45, 1),
