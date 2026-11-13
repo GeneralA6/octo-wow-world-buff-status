@@ -81,6 +81,47 @@ describe("RaidAlertPolicy.decide", () => {
     expect(logger.info).toHaveBeenCalledWith("lair raid-left for alliance suppressed — already broadcast for raid #55");
   });
 
+  it("logs a repeated suppression once, not on every poll", async () => {
+    const { policy, ledger, logger } = harness();
+    ledger.set("alliance:raid-ending", rec(4, 5 * MIN));
+    for (const now of [10, 11, 12].map((m) => m * MIN)) await policy.decide(req({ kind: "raid-ending", raidNumber: 4, now }));
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith("lair raid-ending for alliance suppressed — already broadcast for raid #4");
+  });
+
+  it("logs again when the suppression reason changes", async () => {
+    const { policy, ledger, drops, logger } = harness({ cooldownMs: 60 * MIN });
+    drops.set("alliance", new Date(9 * MIN)); // on cooldown
+    await policy.decide(req({ cities: ["alliance"], now: 10 * MIN }));
+    await policy.decide(req({ cities: ["alliance"], now: 11 * MIN }));
+    drops.clear(); // cooldown gone; now the per-raid dedup is what blocks it
+    ledger.set("alliance:raid-left", rec(55, 5 * MIN));
+    await policy.decide(req({ cities: ["alliance"], now: 12 * MIN }));
+    expect(logger.info.mock.calls).toEqual([
+      ["lair raid-left for alliance suppressed — Rallying Cry on cooldown"],
+      ["lair raid-left for alliance suppressed — already broadcast for raid #55"],
+    ]);
+  });
+
+  it("logs a suppression again after the city has fired in between", async () => {
+    const { policy, ledger, logger } = harness();
+    ledger.set("alliance:raid-left", rec(55, 5 * MIN));
+    await policy.decide(req({ cities: ["alliance"] }));
+    ledger.delete("alliance:raid-left"); // fires once
+    expect(await policy.decide(req({ cities: ["alliance"] }))).toEqual(["alliance"]);
+    ledger.set("alliance:raid-left", rec(55, 5 * MIN));
+    await policy.decide(req({ cities: ["alliance"] }));
+    expect(logger.info).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps lanes apart: the same suppression in another lane still logs", async () => {
+    const { policy, ledger, logger } = harness();
+    ledger.set("alliance:raid-left", rec(55, 5 * MIN));
+    await policy.decide(req({ cities: ["alliance"], label: "onyxia" }));
+    await policy.decide(req({ cities: ["alliance"], label: "bwl" }));
+    expect(logger.info).toHaveBeenCalledTimes(2);
+  });
+
   it("honours a single-city lane (faction mode)", async () => {
     const { policy } = harness();
     expect(await policy.decide(req({ cities: ["horde"] }))).toEqual(["horde"]);
