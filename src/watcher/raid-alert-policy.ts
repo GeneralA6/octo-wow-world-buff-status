@@ -11,6 +11,10 @@ import { onBuffCooldown, shouldBroadcastRaid, type BroadcastKind, type Broadcast
  * else fire it unless this exact raid was already broadcast for this (city, kind) — the per-raid dedup
  * that lets every DISTINCT raid alert both sides while a single raid's wipe/churn re-emit is
  * suppressed. Reading the ledger + buff state is injected, so the whole decision is unit-tested.
+ *
+ * The lair poll re-asks about the same event every minute (the "about to clear" check runs each
+ * poll until the raid clears), so a suppression is logged only when its reason CHANGES for that
+ * (lane, city, kind) — once per raid, not once per poll. The decision itself is never cached.
  */
 export interface RaidAlertPolicyDeps {
   /** The last broadcast recorded for a (city, kind), or null. */
@@ -35,6 +39,8 @@ export interface RaidAlertRequest {
 
 export class RaidAlertPolicy {
   readonly #deps: RaidAlertPolicyDeps;
+  /** The last suppression line logged per (lane, city, kind) — bounded by lanes × cities × kinds. */
+  readonly #lastSuppression = new Map<string, string>();
 
   constructor(deps: RaidAlertPolicyDeps) {
     this.#deps = deps;
@@ -46,20 +52,31 @@ export class RaidAlertPolicy {
     const fresh: Faction[] = [];
     for (const city of req.cities) {
       const dropAt = await lastBuffDropAt(city);
+      const key = `${req.label}|${city}|${req.kind}`;
       if (onBuffCooldown(dropAt, req.now, cooldownMs)) {
-        logger?.info(`${req.label} ${req.kind} for ${city} suppressed — Rallying Cry on cooldown`);
+        this.#noteSuppressed(key, `${req.label} ${req.kind} for ${city} suppressed — Rallying Cry on cooldown`, logger);
         continue;
       }
       const last = await lastBroadcast(city, req.kind);
       if (shouldBroadcastRaid(last, req.raidNumber, dropAt, req.now, dedupMs)) {
+        this.#lastSuppression.delete(key); // it fires — a later suppression is news again
         fresh.push(city);
       } else {
-        logger?.info(
+        this.#noteSuppressed(
+          key,
           `${req.label} ${req.kind} for ${city} suppressed — ` +
             (req.raidNumber != null ? `already broadcast for raid #${req.raidNumber}` : "already broadcast this cycle"),
+          logger,
         );
       }
     }
     return fresh;
+  }
+
+  /** Logs a suppression unless the same line was the last one logged for this (lane, city, kind). */
+  #noteSuppressed(key: string, line: string, logger: Pick<Logger, "info"> | undefined): void {
+    if (this.#lastSuppression.get(key) === line) return;
+    this.#lastSuppression.set(key, line);
+    logger?.info(line);
   }
 }
