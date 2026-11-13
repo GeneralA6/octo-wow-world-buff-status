@@ -589,6 +589,7 @@ describe("loadConfig blackwing lair watch", () => {
       raidStrengthSize: 20,
       raidLeftFloor: 20,
       raidDurationEstimateMs: 150 * 60_000,
+      raidLearnMinSamples: 3,
       raidRosterCap: 45,
       raidMinClearMs: 30 * 60_000,
       raidDisbandMs: 60 * 60_000,
@@ -610,12 +611,15 @@ describe("loadConfig blackwing lair watch", () => {
       WOW_BWL_MIN_RAID_SIZE: "30",
       WOW_BWL_RAID_DURATION_MINUTES: "180",
       WOW_BWL_POLL_INTERVAL_SECONDS: "45",
+      WOW_BWL_RAID_LEARN_MIN_SAMPLES: "8",
       WOW_MIN_RAID_SIZE: "12",
     });
     expect(config.blackwingLair?.minRaidSize).toBe(30);
     expect(config.blackwingLair?.raidClearSize).toBe(10);
     expect(config.blackwingLair?.raidDurationEstimateMs).toBe(180 * 60_000);
     expect(config.blackwingLair?.pollIntervalMs).toBe(45_000);
+    expect(config.blackwingLair?.raidLearnMinSamples).toBe(8);
+    expect(config.raidLearnMinSamples).toBe(15);
     expect(config.minRaidSize).toBe(12);
   });
 
