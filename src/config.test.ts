@@ -196,6 +196,23 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimalEnv, WOW_RAID_CLEAR_SUSTAINED_MINUTES: "7" }).raidClearSustainedMs).toBe(7 * 60_000);
   });
 
+  it("defaults Onyxia's departure rule to 10m stay, 15 players, 5m gone and accepts overrides", () => {
+    expect(loadConfig({ ...minimalEnv }).raidDeparture).toEqual({ minStayMs: 10 * 60_000, minGroup: 15, sustainedMs: 5 * 60_000 });
+    expect(
+      loadConfig({
+        ...minimalEnv,
+        WOW_RAID_DEPARTURE_MIN_STAY_MINUTES: "12",
+        WOW_RAID_DEPARTURE_MIN_GROUP: "18",
+        WOW_RAID_DEPARTURE_SUSTAINED_MINUTES: "4",
+      }).raidDeparture,
+    ).toEqual({ minStayMs: 12 * 60_000, minGroup: 18, sustainedMs: 4 * 60_000 });
+  });
+
+  it("carries Onyxia's departure rule into its watch", () => {
+    const config = loadConfig({ ...minimalEnv, WOW_RAID_DEPARTURE_MIN_GROUP: "17" });
+    expect(onyxiaWatch(config).departure).toBe(config.raidDeparture);
+  });
+
   it("defaults the raid lockout to 2 hours and accepts an override", () => {
     expect(loadConfig({ ...minimalEnv }).raidLockoutMs).toBe(2 * 60 * 60_000);
     expect(loadConfig({ ...minimalEnv, WOW_RAID_LOCKOUT_HOURS: "12" }).raidLockoutMs).toBe(12 * 60 * 60_000);
@@ -596,7 +613,19 @@ describe("loadConfig blackwing lair watch", () => {
       raidFreshWindowMs: 40 * 60_000,
       raidLockoutMs: 4 * 3_600_000,
       raidMaxClearMs: 10 * 3_600_000,
+      departure: { minStayMs: 20 * 60_000, minGroup: 15, sustainedMs: 8 * 60_000 },
     });
+  });
+
+  it("takes its own departure knobs, apart from Onyxia's", () => {
+    const config = loadConfig({
+      ...minimalEnv,
+      WOW_BWL_RAID_DEPARTURE_MIN_STAY_MINUTES: "25",
+      WOW_BWL_RAID_DEPARTURE_MIN_GROUP: "20",
+      WOW_BWL_RAID_DEPARTURE_SUSTAINED_MINUTES: "10",
+    });
+    expect(config.blackwingLair?.departure).toEqual({ minStayMs: 25 * 60_000, minGroup: 20, sustainedMs: 10 * 60_000 });
+    expect(config.raidDeparture.minGroup).toBe(15);
   });
 
   it("is off when switched off", () => {
