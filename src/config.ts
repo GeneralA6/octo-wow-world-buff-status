@@ -4,6 +4,7 @@ import { CLIENT_BUILD } from "./protocol/opcodes.js";
 import { OCTOWOW_CDN } from "./net/client-resolver.js";
 import type { GroupingMode } from "./watcher/raid-events.js";
 import type { Faction } from "./watcher/buff-store.js";
+import type { DepartureSettings } from "./watcher/departure-detector.js";
 import { isFaireLocation, type FaireLocation } from "./darkmoon/location.js";
 import { DEFAULT_CORROBORATION, type CorroborationPolicy } from "./darkmoon/corroboration.js";
 
@@ -42,6 +43,8 @@ export interface RaidWatchConfig {
   readonly raidFormConfirmMs: number;
   /** A clear longer than this is not one raid — a merge or a bug — and is ignored. */
   readonly raidMaxClearMs: number;
+  /** How a clear is read from a departure burst (see DepartureDetector). */
+  readonly departure: DepartureSettings;
 }
 
 /** A single Onyxia clear is not 6h+: past that it is a merge or a bug. */
@@ -69,6 +72,7 @@ export function onyxiaWatch(config: BotConfig): RaidWatchConfig {
     raidLockoutMs: config.raidLockoutMs,
     raidFormConfirmMs: config.raidFormConfirmMs,
     raidMaxClearMs: ONYXIA_MAX_CLEAR_MS,
+    departure: config.raidDeparture,
   };
 }
 
@@ -193,6 +197,10 @@ export interface BotConfig {
    *  forming" alert fires — filters a group that assembles and leaves without committing. A
    *  disconnect or a drop below the floor and back resets the count. Default 0 = fire immediately. */
   readonly raidFormConfirmMs: number;
+  /** Onyxia's departure-burst clear rule: ≥15 players who stayed 10m+ leaving within 5m, gone 5m.
+   *  Replayed on 7 days of snapshots, it caught 44 of 49 Chronicle kills with no wipe read as a clear;
+   *  BWL's 20m stay misses half of Onyxia's raids, and a 3m wait read 3 wipes as clears. */
+  readonly raidDeparture: DepartureSettings;
   /** Blackwing Lair's watch — its raids alerted like Onyxia's, and what a Nefarian-head drop is read
    *  against. Null when WOW_BWL_ENABLED turns it off: no BWL polls, alerts or status. */
   readonly blackwingLair: RaidWatchConfig | null;
@@ -501,6 +509,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
   const raidClearSustainedMs = intWithDefault("WOW_RAID_CLEAR_SUSTAINED_MINUTES", 3, 1) * 60_000;
   const raidLockoutMs = intWithDefault("WOW_RAID_LOCKOUT_HOURS", 2, 1) * 60 * 60_000;
   const raidFormConfirmMs = intWithDefault("WOW_RAID_FORM_CONFIRM_MINUTES", 0, 0) * 60_000;
+  const raidDeparture: DepartureSettings = {
+    minStayMs: intWithDefault("WOW_RAID_DEPARTURE_MIN_STAY_MINUTES", 10, 1) * 60_000,
+    minGroup: intWithDefault("WOW_RAID_DEPARTURE_MIN_GROUP", 15, 1),
+    sustainedMs: intWithDefault("WOW_RAID_DEPARTURE_SUSTAINED_MINUTES", 5, 1) * 60_000,
+  };
 
   // Blackwing Lair, watched on its own: a 40-man raid that takes hours, so every size and time has
   // its own WOW_BWL_* knob and default. On unless WOW_BWL_ENABLED turns it off.
@@ -541,6 +554,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
       raidLockoutMs: intWithDefault("WOW_BWL_RAID_LOCKOUT_HOURS", 4, 1) * 60 * 60_000,
       raidFormConfirmMs: minutes("WOW_BWL_RAID_FORM_CONFIRM_MINUTES", 0, 0),
       raidMaxClearMs: bwlMaxClearMs,
+      // 11 of 11 BWL departures on a replayed day, none false; a wipe's run-back was 7.3m at most.
+      departure: {
+        minStayMs: minutes("WOW_BWL_RAID_DEPARTURE_MIN_STAY_MINUTES", 20, 1),
+        minGroup: intWithDefault("WOW_BWL_RAID_DEPARTURE_MIN_GROUP", 15, 1),
+        sustainedMs: minutes("WOW_BWL_RAID_DEPARTURE_SUSTAINED_MINUTES", 8, 1),
+      },
     };
   })();
   // How long a parked listener may hear NO npc chat before it is reported as deaf. Capitals are
@@ -738,6 +757,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): BotConfig {
     raidClearSustainedMs,
     raidLockoutMs,
     raidFormConfirmMs,
+    raidDeparture,
     blackwingLair,
     statusYellMs,
     whisperMaxAgeMs,

@@ -21,6 +21,7 @@ import { noteLairPoll } from "./watcher/drop-origin.js";
 import { shouldBroadcast } from "./watcher/broadcast-ledger.js";
 import { clearedRaidEvent, formedRaidEvent, type RaidEvent } from "./watcher/raid-events.js";
 import { RaidAlertPolicy } from "./watcher/raid-alert-policy.js";
+import { DepartureShadow } from "./watcher/departure-shadow.js";
 import type { Faction } from "./watcher/buff-store.js";
 import { isPlausibleClear } from "./watcher/duration-store.js";
 import { confirmingKills } from "./chronicle/confirm.js";
@@ -120,6 +121,10 @@ export function createRaidZonePipeline(
     dedupMs: config.broadcastDedupMs,
     logger,
   });
+
+  // The departure-burst detector, run beside the ClearTracker and only logged, so the two can be
+  // compared on live raids before it drives any alert. See DepartureShadow.
+  const departureShadow = new DepartureShadow(zone.id, watch.departure, logger);
 
   const recentClears = async (): Promise<number[]> =>
     (await durationStore.recent(TIMER_EVAL_WINDOW).catch(() => [])).map((d) => d.ms);
@@ -418,6 +423,13 @@ export function createRaidZonePipeline(
     // Feed this lair's signal so a later drop of its boss's head can tell a fresh kill (a raid was
     // here) from a saved-head turn-in (an empty lair), and spot a blind gap it must not guess across.
     noteLairPoll(lairActivity, inZone.length, now);
+
+    // Shadow only: logs the clears and heads-ups the departure-burst rule would announce. Its heads-up
+    // uses the live one's timing, the predicted clear time less the lead, but per player in the lair.
+    await departureShadow.observe(
+      { names: inZone.map((player) => player.name), complete, at: now },
+      async () => (await predictRaidDurationMs()) - watch.raidEndingLeadMs,
+    );
 
     const split = splitByFaction(inZone);
     // In faction mode unmapped races belong to no lane; log them so a custom Turtle/Octo race id

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, onyxiaWatch, type BotConfig, type RaidWatchConfig } from "./config.js";
-import { silentLogger } from "./logger.js";
+import { silentLogger, type Logger } from "./logger.js";
 import type { RaidZoneServices, YellSink } from "./lanes.js";
 import { createRaidService, type RaidService } from "./raid-service.js";
 import { buildLanes, trackerOptions } from "./raid-zone-setup.js";
@@ -40,7 +40,7 @@ interface Harness {
   readonly subscribers: InMemorySubscriberStore;
 }
 
-function harness(config: BotConfig, watchBwl = true): Harness {
+function harness(config: BotConfig, watchBwl = true, logger: Logger = silentLogger): Harness {
   const posted: Posted[] = [];
   const yells: { faction: Faction; text: string }[] = [];
   const whispers: { names: readonly string[]; message: string }[] = [];
@@ -96,7 +96,7 @@ function harness(config: BotConfig, watchBwl = true): Harness {
       },
     },
     config,
-    silentLogger,
+    logger,
     (names, message) => whispers.push({ names, message }),
     () => null,
   );
@@ -175,6 +175,26 @@ describe("createRaidService — one pipeline per lair", () => {
     expect(posted[0]?.message.title).toContain(ONYXIA.raidName);
     expect(await ledgers.onyxia.last("alliance", "raid-ending")).not.toBeNull();
     expect(await ledgers.bwl.last("alliance", "raid-ending")).toBeNull();
+  });
+
+  it("logs, in shadow, the clear the departure-burst rule would announce beside the live one", async () => {
+    const logger = { ...silentLogger, info: vi.fn() };
+    const { service, posted } = harness(loadConfig(env), true, logger);
+    await pollEveryMinute(service, BLACKWING_LAIR, raid(25, "Dawn", BWL_AREA), 0, 70);
+    await pollEveryMinute(service, BLACKWING_LAIR, [], 71, 80); // gone past BWL's 8m departure wait
+
+    expect(posted.map((p) => p.message.title)).toEqual([`🏁 ${BLACKWING_LAIR.raidName} raid has ended`]);
+    expect(logger.info).toHaveBeenCalledWith("bwl departure shadow: would announce a clear — 25 left within 0m after ~70m in the lair");
+  });
+
+  it("logs, in shadow, the heads-up the departure-burst rule would announce on the live timing", async () => {
+    const logger = { ...silentLogger, info: vi.fn() };
+    const { service } = harness(loadConfig(env), true, logger);
+    // 45m estimate, 20m lead: due 25m in, as the live heads-up.
+    await pollEveryMinute(service, ONYXIA, raid(25, "Dusk", ONYXIA_AREA), 0, 26);
+
+    const shadow = logger.info.mock.calls.map(([line]) => line).filter((line) => line.includes("departure shadow"));
+    expect(shadow).toEqual(['onyxia departure shadow: would announce "might end soon" — 25 in the lair for ~25m']);
   });
 
   it("yells every lair's raid in progress on the capital status board", async () => {
