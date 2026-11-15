@@ -88,7 +88,8 @@ export class DepartureRaids {
   dueForWarning(at: number, thresholdMs: number): NumberedDue | null {
     const due = this.#detector.dueForWarning(at, thresholdMs);
     if (due === null) return null;
-    const number = this.#numberFor(due.names, this.#warnedNumbers);
+    // A cleared number is never warned about after: another raid the tracker merged under it gets its own.
+    const number = this.#numberFor(due.names, [...this.#warnedNumbers, ...this.#clearedNumbers]);
     this.#warnedNumbers = remember(this.#warnedNumbers, number);
     return { number, size: due.size, elapsedMs: due.medianStayMs };
   }
