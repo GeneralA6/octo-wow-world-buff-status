@@ -56,6 +56,19 @@ describe("DepartureRaids", () => {
     expect(clears.map((c) => c.number)).toEqual([835, 901]);
   });
 
+  it("never gives a heads-up the number of a raid that already cleared", () => {
+    const raids = new DepartureRaids({ settings, nextRaidNumber: counter(900) });
+    const a = raid("a", 20);
+    const b = raid("b", 20);
+    poll(raids, 0, 5, () => [...a, ...b]);
+    raids.claim([...a, ...b], 835);
+    const clears = poll(raids, 6, 40, (m) => [...(m < 30 ? a : []), ...b]);
+    expect(clears.map((c) => c.number)).toEqual([835]);
+    expect(raids.dueForWarning(40 * MIN, 30 * MIN)).toMatchObject({ number: 901, size: 20 });
+    const later = poll(raids, 41, 70, (m) => (m < 50 ? b : []));
+    expect(later.map((c) => c.number)).toEqual([901]);
+  });
+
   it("doesn't lend a number to players it no longer holds", () => {
     const raids = new DepartureRaids({ settings, nextRaidNumber: counter(0) });
     raids.claim(raid("a", 20), 835);
