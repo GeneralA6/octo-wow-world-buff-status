@@ -5,13 +5,16 @@ import { releaseSharedClient } from "../mongo-connection.js";
  * A monotonic count of raids the bot has detected, so each run gets a stable reference
  * number (#834). Persisted so it climbs across restarts instead of resetting to #1 on
  * every deploy. Loaded once on boot, bumped in memory when a raid forms, saved as it
- * goes — one small integer. A raid that spans a restart is re-numbered (the counter never
+ * goes — one small integer, only ever raised. A raid that spans a restart is re-numbered (the counter never
  * goes backward), which is acceptable for a reference id.
  */
 export interface RaidCounterStore {
   /** The current value (0 when nothing has been recorded). */
   load(): Promise<number>;
-  /** Persist the latest value. */
+  /**
+   * Persist the latest value. Never lowers what is stored: saves are fired without waiting, so two
+   * numbers handed out in one poll can land out of order, and a lower one landing last must not win.
+   */
   save(value: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -29,7 +32,7 @@ export class InMemoryRaidCounterStore implements RaidCounterStore {
   }
 
   async save(value: number): Promise<void> {
-    this.#value = value;
+    this.#value = Math.max(this.#value, value);
   }
 
   async close(): Promise<void> {
@@ -45,12 +48,18 @@ interface CounterDoc {
 /** Narrow port over the Mongo collection, so the store's logic is unit-tested with a fake. */
 export interface RaidCounterDb {
   get(): Promise<number | null>;
-  set(value: number): Promise<void>;
+  /** Raises the stored value to `value` if it is higher (creating it if absent); never lowers it. */
+  raise(value: number): Promise<void>;
   close(): Promise<void>;
 }
 
 const COLLECTION = "counters";
 const DOC_ID = "raid";
+
+/** The update that raises the stored counter, never lowering it whatever order saves land in. */
+export function raiseCounterUpdate(value: number): { readonly $max: { readonly value: number } } {
+  return { $max: { value } };
+}
 
 export class MongoRaidCounterStore implements RaidCounterStore {
   readonly #db: RaidCounterDb;
@@ -64,8 +73,8 @@ export class MongoRaidCounterStore implements RaidCounterStore {
     const collection = database.collection<CounterDoc>(COLLECTION);
     const db: RaidCounterDb = {
       get: () => collection.findOne({ _id: counterId }).then((doc) => doc?.value ?? null),
-      set: (value) =>
-        collection.updateOne({ _id: counterId }, { $set: { value } }, { upsert: true }).then(() => undefined),
+      raise: (value) =>
+        collection.updateOne({ _id: counterId }, raiseCounterUpdate(value), { upsert: true }).then(() => undefined),
       close: releaseSharedClient,
     };
     return new MongoRaidCounterStore(db);
@@ -76,7 +85,7 @@ export class MongoRaidCounterStore implements RaidCounterStore {
   }
 
   async save(value: number): Promise<void> {
-    await this.#db.set(value);
+    await this.#db.raise(value);
   }
 
   async close(): Promise<void> {
